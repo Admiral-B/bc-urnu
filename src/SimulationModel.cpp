@@ -330,6 +330,10 @@ SimulationModel::~SimulationModel()
         return ownShip.getSOG();
     }
 
+    float SimulationModel::getSTW() const{
+        return ownShip.getSpeedThroughWater();
+    }
+
     float SimulationModel::getDepth() const{
         return ownShip.getDepth();
     }
@@ -1878,7 +1882,7 @@ SimulationModel::~SimulationModel()
 
 
         //Ensure we have the right radar screen resolution
-        setRadarDisplayRadius(guiMain->getRadarPixelRadius());
+        if (guiMain) { setRadarDisplayRadius(guiMain->getRadarPixelRadius()); }
 
         }{ IPROF("Update tide");
 
@@ -2014,7 +2018,7 @@ SimulationModel::~SimulationModel()
                 wheelVisual.update(-6.0 * ownShip.getWheel());
             }
         }
-        if (radarCalculation.isRadarOn()) {
+        if (radarCalculation.isRadarOn() && guiMain) {
             { IPROF("Update radar cursor position");
             //set radar screen position, and update it with a radar image from the radar calculation
             cursorPositionRadar = guiMain->getCursorPositionRadar();
@@ -2121,7 +2125,7 @@ SimulationModel::~SimulationModel()
 // DEE ^^^^
         }{ IPROF("Update gui data");
         //send data to gui
-        guiMain->updateGuiData(guiData); //Set GUI heading in degrees and speed (in m/s)
+        if (guiMain) { guiMain->updateGuiData(guiData); } //Set GUI heading in degrees and speed (in m/s)
         }
     }
 

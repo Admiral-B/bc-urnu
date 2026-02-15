@@ -168,6 +168,7 @@ public:
     float getPosZ() const;
     float getCOG() const;
     float getSOG() const; //In metres/second
+    float getSTW() const; //Speed through water in metres/second
     float getDepth() const;
 
     float getWaveHeight(float posX, float posZ) const; //Return wave height (not tide) at the world position specified

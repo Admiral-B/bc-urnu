@@ -57,15 +57,31 @@ ConvertedModel convertModelViaIrrlicht(const std::string& filepath) {
     ConvertedModel result;
     if (!ensureDevice()) return result;
 
-    // Set working directory to model's directory so textures can be found
+    // Extract model directory and filename
     std::string modelDir;
+    std::string modelFileName = filepath;
     size_t lastSlash = filepath.find_last_of("/\\");
     if (lastSlash != std::string::npos) {
         modelDir = filepath.substr(0, lastSlash + 1);
-        g_converterDevice->getFileSystem()->changeWorkingDirectoryTo(modelDir.c_str());
+        modelFileName = filepath.substr(lastSlash + 1);
     }
 
-    irr::scene::IAnimatedMesh* animMesh = g_converterSmgr->getMesh(filepath.c_str());
+    // Change CWD to model directory so EDT_BURNINGSVIDEO can find textures.
+    // IMPORTANT: Irrlicht's changeWorkingDirectoryTo calls SetCurrentDirectory on
+    // Windows, which changes the OS process CWD. We MUST save and restore it,
+    // otherwise all subsequent relative path operations in the app will break.
+    irr::io::IFileSystem* fs = g_converterDevice->getFileSystem();
+    irr::io::path savedCwd = fs->getWorkingDirectory();
+
+    if (!modelDir.empty()) {
+        fs->changeWorkingDirectoryTo(modelDir.c_str());
+    }
+
+    // Load mesh using just the filename (CWD is now the model directory)
+    irr::scene::IAnimatedMesh* animMesh = g_converterSmgr->getMesh(modelFileName.c_str());
+
+    // Restore original CWD immediately
+    fs->changeWorkingDirectoryTo(savedCwd.c_str());
     if (!animMesh) return result;
 
     irr::scene::IMesh* mesh = animMesh->getMesh(0);
@@ -150,6 +166,12 @@ ConvertedModel convertModelViaIrrlicht(const std::string& filepath) {
     }
 
     result.valid = !result.submeshes.empty();
+
+    // Remove from Irrlicht's mesh cache so the same filename (e.g. "boat.x")
+    // in a different directory doesn't return this cached mesh on the next call.
+    irr::scene::IMeshCache* cache = g_converterSmgr->getMeshCache();
+    if (cache) cache->removeMesh(animMesh);
+
     return result;
 }
 

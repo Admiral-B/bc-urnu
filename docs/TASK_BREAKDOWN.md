@@ -1161,8 +1161,101 @@
   6. Verify: network primary/secondary works
   7. Check FPS vs baseline (task 0A-07)
 - **Verify:** Full simulation runs without crashes. FPS >= 60 on primary PC.
-- **Implementation (in progress):** Moved WE branch point in main.cpp to after scenario selection (was before, bypassing entire sim). `runWickedEngine()` now accepts `ScenarioData` and loads full scenario: terrain from terrain.ini via WickedTerrainNode, own ship + other ships via WickedModelImporter (OBJ supported, .x/.3ds get placeholder boxes), buoys from buoy.ini, land objects from landobject.ini. Weather/fog/sun position derived from scenario data. Camera starts at own ship bridge view with orbit controls. Coordinate conversion replicates Terrain::longToX()/latToZ(). This is a visual preview -- simulation physics (ship movement, radar, instruments) remain on Irrlicht path pending SimulationModel refactor.
-- [ ] Done
+- **Implementation (in progress):**
+  - **Scene pipeline:** `runWickedEngine()` in WickedMain.cpp accepts `ScenarioData` from Irrlicht scenario selection UI. Loads terrain (WickedTerrainNode), ocean (WickedWater w/ Beaufort), sun/atmosphere, own ship, other ships, buoys (68 in Buoyage), land objects (43 in SimpleEstuary). CoordConverter replicates Terrain::longToX()/latToZ().
+  - **Model loading:** IrrlichtModelConverter extracts geometry from .x/.3ds binary files via headless Irrlicht device (EDT_BURNINGSVIDEO for per-submesh texture names, fallback to EDT_NULL). Mesh cache deduplicates. Placeholder boxes for missing models.
+  - **Critical fix (2026-02-15):** Irrlicht's `changeWorkingDirectoryTo()` calls Win32 `SetCurrentDirectory()`, permanently changing the process CWD. This broke all relative path resolution after the first model load (other ships, buoys, land objects couldn't be found). Fixed by saving/restoring CWD around model loads and passing just the filename to `getMesh()`. Also clear Irrlicht mesh cache per load to avoid same-filename collisions across directories.
+  - **Build target:** Must build `bridgecommand-bc` (9.9MB simulation) NOT `bridgecommand` (721KB launcher). WickedEngine only links in x64 configs (not x86/Win32).
+  - **Ship controls:** Arrow keys for engine/rudder, simple physics (speed approach, rudder turn rate proportional to speed). Other ships follow waypoint legs from scenario data. GUI sliders for engine throttle and steering wheel (see 2B-10e).
+  - **Camera:** Bridge first-person (follows own ship) or orbit mode (O key). Mouse drag for look, scroll for FOV/zoom. 75-degree HFOV.
+  - **Transparency:** Alpha materials get 0.05x multiplier for near-invisible bridge windows (see 2B-10a).
+  - **HUD:** Full ImGui overlay with 6 instruments (compass, speed, rudder, depth, engine, wind) + interactive controls (engine slider, wheel slider). 4 brightness palettes (F5-F8). Layout lock (F9). See 2B-10c, 2B-10e.
+  - **Sound:** PortAudio engine/wave/horn/alarm. Engine volume/pitch tracks thrust lever. H key for horn. See 2B-10d.
+  - **Textures:** Paths normalized to forward slashes and converted to absolute for WE resource loading. See 2B-10b.
+  - **Shader fix (2026-02-15):** ImGui CSO shaders failed to load via wi::renderer::LoadShader (wrong search paths). Fixed by loading CSOs directly with wi::helper::FileRead + GetDevice()->CreateShader(). Added IsValid() safety check.
+  - **Depth sounder (2026-02-15):** Queries `terrainNode->getHeightAt()` at ship position each frame. See 2B-10g.
+  - **Ship kinematics (2026-02-15):** Realistic rates -- engine lever 0.2/s, rudder 5 deg/s, speed approach 0.04, turn rate coeff 0.004. See 2B-10h.
+  - **Wave heading disturbance (2026-02-15):** 3-sine yaw waver scaled by Beaufort for compass realism. See 2B-10i.
+- [ ] Done (awaiting in-person testing on bridge hardware)
+
+### 2B-10a: Fix bridge window transparency
+- **File:** `src/WickedMain.cpp` line 270
+- **What:** Change alpha multiplier from 0.4 to 0.05 so bridge windows are near-invisible
+- **Verify:** Can see through bridge windows clearly when sailing
+- [x] Done (2026-02-15: Changed `material->baseColor.w *= 0.4f` to `*= 0.05f` with threshold lowered from 0.3 to 0.01)
+
+### 2B-10b: Fix texture rendering on Irrlicht-converted models
+- **File:** `src/WickedMain.cpp` lines 253-258
+- **What:** Normalize texture paths (backslash to forward slash), convert relative to absolute paths for WE resource loading using `wi::helper::GetCurrentPath()`.
+- **Verify:** Ship hull textures, deck details visible on models
+- [x] Done (2026-02-15: Added `std::replace` backslash->forward slash normalization and absolute path conversion for all texture assignments)
+
+### 2B-10c: Integrate ImGui HUD into WickedMain
+- **Files:** `src/WickedMain.cpp`, `src/Visual Studio solution/bridgecommand-bc.vcxproj`
+- **What:**
+  1. Add ImGui source files + WickedImGui.cpp + ImGuiOverlay.cpp to vcxproj (7 files)
+  2. Compile ImGui HLSL shaders to CSO (bin/ImGuiVS.cso, bin/ImGuiPS.cso) via fxc.exe
+  3. Subclass wi::RenderPath3D as BCRenderPath to call ImGuiRender in Compose()
+  4. Wire ImGuiInit, ImGuiNewFrame, overlay.setSimulationData(), overlay.render() into game loop
+  5. Feed mouse position/buttons and display size to ImGui IO each frame
+  6. Guard ship controls (arrow keys) when ImGuiWantsKeyboard(), guard camera drag when ImGuiWantsMouse()
+- **Verify:** Compass, speed, rudder, depth, engine instruments display. F5-F8 palettes work.
+- [x] Done (2026-02-15: Full ImGui HUD integration. BCRenderPath hooks ImGuiRender into WE Compose pass. SimulationHUDData populated with heading, speed, rudder, engine, wheel angle, sim time each frame.)
+
+### 2B-10d: Integrate Sound into WickedMain
+- **Files:** `src/WickedMain.cpp`
+- **What:**
+  1. Create Sound instance after WE warmup, load 4 WAV files from bin/Sounds/
+  2. Call StartSound() with wave ambient at 30% volume
+  3. Update engine volume/pitch from thrust lever each frame (vol = |engine|*0.5, pitch = 0.5+0.5*|engine|)
+  4. H key toggles horn sound on/off
+- **Verify:** Engine sound varies with throttle, wave ambient plays, H key honks horn
+- [x] Done (2026-02-15: PortAudio Sound class integrated. Engine volume/pitch tracks thrust lever. Horn via H key with state tracking.)
+
+### 2B-10e: Add interactive GUI controls (engine slider, wheel)
+
+- **Files:** `src/gui/ImGuiOverlay.hpp`, `src/gui/ImGuiOverlay.cpp`, `src/WickedMain.cpp`
+- **What:**
+  1. Add `renderControls()` to ImGuiOverlay with vertical engine slider (-100% to +100%) and horizontal wheel slider (-30 to +30 degrees)
+  2. Two-way binding: `setControlValues()` before render, `getControlEngine()`/`getControlWheel()` after
+  3. `isControlActive()` flag prevents keyboard input from overriding GUI slider drag
+  4. Color-coded: Port=red, Starboard=green, Ahead/Astern labels
+  5. Tick marks on engine slider at standard power settings
+- **Verify:** Engine slider and wheel slider respond to mouse drag. Arrow keys still work when not dragging. Values reflect in HUD instruments.
+- [x] Done (2026-02-15: Engine and Wheel ImGui windows with VSliderFloat/SliderFloat. Two-way control binding with WickedMain game loop. guiControlActive guard on keyboard input.)
+
+### 2B-10f: Fix ImGui shader loading crash
+
+- **File:** `src/graphics/wicked/WickedImGui.cpp`
+- **What:** `wi::renderer::LoadShader` looks in WE's shader directories, not `bin/`. CSO files in `bin/` were never found, creating invalid PSO. Fix: load CSOs directly via `wi::helper::FileRead` + `GetDevice()->CreateShader()`. Add `IsValid()` check before PSO creation.
+- **Verify:** No crash on scenario selection. ImGui HUD renders correctly.
+- [x] Done (2026-02-15: Direct CSO loading bypasses WE shader path resolution. Shader validity check prevents crash if CSOs missing.)
+
+### 2B-10g: Fix depth sounder (terrain height query)
+
+- **File:** `src/WickedMain.cpp`
+- **What:** Depth sounder displayed 0.0m because HUD data never queried terrain height. Fix: call `terrainNode->getHeightAt(ownShipX, ownShipZ)` at ship position each frame, add terrain Y offset, clamp to non-negative.
+- **Verify:** Depth display shows actual depth below keel; changes as ship moves over varying bathymetry.
+- [x] Done (2026-02-15: `hudData.depth = max(0, -(terrainNode->getHeightAt(x,z) + terrainNode->getPosition().y))`)
+
+### 2B-10h: Tune ship kinematics for realism
+
+- **File:** `src/WickedMain.cpp`
+- **What:** Ship was unrealistically fast and responsive. Tuned:
+  - Engine lever rate: 0.5/s -> 0.2/s (~5s full travel, telegraph-style)
+  - Rudder rate: 30 deg/s -> 5 deg/s (realistic hydraulic steering)
+  - Rudder return: 15 deg/s -> 3 deg/s
+  - Speed approach coefficient: 0.3 -> 0.04 (~60s to full speed)
+  - Turn rate: rudder \* |speed| \* 0.02 -> \* 0.004 (35deg rudder at 12kn = ~1.5 deg/s)
+- **Verify:** Ship feels heavy and slow to respond. ~60s to reach full speed. Helm takes several seconds to reach full angle.
+- [x] Done (2026-02-15)
+
+### 2B-10i: Add wave heading disturbance
+
+- **File:** `src/WickedMain.cpp`
+- **What:** Heading repeater was rock-steady. Added 3-frequency sinusoidal yaw disturbance scaled by Beaufort number: `sin(0.7t)*0.3 + sin(1.3t+1)*0.2 + sin(2.1t+2.5)*0.1`, multiplied by `beaufort/4`. Creates realistic heading waver on the compass.
+- **Verify:** Compass reading wavers slightly when underway. More pronounced in heavier seas.
+- [x] Done (2026-02-15: Added `beaufortScale` variable to pass Beaufort from ocean setup into game loop)
 
 ---
 
@@ -3542,6 +3635,6 @@ After each phase, verify:
 
 ---
 
-**Document Version:** 2.0
-**Last Updated:** February 14, 2026
-**Total Tasks:** 165 (154 completed, 7 deferred/blocked, 4 remaining: 2B-10 Wicked test, 0A-07, 9-04, 9-05)
+**Document Version:** 2.2
+**Last Updated:** February 15, 2026
+**Total Tasks:** 167 (158 completed, 7 deferred/blocked, 2 remaining: 2B-10 Wicked test, 0A-07)

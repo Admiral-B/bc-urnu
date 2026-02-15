@@ -8,10 +8,17 @@
 #include "graphics/wicked/WickedWater.hpp"
 #include "graphics/wicked/WickedTerrainNode.hpp"
 #include "graphics/wicked/WickedModelImporter.hpp"
+#include "graphics/wicked/WickedImGui.hpp"
+#include "gui/ImGuiOverlay.hpp"
 #include "IrrlichtModelConverter.hpp"
+#include "SimulationBridge.hpp"
 #include "IniFile.hpp"
 #include "Utilities.hpp"
 #include "Constants.hpp"
+#include "Sound.hpp"
+
+// ImGui header needed for IO access in game loop
+#include "graphics/wicked/imgui/imgui.h"
 
 #include <iostream>
 #include <fstream>
@@ -98,6 +105,15 @@ static float camTargetZ = 0.0f;
 static bool mouseRightDown = false;
 static bool mouseLeftDown = false;
 static int lastMouseX = 0, lastMouseY = 0;
+
+// RenderPath subclass to hook ImGui rendering into WE's Compose pass
+class BCRenderPath : public wi::RenderPath3D {
+public:
+    void Compose(wi::graphics::CommandList cmd) const override {
+        wi::RenderPath3D::Compose(cmd);
+        bc::graphics::wicked::ImGuiRender(cmd);
+    }
+};
 
 // Coordinate conversion: replicates Terrain::longToX() / latToZ()
 struct CoordConverter {
@@ -250,7 +266,23 @@ static wi::ecs::Entity createWEMeshFromConverted(wi::scene::Scene& scene,
                 texPath = modelDir + textureNames[i];
             }
             if (!texPath.empty()) {
+                // Normalize backslashes to forward slashes (WE convention)
+                std::replace(texPath.begin(), texPath.end(), '\\', '/');
+                // Convert relative paths to absolute (WE resolves from internal root)
+                if (texPath.find(':') == std::string::npos && !texPath.empty()) {
+                    texPath = wi::helper::GetCurrentPath() + "/" + texPath;
+                }
                 material->textures[wi::scene::MaterialComponent::BASECOLORMAP].name = texPath;
+                // Explicitly pre-load texture into resource manager before CreateRenderData
+                // (CreateRenderData queues async load but may not resolve without this)
+                if (wi::helper::FileExists(texPath)) {
+                    material->textures[wi::scene::MaterialComponent::BASECOLORMAP].resource =
+                        wi::resourcemanager::Load(texPath);
+                    weLog("    Texture[" + std::to_string(i) + "]: " + texPath + " [OK]");
+                } else {
+                    weLog("    Texture[" + std::to_string(i) + "]: " + texPath + " [MISSING]");
+                    weLog("      Raw Irrlicht name: " + sub.material.textureName);
+                }
             }
 
             // Models from mixed formats (.x=CW, .3ds=CCW winding), render both sides
@@ -260,9 +292,9 @@ static wi::ecs::Entity createWEMeshFromConverted(wi::scene::Scene& scene,
             if (sub.material.a < 0.99f) {
                 material->userBlendMode = wi::enums::BLENDMODE_ALPHA;
                 material->SetCastShadow(false);
-                // Make semi-transparent materials more see-through for bridge windows
-                if (material->baseColor.w > 0.3f) {
-                    material->baseColor.w *= 0.4f;
+                // Make semi-transparent materials nearly invisible for bridge windows
+                if (material->baseColor.w > 0.01f) {
+                    material->baseColor.w *= 0.05f;
                 }
             }
 
@@ -511,7 +543,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     }
 
     // Create 3D render path
-    wi::RenderPath3D renderPath;
+    BCRenderPath renderPath;
     renderPath.setSSREnabled(true);
     renderPath.setFXAAEnabled(true);
     renderPath.setBloomEnabled(true);
@@ -535,6 +567,23 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     }
     weLog("  Wicked Engine initialized.");
 
+    // --- Initialize ImGui overlay ---
+    bc::graphics::wicked::ImGuiInit(hWnd);
+    bc::gui::ImGuiOverlay overlay;
+    overlay.init(width, height);
+    weLog("  ImGui overlay initialized.");
+
+    // --- Initialize Sound ---
+    Sound sound;
+    sound.load("Sounds/Engine.wav", "Sounds/Bwave.wav",
+               "Sounds/horn.wav", "Sounds/Alarm.wav");
+    sound.setVolumeEngine(0.0f);
+    sound.setVolumeWave(0.3f);
+    sound.setVolumeHorn(0.0f);
+    sound.setVolumeAlarm(0.0f);
+    sound.StartSound();
+    weLog("  Sound system initialized.");
+
     // --- Set up the scene ---
     wi::scene::Scene& scene = wi::scene::GetScene();
     wi::scene::CameraComponent& camera = wi::scene::GetCamera();
@@ -547,7 +596,10 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     float ownShipHeading = scenarioData.ownShipData.initialBearing;
     float ownShipSpeed = scenarioData.ownShipData.initialSpeed; // knots
     float ownShipRudder = 0; // degrees (-35 to 35)
-    float ownShipEngine = 0; // -1.0 to 1.0
+    float ownShipPortEngine = 0; // -1.0 to 1.0
+    float ownShipStbdEngine = 0; // -1.0 to 1.0
+    float ownShipBowThruster = 0; // -1.0 to 1.0
+    float beaufortScale = 3.0f; // sea state for wave heading disturbance
     float ownShipScaleFactor = 1.0f;
     float ownShipHeightCorr = 0;
     float cameraViewX = 0, cameraViewY = 10.0f, cameraViewZ = 0; // bridge position in world coords
@@ -613,6 +665,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     weLog("  Setting up ocean...");
     float beaufort = scenarioData.weather;
     if (beaufort < 0) beaufort = 3.0f;
+    beaufortScale = beaufort;
     try {
         ocean.load(&scene, beaufort);
         weLog("  Ocean initialized (Beaufort " + std::to_string(beaufort) + ")");
@@ -889,6 +942,13 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     }
 
     weLog("  Scene setup complete.");
+
+    // --- Initialize full SimulationModel via headless Irrlicht device ---
+    weLog("  Initializing SimulationBridge (physics/AI)...");
+    SimBridge::init(&sound, scenarioData);
+    SimBridge::start();
+    weLog("  SimulationBridge ready.");
+
     weLog("Entering Wicked Engine render loop...");
     weLog("  Controls: Mouse-drag=look, WASD=move, O=orbit/bridge, Scroll=zoom(orbit)/FOV(bridge), ESC=quit");
 
@@ -901,6 +961,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
 
     // Timing for simulation
     auto lastFrameTime = std::chrono::high_resolution_clock::now();
+    float totalSimTime = 0.0f;
     static constexpr float KNOTS_TO_MPS = 0.514444f; // 1 knot = 0.514444 m/s
     static constexpr float NM_TO_M = 1852.0f;        // 1 nautical mile = 1852 m
 
@@ -915,6 +976,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             float dt = std::chrono::duration<float>(now - lastFrameTime).count();
             dt = std::min(dt, 0.1f); // clamp to prevent huge jumps
             lastFrameTime = now;
+            totalSimTime += dt;
 
             // ESC = quit
             if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) {
@@ -923,43 +985,50 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             }
 
             // ===== OWN SHIP CONTROLS =====
-            // Arrow Up/Down: engine ahead/astern
-            if (GetAsyncKeyState(VK_UP) & 0x8000) {
-                ownShipEngine = std::min(1.0f, ownShipEngine + 0.5f * dt);
+            // Skip keyboard controls if ImGui wants input or GUI slider is active
+            bool imguiWantsKB = bc::graphics::wicked::ImGuiWantsKeyboard();
+            bool guiControlActive = overlay.isControlActive();
+            // Arrow Up/Down: engine ahead/astern (telegraph-style, ~5s full travel)
+            // Both engines move together via keyboard
+            if (!imguiWantsKB && !guiControlActive && GetAsyncKeyState(VK_UP) & 0x8000) {
+                ownShipPortEngine = std::min(1.0f, ownShipPortEngine + 0.2f * dt);
+                ownShipStbdEngine = std::min(1.0f, ownShipStbdEngine + 0.2f * dt);
             }
-            if (GetAsyncKeyState(VK_DOWN) & 0x8000) {
-                ownShipEngine = std::max(-1.0f, ownShipEngine - 0.5f * dt);
+            if (!imguiWantsKB && !guiControlActive && GetAsyncKeyState(VK_DOWN) & 0x8000) {
+                ownShipPortEngine = std::max(-1.0f, ownShipPortEngine - 0.2f * dt);
+                ownShipStbdEngine = std::max(-1.0f, ownShipStbdEngine - 0.2f * dt);
             }
-            // Arrow Left/Right: rudder
-            if (GetAsyncKeyState(VK_LEFT) & 0x8000) {
-                ownShipRudder = std::max(-35.0f, ownShipRudder - 30.0f * dt);
-            } else if (GetAsyncKeyState(VK_RIGHT) & 0x8000) {
-                ownShipRudder = std::min(35.0f, ownShipRudder + 30.0f * dt);
-            } else {
-                // Rudder returns to center when no key pressed
-                if (ownShipRudder > 0.5f) ownShipRudder -= 15.0f * dt;
-                else if (ownShipRudder < -0.5f) ownShipRudder += 15.0f * dt;
+            // Arrow Left/Right: wheel (helm rate ~5 deg/s, realistic for hydraulic steering)
+            if (!imguiWantsKB && !guiControlActive && GetAsyncKeyState(VK_LEFT) & 0x8000) {
+                ownShipRudder = std::max(-35.0f, ownShipRudder - 5.0f * dt);
+            } else if (!imguiWantsKB && !guiControlActive && GetAsyncKeyState(VK_RIGHT) & 0x8000) {
+                ownShipRudder = std::min(35.0f, ownShipRudder + 5.0f * dt);
+            } else if (!guiControlActive) {
+                // Rudder returns to center slowly when no key pressed
+                if (ownShipRudder > 0.5f) ownShipRudder -= 3.0f * dt;
+                else if (ownShipRudder < -0.5f) ownShipRudder += 3.0f * dt;
                 else ownShipRudder = 0;
             }
 
-            // Simple own ship physics
-            float maxSpeedKnots = 16.0f; // typical max speed
-            float engineForce = ownShipEngine * maxSpeedKnots; // simplified: engine directly targets speed
-            float speedDiff = engineForce - ownShipSpeed;
-            ownShipSpeed += speedDiff * 0.3f * dt; // smooth approach to target speed
-            if (ownShipSpeed < -5.0f) ownShipSpeed = -5.0f; // limit astern
+            // ===== SIMULATION MODEL UPDATE =====
+            // Send controls to SimulationModel
+            SimBridge::setPortEngine(ownShipPortEngine);
+            SimBridge::setStbdEngine(ownShipStbdEngine);
+            SimBridge::setWheel(ownShipRudder);
+            SimBridge::setBowThruster(ownShipBowThruster);
 
-            // Rudder turns ship (faster at higher speeds)
-            float turnRate = ownShipRudder * std::abs(ownShipSpeed) * 0.02f; // deg/s
-            ownShipHeading += turnRate * dt;
-            if (ownShipHeading < 0) ownShipHeading += 360.0f;
-            if (ownShipHeading >= 360.0f) ownShipHeading -= 360.0f;
+            // Advance physics, AI, buoys, tide, wind, etc.
+            SimBridge::update();
 
-            // Move own ship
-            float ownSpeedMps = ownShipSpeed * KNOTS_TO_MPS;
+            // Read own ship state back from SimulationModel
+            ownShipX = SimBridge::getPosX();
+            ownShipZ = SimBridge::getPosZ();
+            ownShipHeading = SimBridge::getHeading();
+            ownShipSpeed = SimBridge::getSOG() / KNOTS_TO_MPS; // m/s -> knots
+            ownShipRudder = SimBridge::getRudder();
+            beaufortScale = SimBridge::getWeather();
+
             float headRad = ownShipHeading * (float)M_PI / 180.0f;
-            ownShipX += std::sin(headRad) * ownSpeedMps * dt;
-            ownShipZ += std::cos(headRad) * ownSpeedMps * dt;
 
             // Update own ship entity position
             if (ownShipEntity != wi::ecs::INVALID_ENTITY) {
@@ -976,35 +1045,17 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 camPosZ = ownShipZ - vxScaled * std::sin(headRad) + vzScaled * std::cos(headRad);
             }
 
-            // ===== OTHER SHIP MOVEMENT =====
-            for (size_t s = 0; s < otherShipStates.size(); s++) {
-                auto& st = otherShipStates[s];
-                const auto& shipData = scenarioData.otherShipsData[s];
-                if (st.currentLeg >= (int)shipData.legs.size()) continue;
-
-                const auto& leg = shipData.legs[st.currentLeg];
-                if (leg.speed <= 0) continue; // stationary
-
-                // Move along current leg
-                float moveDistNm = (leg.speed * KNOTS_TO_MPS * dt) / NM_TO_M;
-                st.distTravelled += moveDistNm;
-
-                // Check if we've completed this leg
-                if (st.distTravelled >= leg.distance && st.currentLeg + 1 < (int)shipData.legs.size()) {
-                    st.distTravelled = 0;
-                    st.currentLeg++;
-                    st.heading = shipData.legs[st.currentLeg].bearing;
-                    st.speed = shipData.legs[st.currentLeg].speed;
+            // ===== OTHER SHIP POSITIONS (from SimulationModel AI) =====
+            {
+                int numOther = SimBridge::getNumberOfOtherShips();
+                for (int s = 0; s < numOther && s < (int)otherShipStates.size(); s++) {
+                    auto& st = otherShipStates[s];
+                    st.x = SimBridge::getOtherShipPosX(s);
+                    st.z = SimBridge::getOtherShipPosZ(s);
+                    st.heading = SimBridge::getOtherShipHeading(s);
+                    setEntityTransform(scene, st.entity, st.x, st.heightCorr, st.z,
+                                       st.heading, st.scaleFactor);
                 }
-
-                // Move in world coords
-                float moveM = leg.speed * KNOTS_TO_MPS * dt;
-                float legHeadRad = st.heading * (float)M_PI / 180.0f;
-                st.x += std::sin(legHeadRad) * moveM;
-                st.z += std::cos(legHeadRad) * moveM;
-
-                setEntityTransform(scene, st.entity, st.x, st.heightCorr, st.z,
-                                   st.heading, st.scaleFactor);
             }
 
             // Toggle orbit/bridge mode with 'O'
@@ -1035,7 +1086,8 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
 
             bool lbDown = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
             bool rbDown = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
-            bool anyMouseDrag = lbDown || rbDown;
+            bool imguiWantsMouse = bc::graphics::wicked::ImGuiWantsMouse();
+            bool anyMouseDrag = (lbDown || rbDown) && !imguiWantsMouse;
 
             if (anyMouseDrag) {
                 if (!mouseLeftDown && !mouseRightDown) {
@@ -1129,17 +1181,67 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             DirectX::XMMATRIX invView = DirectX::XMMatrixInverse(nullptr, viewMat);
             camera.TransformCamera(invView);
 
-            // Update window title with ship status HUD
+            // ===== IMGUI HUD =====
+            {
+                // Feed input state to ImGui
+                ImGuiIO& io = ImGui::GetIO();
+                io.DisplaySize = ImVec2((float)width, (float)height);
+                io.DeltaTime = dt > 0 ? dt : 1.0f / 60.0f;
+                io.MousePos = ImVec2((float)mousePos.x, (float)mousePos.y);
+                io.MouseDown[0] = lbDown;
+                io.MouseDown[1] = rbDown;
+
+                bc::graphics::wicked::ImGuiNewFrame();
+
+                // Pass current control values to overlay sliders
+                overlay.setControlValues(ownShipPortEngine, ownShipStbdEngine, ownShipRudder, ownShipBowThruster);
+
+                // Populate HUD data from SimulationModel
+                bc::gui::SimulationHUDData hudData;
+                hudData.heading = SimBridge::getHeading();
+                hudData.courseOverGround = SimBridge::getCOG();
+                hudData.speedOverGround = SimBridge::getSOG() / KNOTS_TO_MPS; // knots
+                hudData.speedThroughWater = SimBridge::getSTW() / KNOTS_TO_MPS; // knots
+                hudData.rudderAngle = SimBridge::getRudder();
+                hudData.thrustLever = SimBridge::getPortEngine();
+                hudData.engineRPM = SimBridge::getPortEngineRPM();
+                hudData.wheelAngle = SimBridge::getWheel();
+                hudData.depth = SimBridge::getDepth();
+                hudData.rateOfTurn = SimBridge::getRateOfTurn();
+                hudData.windSpeed = SimBridge::getWindSpeed();
+                hudData.windDirection = SimBridge::getWindDirection();
+                hudData.simulationTime = totalSimTime;
+                overlay.setSimulationData(hudData);
+                overlay.render();
+
+                // Read back control values (may have been modified by GUI sliders)
+                ownShipPortEngine = overlay.getControlPortEngine();
+                ownShipStbdEngine = overlay.getControlStbdEngine();
+                ownShipRudder = overlay.getControlWheel();
+                ownShipBowThruster = overlay.getControlBowThruster();
+            }
+
+            // ===== SOUND UPDATE =====
+            // Engine/alarm sounds handled by SimulationModel.
+            // Horn triggered by keyboard here.
+            {
+                static bool hornActive = false;
+                if (GetAsyncKeyState('H') & 0x8000) {
+                    if (!hornActive) { sound.setVolumeHorn(1.0f); hornActive = true; }
+                } else {
+                    if (hornActive) { sound.setVolumeHorn(0.0f); hornActive = false; }
+                }
+            }
+
+            // Update window title
             {
                 int hdg = (int)std::round(ownShipHeading) % 360;
-                int spd = (int)std::round(std::abs(ownShipSpeed) * 10.0f);
-                int eng = (int)std::round(ownShipEngine * 100.0f);
-                int rud = (int)std::round(ownShipRudder);
                 char buf[256];
                 snprintf(buf, sizeof(buf),
-                    "Bridge Command (WE DX12) | HDG %03d | SPD %.1f kn | ENG %d%% | RUD %d | "
-                    "Arrow keys: engine/rudder, O: orbit, Mouse: look, ESC: quit",
-                    hdg, spd / 10.0f, eng, rud);
+                    "Bridge Command (WE DX12) | HDG %03d | SPD %.1f kn | ENG %d%% | RUD %d",
+                    hdg, std::abs(ownShipSpeed),
+                    (int)std::round((ownShipPortEngine + ownShipStbdEngine) * 50.0f),
+                    (int)std::round(ownShipRudder));
                 SetWindowTextA(hWnd, buf);
             }
 
@@ -1148,7 +1250,10 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     }
 
     // Cleanup
+    weLog("Shutting down SimulationBridge...");
+    SimBridge::shutdown();
     weLog("Shutting down Wicked Engine...");
+    bc::graphics::wicked::ImGuiShutdown();
     g_convertedMeshCache.clear();
     g_sharedPlaceholderMeshes.clear();
     terrainNode.reset();

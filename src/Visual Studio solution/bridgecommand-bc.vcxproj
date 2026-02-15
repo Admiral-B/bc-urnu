@@ -235,6 +235,7 @@
     <ClCompile Include="..\iprof.cpp" />
     <ClCompile Include="..\WickedMain.cpp" />
     <ClCompile Include="..\IrrlichtModelConverter.cpp" />
+    <ClCompile Include="..\SimulationBridge.cpp" />
     <ClCompile Include="..\graphics\wicked\WickedRenderer.cpp" />
     <ClCompile Include="..\graphics\wicked\WickedWater.cpp" />
     <ClCompile Include="..\graphics\wicked\WickedTerrainNode.cpp" />
@@ -243,6 +244,12 @@
     <ClCompile Include="..\graphics\wicked\WickedVRView.cpp" />
     <ClCompile Include="..\graphics\wicked\WickedKelvinWake.cpp" />
     <ClCompile Include="..\graphics\wicked\WickedMultiCascadeOcean.cpp" />
+    <ClCompile Include="..\graphics\wicked\WickedImGui.cpp" />
+    <ClCompile Include="..\graphics\wicked\imgui\imgui.cpp" />
+    <ClCompile Include="..\graphics\wicked\imgui\imgui_draw.cpp" />
+    <ClCompile Include="..\graphics\wicked\imgui\imgui_tables.cpp" />
+    <ClCompile Include="..\graphics\wicked\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="..\gui\ImGuiOverlay.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\AIS.hpp" />
@@ -314,6 +321,7 @@
     <ClInclude Include="..\hitime.hpp" />
     <ClInclude Include="..\WickedMain.hpp" />
     <ClInclude Include="..\IrrlichtModelConverter.hpp" />
+    <ClInclude Include="..\SimulationBridge.hpp" />
     <ClInclude Include="..\graphics\IRenderer.hpp" />
     <ClInclude Include="..\graphics\ISceneManager.hpp" />
     <ClInclude Include="..\graphics\ISceneNode.hpp" />
@@ -328,6 +336,8 @@
     <ClInclude Include="..\graphics\wicked\WickedTerrainNode.hpp" />
     <ClInclude Include="..\graphics\wicked\WickedMultiView.hpp" />
     <ClInclude Include="..\graphics\wicked\WickedModelImporter.hpp" />
+    <ClInclude Include="..\graphics\wicked\WickedImGui.hpp" />
+    <ClInclude Include="..\gui\ImGuiOverlay.hpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="..\icon.rc" />

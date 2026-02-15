@@ -33,6 +33,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 	float Sound::getVolumeEngine() const {return 0;}
 	float Sound::getVolumeHorn() const {return 0;}
 	float Sound::getVolumeAlarm() const {return 0;}
+	void Sound::setEnginePitch(float pitch) {}
 
 #else // WITH_SOUND
 
@@ -47,6 +48,8 @@ float Sound::alarmVolume=0.0;
 bool Sound::waveSoundLoaded = false;
 bool Sound::hornSoundLoaded = false;
 bool Sound::alarmSoundLoaded = false;
+float Sound::enginePitchValue = 1.0f;
+double Sound::engineReadPos = 0;
 
 Sound::Sound() {
 
@@ -195,6 +198,12 @@ float Sound::getVolumeHorn() const {
 
 float Sound::getVolumeAlarm() const {
 	return Sound::alarmVolume;
+}
+
+void Sound::setEnginePitch(float pitch) {
+	if (pitch < 0.25f) pitch = 0.25f;
+	if (pitch > 4.0f) pitch = 4.0f;
+	Sound::enginePitchValue = pitch;
 }
 
 Sound::~Sound() {

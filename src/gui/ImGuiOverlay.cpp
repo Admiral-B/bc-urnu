@@ -40,8 +40,19 @@ void ImGuiOverlay::setSimulationData(const SimulationHUDData& data) {
     if (depthHistoryIndex_ == 0) depthHistoryFull_ = true;
 }
 
+void ImGuiOverlay::setControlValues(float portEngine, float stbdEngine, float wheel, float bowThruster) {
+    // Only update if user isn't actively dragging a slider
+    if (!controlActive_) {
+        controlPortEngine_ = portEngine;
+        controlStbdEngine_ = stbdEngine;
+        controlWheel_ = wheel;
+        controlBowThruster_ = bowThruster;
+    }
+}
+
 void ImGuiOverlay::render() {
     processKeyboardShortcuts();
+    controlActive_ = false; // reset each frame, renderControls sets if active
 
     if (showCompass_) renderCompass();
     if (showSpeed_) renderSpeedDisplay();
@@ -49,21 +60,22 @@ void ImGuiOverlay::render() {
     if (showDepth_) renderDepthDisplay();
     if (showEngine_) renderEngineDisplay();
     if (showWind_) renderWindDisplay();
+    if (showControls_) renderControls();
 }
 
 // -- Compass ----------------------------------------------------------
 
 void ImGuiOverlay::renderCompass() {
-    ImGui::SetNextWindowSize(ImVec2(200, 220), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(400, 70), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(
-        ImVec2(screenWidth_ * 0.5f - 100, 10), ImGuiCond_FirstUseEver);
+        ImVec2(screenWidth_ * 0.5f - 200, 10), ImGuiCond_FirstUseEver);
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse
-        | ImGuiWindowFlags_NoScrollbar;
+        | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoTitleBar;
     if (layoutLocked_)
         flags |= ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
 
-    if (!ImGui::Begin("Compass", nullptr, flags)) {
+    if (!ImGui::Begin("Heading", nullptr, flags)) {
         ImGui::End();
         return;
     }
@@ -71,53 +83,91 @@ void ImGuiOverlay::renderCompass() {
     ImDrawList* draw = ImGui::GetWindowDrawList();
     ImVec2 winPos = ImGui::GetCursorScreenPos();
     float avail = ImGui::GetContentRegionAvail().x;
-    float radius = avail * 0.4f;
-    ImVec2 center(winPos.x + avail * 0.5f, winPos.y + radius + 5);
+    float tapeHeight = 30.0f;
+    float tapeTop = winPos.y;
+    float tapeBot = tapeTop + tapeHeight;
+    float centerX = winPos.x + avail * 0.5f;
 
-    // Background circle
-    draw->AddCircleFilled(center, radius + 2, IM_COL32(30, 30, 30, 200));
-    draw->AddCircle(center, radius + 2, IM_COL32(180, 180, 180, 255), 0, 2.0f);
+    // Pixels per degree -- how many degrees visible across the tape
+    float degsVisible = 60.0f;
+    float pxPerDeg = avail / degsVisible;
 
-    // Cardinal and intercardinal marks
-    const char* labels[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
-    for (int i = 0; i < 8; i++) {
-        float angle = i * 45.0f - data_.heading;
-        float rad = angle * DEG_TO_RAD;
-        float x = center.x + std::sin(rad) * (radius - 12);
-        float y = center.y - std::cos(rad) * (radius - 12);
+    // Background
+    draw->AddRectFilled(
+        ImVec2(winPos.x, tapeTop),
+        ImVec2(winPos.x + avail, tapeBot),
+        IM_COL32(20, 20, 25, 220), 2.0f);
 
-        ImU32 col = (i == 0) ? IM_COL32(255, 80, 80, 255) : IM_COL32(200, 200, 200, 255);
-        ImVec2 textSize = ImGui::CalcTextSize(labels[i]);
-        draw->AddText(ImVec2(x - textSize.x * 0.5f, y - textSize.y * 0.5f), col, labels[i]);
+    // Clip to tape area
+    draw->PushClipRect(ImVec2(winPos.x, tapeTop), ImVec2(winPos.x + avail, tapeBot + 16));
+
+    // Cardinal/intercardinal labels
+    const char* cardinals[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+    float cardinalDegs[] = {0, 45, 90, 135, 180, 225, 270, 315};
+
+    // Draw ticks and labels for every degree in range
+    float hdg = data_.heading;
+    float halfRange = degsVisible * 0.5f + 5; // extra margin
+
+    for (int d = -((int)halfRange + 1); d <= (int)halfRange + 1; d++) {
+        float deg = std::fmod(hdg + d + 720.0f, 360.0f);
+        int ideg = ((int)std::round(deg)) % 360;
+        if (ideg < 0) ideg += 360;
+
+        float xPos = centerX + d * pxPerDeg;
+        if (xPos < winPos.x - 20 || xPos > winPos.x + avail + 20) continue;
+
+        if (ideg % 10 == 0) {
+            // Major tick every 10 degrees
+            float tickLen = (ideg % 30 == 0) ? tapeHeight * 0.6f : tapeHeight * 0.4f;
+            draw->AddLine(
+                ImVec2(xPos, tapeBot),
+                ImVec2(xPos, tapeBot - tickLen),
+                IM_COL32(160, 160, 160, 255), 1.0f);
+
+            // Degree number for every 10
+            char degStr[8];
+            snprintf(degStr, sizeof(degStr), "%03d", ideg);
+            ImVec2 textSize = ImGui::CalcTextSize(degStr);
+            draw->AddText(
+                ImVec2(xPos - textSize.x * 0.5f, tapeTop + 1),
+                IM_COL32(150, 150, 150, 220), degStr);
+        } else if (ideg % 5 == 0) {
+            // Minor tick every 5 degrees
+            draw->AddLine(
+                ImVec2(xPos, tapeBot),
+                ImVec2(xPos, tapeBot - tapeHeight * 0.25f),
+                IM_COL32(100, 100, 100, 200), 1.0f);
+        }
+
+        // Cardinal labels at exact cardinal positions
+        for (int c = 0; c < 8; c++) {
+            if (ideg == (int)cardinalDegs[c]) {
+                ImU32 col = (c == 0) ? IM_COL32(255, 80, 80, 255) : IM_COL32(220, 200, 100, 255);
+                ImVec2 textSize = ImGui::CalcTextSize(cardinals[c]);
+                draw->AddText(
+                    ImVec2(xPos - textSize.x * 0.5f, tapeBot - tapeHeight + 1),
+                    col, cardinals[c]);
+            }
+        }
     }
 
-    // Degree tick marks
-    for (int deg = 0; deg < 360; deg += 10) {
-        float angle = deg - data_.heading;
-        float rad = angle * DEG_TO_RAD;
-        float innerR = (deg % 30 == 0) ? radius - 22 : radius - 18;
-        float x1 = center.x + std::sin(rad) * innerR;
-        float y1 = center.y - std::cos(rad) * innerR;
-        float x2 = center.x + std::sin(rad) * radius;
-        float y2 = center.y - std::cos(rad) * radius;
-        draw->AddLine(ImVec2(x1, y1), ImVec2(x2, y2), IM_COL32(160, 160, 160, 255), 1.0f);
-    }
+    draw->PopClipRect();
 
-    // Ship heading indicator (top triangle)
+    // Center lubber line (fixed marker showing current heading)
     draw->AddTriangleFilled(
-        ImVec2(center.x, center.y - radius - 6),
-        ImVec2(center.x - 6, center.y - radius + 4),
-        ImVec2(center.x + 6, center.y - radius + 4),
-        IM_COL32(255, 200, 0, 255)
-    );
+        ImVec2(centerX, tapeBot + 2),
+        ImVec2(centerX - 5, tapeBot + 10),
+        ImVec2(centerX + 5, tapeBot + 10),
+        IM_COL32(255, 200, 0, 255));
+    draw->AddLine(
+        ImVec2(centerX, tapeTop), ImVec2(centerX, tapeBot),
+        IM_COL32(255, 200, 0, 180), 2.0f);
 
-    // Center dot
-    draw->AddCircleFilled(center, 3, IM_COL32(255, 200, 0, 255));
-
-    // Numeric heading readout below compass
-    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + radius * 2 + 15);
+    // Numeric heading readout below tape
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + tapeHeight + 12);
     char headingStr[32];
-    snprintf(headingStr, sizeof(headingStr), "%03.1f", data_.heading);
+    snprintf(headingStr, sizeof(headingStr), "%05.1f", data_.heading);
     float textW = ImGui::CalcTextSize(headingStr).x;
     ImGui::SetCursorPosX((avail - textW) * 0.5f);
     ImGui::TextColored(ImVec4(1, 0.9f, 0.3f, 1), "%s", headingStr);
@@ -416,6 +466,116 @@ void ImGuiOverlay::renderWindDisplay() {
     ImGui::End();
 }
 
+// -- Ship Controls (interactive) --------------------------------------
+
+void ImGuiOverlay::renderControls() {
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar;
+    if (layoutLocked_) flags |= ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
+
+    // Helper lambda for engine vertical slider
+    auto renderEngineSlider = [&](const char* label, const char* sliderId, float& value) {
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        float avail = ImGui::GetContentRegionAvail().x;
+
+        int pct = (int)std::round(value * 100.0f);
+        ImVec4 col = (pct > 0) ? ImVec4(0.3f, 1, 0.3f, 1) :
+                     (pct < 0) ? ImVec4(1, 0.3f, 0.3f, 1) :
+                                 ImVec4(0.7f, 0.7f, 0.7f, 1);
+        // Label
+        float labelW = ImGui::CalcTextSize(label).x;
+        ImGui::SetCursorPosX((avail - labelW) * 0.5f);
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1), "%s", label);
+
+        // Percentage
+        char str[16];
+        snprintf(str, sizeof(str), "%+d%%", pct);
+        float textW = ImGui::CalcTextSize(str).x;
+        ImGui::SetCursorPosX((avail - textW) * 0.5f);
+        ImGui::TextColored(col, "%s", str);
+
+        float sliderHeight = ImGui::GetContentRegionAvail().y - 20;
+        if (sliderHeight < 50) sliderHeight = 50;
+        ImGui::SetCursorPosX((avail - 24) * 0.5f);
+        if (ImGui::VSliderFloat(sliderId, ImVec2(24, sliderHeight), &value, -1.0f, 1.0f, "")) {
+            controlActive_ = true;
+        }
+        if (ImGui::IsItemActive()) controlActive_ = true;
+
+        // Tick marks
+        ImVec2 sliderMin = ImGui::GetItemRectMin();
+        ImVec2 sliderMax = ImGui::GetItemRectMax();
+        float sh = sliderMax.y - sliderMin.y;
+        float ticks[] = {1.0f, 0.5f, 0.0f, -0.5f, -1.0f};
+        for (int t = 0; t < 5; t++) {
+            float frac = (ticks[t] + 1.0f) / 2.0f;
+            float y = sliderMax.y - frac * sh;
+            draw->AddLine(ImVec2(sliderMax.x + 1, y), ImVec2(sliderMax.x + 5, y),
+                          IM_COL32(120, 120, 120, 200), 1.0f);
+        }
+    };
+
+    // Port + Starboard engine sliders side by side
+    ImGui::SetNextWindowSize(ImVec2(140, 260), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(
+        ImVec2(10, screenHeight_ * 0.5f - 130), ImGuiCond_FirstUseEver);
+
+    if (ImGui::Begin("Engines##ctrl", nullptr, flags)) {
+        float avail = ImGui::GetContentRegionAvail().x;
+        float colW = avail * 0.5f - 4;
+
+        // Port engine (left column)
+        ImGui::BeginChild("##portCol", ImVec2(colW, 0), false);
+        renderEngineSlider("Port", "##portEng", controlPortEngine_);
+        ImGui::EndChild();
+
+        ImGui::SameLine(0, 8);
+
+        // Starboard engine (right column)
+        ImGui::BeginChild("##stbdCol", ImVec2(colW, 0), false);
+        renderEngineSlider("Stbd", "##stbdEng", controlStbdEngine_);
+        ImGui::EndChild();
+    }
+    ImGui::End();
+
+    // Bow thruster - horizontal slider
+    ImGui::SetNextWindowSize(ImVec2(180, 55), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(
+        ImVec2(10, screenHeight_ * 0.5f + 140), ImGuiCond_FirstUseEver);
+
+    if (ImGui::Begin("Bow Thruster##ctrl", nullptr, flags)) {
+        float avail = ImGui::GetContentRegionAvail().x;
+        ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 0.7f), "P");
+        ImGui::SameLine(avail - ImGui::CalcTextSize("S").x);
+        ImGui::TextColored(ImVec4(0.3f, 1, 0.3f, 0.7f), "S");
+        ImGui::SetNextItemWidth(avail);
+        if (ImGui::SliderFloat("##bowThr", &controlBowThruster_, -1.0f, 1.0f, "%+.0f%%")) {
+            controlActive_ = true;
+        }
+        if (ImGui::IsItemActive()) controlActive_ = true;
+    }
+    ImGui::End();
+
+    // Steering wheel - horizontal slider at bottom center
+    ImGui::SetNextWindowSize(ImVec2(350, 70), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(
+        ImVec2(screenWidth_ * 0.5f - 175, screenHeight_ - 80), ImGuiCond_FirstUseEver);
+
+    if (ImGui::Begin("Wheel##ctrl", nullptr, flags)) {
+        float avail = ImGui::GetContentRegionAvail().x;
+
+        ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 0.7f), "Port");
+        ImGui::SameLine(avail - ImGui::CalcTextSize("Stbd").x);
+        ImGui::TextColored(ImVec4(0.3f, 1, 0.3f, 0.7f), "Stbd");
+
+        ImGui::SetNextItemWidth(avail);
+        if (ImGui::SliderFloat("##wheel", &controlWheel_, -30.0f, 30.0f, "%.0f")) {
+            controlActive_ = true;
+        }
+        if (ImGui::IsItemActive()) controlActive_ = true;
+    }
+    ImGui::End();
+}
+
 // -- Visibility toggles -----------------------------------------------
 
 void ImGuiOverlay::showCompass(bool show) { showCompass_ = show; }
@@ -425,8 +585,10 @@ void ImGuiOverlay::showDepthDisplay(bool show) { showDepth_ = show; }
 void ImGuiOverlay::showEngineDisplay(bool show) { showEngine_ = show; }
 void ImGuiOverlay::showWindDisplay(bool show) { showWind_ = show; }
 
+void ImGuiOverlay::showControls(bool show) { showControls_ = show; }
+
 void ImGuiOverlay::showAll(bool show) {
-    showCompass_ = showSpeed_ = showRudder_ = showDepth_ = showEngine_ = showWind_ = show;
+    showCompass_ = showSpeed_ = showRudder_ = showDepth_ = showEngine_ = showWind_ = showControls_ = show;
 }
 
 void ImGuiOverlay::setLayoutLocked(bool locked) { layoutLocked_ = locked; }

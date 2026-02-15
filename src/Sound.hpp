@@ -47,6 +47,7 @@ public:
 	float getVolumeEngine() const override;
 	float getVolumeHorn() const override;
 	float getVolumeAlarm() const override;
+	void setEnginePitch(float pitch) override;
 
 #ifdef WITH_SOUND
 private:
@@ -67,6 +68,8 @@ private:
 	static float waveVolume;
 	static float engineVolume;
 	static float alarmVolume;
+	static float enginePitchValue;     // 0.5 = half speed, 1.0 = normal, 2.0 = double
+	static double engineReadPos;       // fractional read position for pitch-shifted playback
 
 	bool soundLoaded;
 	static bool waveSoundLoaded;
@@ -98,31 +101,46 @@ private:
 		/* clear output buffer */
 		memset(out, 0, sizeof(float) * frameCount * p_data->infoEngine.channels);
 
+		int channels = p_data->infoEngine.channels;
+
 		//Create four buffers, for wave, engine, horn and alarm
-		std::vector<float> engineBuffer(sizeof(float) * frameCount * p_data->infoEngine.channels);
-		std::vector<float> waveBuffer(sizeof(float) * frameCount * p_data->infoEngine.channels);
-		std::vector<float> hornBuffer(sizeof(float) * frameCount * p_data->infoEngine.channels);
-		std::vector<float> alarmBuffer(sizeof(float) * frameCount * p_data->infoEngine.channels);
+		std::vector<float> waveBuffer(frameCount * channels);
+		std::vector<float> hornBuffer(frameCount * channels);
+		std::vector<float> alarmBuffer(frameCount * channels);
 
-		/* read into buffers */
-		num_read = sf_read_float(p_data->fileEngine, engineBuffer.data(), frameCount * p_data->infoEngine.channels);
-		/*  If we couldn't read a full frameCount of samples we've reached EOF */
-		//Try to restart
-		if (num_read < frameCount)
-		{
-
-			sf_count_t seekLocation = sf_seek(p_data->fileEngine, 0, SEEK_SET);
-			if (seekLocation == -1) {
-				return paComplete;
+		// Pitch-shifted engine playback: read more samples than needed, resample
+		float pitch = enginePitchValue;
+		if (pitch < 0.25f) pitch = 0.25f;
+		if (pitch > 4.0f) pitch = 4.0f;
+		// We need frameCount output samples; read ceil(frameCount*pitch)+2 source samples
+		sf_count_t srcNeeded = (sf_count_t)(frameCount * pitch) + 2;
+		std::vector<float> engineSrc(srcNeeded * channels);
+		sf_count_t totalRead = 0;
+		while (totalRead < srcNeeded) {
+			num_read = sf_read_float(p_data->fileEngine, engineSrc.data() + totalRead * channels,
+			                         (srcNeeded - totalRead) * channels);
+			if (num_read <= 0) {
+				// Loop: seek to start
+				sf_count_t seekLocation = sf_seek(p_data->fileEngine, 0, SEEK_SET);
+				if (seekLocation == -1) return paComplete;
+				num_read = sf_read_float(p_data->fileEngine, engineSrc.data() + totalRead * channels,
+				                         (srcNeeded - totalRead) * channels);
+				if (num_read <= 0) return paComplete;
 			}
-
-			//Read again
-			/* read directly into output buffer */
-			num_read = sf_read_float(p_data->fileEngine, engineBuffer.data(), frameCount * p_data->infoEngine.channels);
-
-			/*  If we couldn't read a full frameCount of samples we've reached EOF */
-			if (num_read < frameCount) {
-				return paComplete;
+			totalRead += num_read / channels;
+		}
+		// Resample engine source to output frameCount using linear interpolation
+		std::vector<float> engineBuffer(frameCount * channels);
+		for (unsigned long i = 0; i < frameCount; i++) {
+			double srcPos = i * (double)pitch;
+			sf_count_t idx = (sf_count_t)srcPos;
+			float frac = (float)(srcPos - idx);
+			if (idx + 1 >= totalRead) idx = totalRead - 2;
+			if (idx < 0) idx = 0;
+			for (int c = 0; c < channels; c++) {
+				float s0 = engineSrc[idx * channels + c];
+				float s1 = engineSrc[(idx + 1) * channels + c];
+				engineBuffer[i * channels + c] = s0 + frac * (s1 - s0);
 			}
 		}
 

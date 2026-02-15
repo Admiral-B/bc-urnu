@@ -83,6 +83,15 @@ public:
     /// Call between ImGui::NewFrame() and ImGui::Render().
     void render();
 
+    /// Set/get ship control values (two-way binding with WickedMain).
+    /// Call setControlValues() before render(), read getControl*() after.
+    void setControlValues(float portEngine, float stbdEngine, float wheel, float bowThruster);
+    float getControlPortEngine() const { return controlPortEngine_; }
+    float getControlStbdEngine() const { return controlStbdEngine_; }
+    float getControlWheel() const { return controlWheel_; }
+    float getControlBowThruster() const { return controlBowThruster_; }
+    bool isControlActive() const { return controlActive_; }
+
     /// Show/hide individual instruments.
     void showCompass(bool show);
     void showSpeedDisplay(bool show);
@@ -90,6 +99,7 @@ public:
     void showDepthDisplay(bool show);
     void showEngineDisplay(bool show);
     void showWindDisplay(bool show);
+    void showControls(bool show);
 
     /// Show/hide all instruments.
     void showAll(bool show);
@@ -140,6 +150,14 @@ private:
     bool showDepth_ = true;
     bool showEngine_ = true;
     bool showWind_ = false;
+    bool showControls_ = true;
+
+    // Ship control state (modified by sliders, read by WickedMain)
+    float controlPortEngine_ = 0.0f;  // -1.0 to +1.0
+    float controlStbdEngine_ = 0.0f;  // -1.0 to +1.0
+    float controlWheel_ = 0.0f;       // -30.0 to +30.0 degrees
+    float controlBowThruster_ = 0.0f; // -1.0 to +1.0
+    bool controlActive_ = false;      // true if user is dragging a control slider
 
     // Rendering methods for each instrument
     void renderCompass();
@@ -148,6 +166,7 @@ private:
     void renderDepthDisplay();
     void renderEngineDisplay();
     void renderWindDisplay();
+    void renderControls();
 
     // Process keyboard shortcuts (F5-F8 for palettes, F9 for layout lock)
     void processKeyboardShortcuts();

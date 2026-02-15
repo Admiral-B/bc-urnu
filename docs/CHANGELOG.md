@@ -39,6 +39,15 @@ Keyboard shortcuts:
 
 Layout and preferences persist via `saveLayout()` / `loadLayout()`.
 
+### Interactive Ship Controls (Wicked Engine mode)
+
+- **Engine throttle slider** -- Vertical slider (-100% to +100%) with tick marks at Full/Half/Zero, Ahead/Astern labels
+- **Steering wheel slider** -- Horizontal slider (-30 to +30 degrees) with Port (red) / Starboard (green) labels
+- **Two-way binding** -- GUI sliders and keyboard (arrow keys) both work; GUI drag takes priority
+- **Depth sounder** -- Real-time terrain height query at ship position for depth below keel
+- **Ship kinematics** -- Tuned for realism: ~60s to full speed, 5 deg/s rudder rate, telegraph-style engine lever
+- **Wave heading disturbance** -- 3-frequency yaw waver scaled by Beaufort number for compass realism
+
 ### Ship Physics (MMGMode=1 ships)
 
 The **MMG (Maneuvering Modeling Group)** physics model is enabled for 8 ships:

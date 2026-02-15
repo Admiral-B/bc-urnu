@@ -85,6 +85,12 @@ static bool CreateDeviceObjects() {
          (uint32_t)IM_OFFSETOF(ImDrawVert, col), InputClassification::PER_VERTEX_DATA},
     };
 
+    // Bail out if shaders didn't load (prevents crash from invalid PSO)
+    if (!imguiVS.IsValid() || !imguiPS.IsValid()) {
+        std::cerr << "WickedImGui: Shaders invalid, skipping device object creation" << std::endl;
+        return false;
+    }
+
     // Create graphics pipeline
     PipelineStateDesc desc;
     desc.vs = &imguiVS;
@@ -105,13 +111,20 @@ static bool CreateDeviceObjects() {
 void ImGuiInit(void* platformWindow) {
     if (initialized) return;
 
-    // Load shaders - they need to be compiled .cso files alongside the executable
+    // Load shaders - read precompiled CSO files directly from bin/
+    // (wi::renderer::LoadShader looks in the wrong directories for custom shaders)
     {
-        auto shaderPath = wi::renderer::GetShaderSourcePath();
-        wi::renderer::SetShaderSourcePath(wi::helper::GetCurrentPath() + "/");
-        wi::renderer::LoadShader(ShaderStage::VS, imguiVS, "ImGuiVS.cso");
-        wi::renderer::LoadShader(ShaderStage::PS, imguiPS, "ImGuiPS.cso");
-        wi::renderer::SetShaderSourcePath(shaderPath);
+        std::string csoDir = wi::helper::GetCurrentPath() + "/";
+        wi::vector<uint8_t> vsData, psData;
+        bool vsOk = wi::helper::FileRead(csoDir + "ImGuiVS.cso", vsData);
+        bool psOk = wi::helper::FileRead(csoDir + "ImGuiPS.cso", psData);
+        if (vsOk && psOk) {
+            GetDevice()->CreateShader(ShaderStage::VS, vsData.data(), vsData.size(), &imguiVS);
+            GetDevice()->CreateShader(ShaderStage::PS, psData.data(), psData.size(), &imguiPS);
+            std::cout << "WickedImGui: Loaded CSO shaders from " << csoDir << std::endl;
+        } else {
+            std::cerr << "WickedImGui: Failed to load ImGui CSO shaders from " << csoDir << std::endl;
+        }
     }
 
     IMGUI_CHECKVERSION();
