@@ -26,7 +26,9 @@
 #include "AzimuthDial.h"
 #include "GUIRectangle.hpp"
 #include "RadarCalculation.hpp"
+#include "Network.hpp"
 #include <vector>
+#include <deque>
 #include <string>
 
 // Forward declarations
@@ -233,6 +235,13 @@ public:
     void setLinesControlsText(std::string textToShow);
     bool getAnchorLine() const;
 
+    // Chat
+    void addChatMessage(const ChatMessage& msg);
+    void openChatInput();
+    void closeChatInput(bool send);
+    bool isChatInputOpen() const;
+    std::string getChatInputText() const;
+
 private:
 
     irr::IrrlichtDevice* device;
@@ -433,6 +442,12 @@ private:
     bool manuallyTriggerClick(irr::gui::IGUIButton* button);
     bool manuallyTriggerScroll(irr::gui::IGUIScrollBar* bar);
 
+    // Chat state
+    std::deque<ChatMessage> chatMessages;
+    irr::gui::IGUIEditBox* chatEditBox = nullptr;
+    bool chatInputActive = false;
+    static const size_t MAX_CHAT_DISPLAY = 100;
+    void drawChat();
 };
 
 #endif

@@ -207,7 +207,20 @@
 
             } else {
                 //Shift and Ctrl not down
-
+                // Only handle tile map keys when not focused on a GUI edit box
+                irr::gui::IGUIElement* focused = device->getGUIEnvironment()->getFocus();
+                bool inEditBox = focused && focused->getType() == irr::gui::EGUIET_EDIT_BOX;
+                if (!inEditBox) {
+                    if (event.KeyInput.Key == irr::KEY_KEY_M) {
+                        model->toggleTileMapSource();
+                    }
+                    if (event.KeyInput.Key == irr::KEY_KEY_T) {
+                        model->setTileMapEnabled(!model->isTileMapEnabled());
+                    }
+                    if (event.KeyInput.Key == irr::KEY_KEY_L) {
+                        model->setCoastlineEnabled(!model->isCoastlineEnabled());
+                    }
+                }
             }
 		} //end of key down event
 

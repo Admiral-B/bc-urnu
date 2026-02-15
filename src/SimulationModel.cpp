@@ -1640,6 +1640,11 @@ SimulationModel::~SimulationModel()
         return ownShip.getEstimatedDisplacement();
     }
 
+    uint32_t SimulationModel::getOwnShipMMSI() const
+    {
+        return ownShip.getMMSI();
+    }
+
     float SimulationModel::getOtherShipMassEstimate(int number) const
     {
         return otherShips.getEstimatedDisplacement(number);

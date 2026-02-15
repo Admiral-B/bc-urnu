@@ -898,6 +898,23 @@ bool MyEventReceiver::OnEvent(const irr::SEvent &event)
     // From keyboard
     if (event.EventType == irr::EET_KEY_INPUT_EVENT && event.KeyInput.PressedDown)
     {
+        // Handle chat input: Enter sends, Escape cancels
+        if (gui->isChatInputOpen()) {
+            if (event.KeyInput.Key == irr::KEY_RETURN) {
+                std::string chatText = gui->getChatInputText();
+                if (!chatText.empty()) {
+                    net->sendChatMessage(chatText);
+                }
+                gui->closeChatInput(true);
+                return true;
+            } else if (event.KeyInput.Key == irr::KEY_ESCAPE) {
+                gui->closeChatInput(false);
+                return true;
+            }
+            // Let other keys pass through to the edit box
+            return false;
+        }
+
         // Check here that there isn't focus on a GUI edit box. If we are, don't process key inputs here.
         irr::gui::IGUIElement *focussedElement = device->getGUIEnvironment()->getFocus();
         if (!(focussedElement && focussedElement->getType() == irr::gui::EGUIET_EDIT_BOX))
@@ -1018,6 +1035,10 @@ bool MyEventReceiver::OnEvent(const irr::SEvent &event)
                     break;
                 case irr::KEY_KEY_H:
                     model->startHorn();
+                    break;
+
+                case irr::KEY_KEY_T:
+                    gui->openChatInput();
                     break;
 
                     // DEE_NOV22 vvvvv

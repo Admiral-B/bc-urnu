@@ -18,9 +18,18 @@
 #define __NETWORK_HPP_INCLUDED__
 
 #include <string>
+#include <vector>
+#include <deque>
 
 #include <enet/enet.h>
 #include "OperatingModeEnum.hpp"
+
+struct ChatMessage {
+    int shipIndex;
+    std::string senderName;
+    std::string text;
+    std::string timestamp;
+};
 
 //Forward declarations
 class SimulationModel;
@@ -37,6 +46,9 @@ class Network
     virtual void update() = 0;
     virtual int getPort() = 0;
     virtual void shutdownAllSecondaries(void) = 0;
+    virtual void sendChatMessage(const std::string& text) {} // Only used in multiplayer modes
+    virtual bool hasPendingChat() { return false; }
+    virtual std::deque<ChatMessage> getPendingChatMessages() { return {}; }
     virtual ~Network();
     protected:
     std::string makeNetworkLinesString(SimulationModel* model);

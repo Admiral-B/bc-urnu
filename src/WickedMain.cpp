@@ -1,0 +1,1166 @@
+#ifdef WITH_WICKED_ENGINE
+
+#include "WickedMain.hpp"
+
+// WickedEngine must be included before any Irrlicht headers
+#include "WickedEngine.h"
+
+#include "graphics/wicked/WickedWater.hpp"
+#include "graphics/wicked/WickedTerrainNode.hpp"
+#include "graphics/wicked/WickedModelImporter.hpp"
+#include "IrrlichtModelConverter.hpp"
+#include "IniFile.hpp"
+#include "Utilities.hpp"
+#include "Constants.hpp"
+
+#include <iostream>
+#include <fstream>
+#include <cmath>
+#include <cstdlib>
+#include <vector>
+#include <string>
+#include <algorithm>
+#include <chrono>
+#include <unordered_map>
+
+// Log file for diagnosing crashes (console disappears on crash)
+static std::ofstream g_weLog;
+static void weLog(const std::string& msg) {
+    if (g_weLog.is_open()) {
+        g_weLog << msg << std::endl;
+        g_weLog.flush();
+    }
+    std::cout << msg << std::endl;
+}
+static void weLogErr(const std::string& msg) {
+    if (g_weLog.is_open()) {
+        g_weLog << "ERROR: " << msg << std::endl;
+        g_weLog.flush();
+    }
+    std::cerr << "ERROR: " << msg << std::endl;
+}
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+// Wicked Engine application instance (must be global for WndProc access)
+static wi::Application* g_weApp = nullptr;
+
+static LRESULT CALLBACK WickedWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    switch (message) {
+    case WM_SIZE:
+    case WM_DPICHANGED:
+        if (g_weApp && g_weApp->is_window_active)
+            g_weApp->SetWindow(hWnd);
+        break;
+    case WM_CHAR:
+        switch (wParam) {
+        case VK_BACK:
+            wi::gui::TextInputField::DeleteFromInput();
+            break;
+        default: {
+            const wchar_t c = (const wchar_t)wParam;
+            wi::gui::TextInputField::AddInput(c);
+        } break;
+        }
+        break;
+    case WM_INPUT:
+        wi::input::rawinput::ParseMessage((void*)lParam);
+        break;
+    case WM_KILLFOCUS:
+        if (g_weApp) g_weApp->is_window_active = false;
+        break;
+    case WM_SETFOCUS:
+        if (g_weApp) g_weApp->is_window_active = true;
+        break;
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        break;
+    default:
+        return DefWindowProc(hWnd, message, wParam, lParam);
+    }
+    return 0;
+}
+
+// Camera state -- first-person bridge view by default, 'O' toggles orbit
+static bool camOrbitMode = false;
+static float camDistance = 200.0f;
+static float camYaw = 0.0f;    // horizontal look angle (degrees, CW from north)
+static float camYawOffset = 0.0f; // mouse look offset from ship heading (bridge mode)
+static float camPitch = 0.0f;  // vertical look angle (degrees, + = up)
+static float camPosX = 0.0f;   // camera world position (WE coords)
+static float camPosY = 10.0f;
+static float camPosZ = 0.0f;
+static float camTargetX = 0.0f;
+static float camTargetY = 10.0f;
+static float camTargetZ = 0.0f;
+static bool mouseRightDown = false;
+static bool mouseLeftDown = false;
+static int lastMouseX = 0, lastMouseY = 0;
+
+// Coordinate conversion: replicates Terrain::longToX() / latToZ()
+struct CoordConverter {
+    float terrainLong = 0;
+    float terrainLat = 0;
+    float terrainLongExtent = 0;
+    float terrainLatExtent = 0;
+    float terrainXWidth = 0;
+    float terrainZWidth = 0;
+
+    void init(float lon, float lat, float lonExtent, float latExtent) {
+        terrainLong = lon;
+        terrainLat = lat;
+        terrainLongExtent = lonExtent;
+        terrainLatExtent = latExtent;
+        float cosLat = std::cos((lat + latExtent / 2.0f) * (float)M_PI / 180.0f);
+        terrainXWidth = lonExtent * 2.0f * (float)M_PI * EARTH_RAD_M * cosLat / 360.0f;
+        terrainZWidth = latExtent * 2.0f * (float)M_PI * EARTH_RAD_M / 360.0f;
+    }
+
+    float longToX(float longitude) const {
+        if (terrainLongExtent == 0) return 0;
+        return ((longitude - terrainLong) * terrainXWidth) / terrainLongExtent;
+    }
+    float latToZ(float latitude) const {
+        if (terrainLatExtent == 0) return 0;
+        return ((latitude - terrainLat) * terrainZWidth) / terrainLatExtent;
+    }
+};
+
+// Shared placeholder mesh cache -- avoids creating hundreds of identical GPU meshes
+struct PlaceholderMeshKey {
+    int ri, gi, bi, si; // color (0-255) and size (int mm)
+    bool operator==(const PlaceholderMeshKey& o) const {
+        return ri == o.ri && gi == o.gi && bi == o.bi && si == o.si;
+    }
+};
+struct PlaceholderMeshKeyHash {
+    size_t operator()(const PlaceholderMeshKey& k) const {
+        return std::hash<int>()(k.ri * 1000000 + k.gi * 10000 + k.bi * 100 + k.si);
+    }
+};
+static std::unordered_map<PlaceholderMeshKey, wi::ecs::Entity, PlaceholderMeshKeyHash> g_sharedPlaceholderMeshes;
+
+// Get or create a shared placeholder box mesh+material (one GPU allocation per unique color+size)
+static wi::ecs::Entity getSharedPlaceholderMesh(wi::scene::Scene& scene,
+                                                  float r, float g, float b, float size) {
+    PlaceholderMeshKey key = {(int)(r * 255), (int)(g * 255), (int)(b * 255), (int)(size * 1000)};
+    auto it = g_sharedPlaceholderMeshes.find(key);
+    if (it != g_sharedPlaceholderMeshes.end()) return it->second;
+
+    // Create shared mesh + material (only done once per unique color+size)
+    wi::ecs::Entity meshEntity = scene.Entity_CreateMesh("SharedPlaceholder_mesh");
+    auto* mesh = scene.meshes.GetComponent(meshEntity);
+    if (!mesh) return wi::ecs::INVALID_ENTITY;
+
+    wi::ecs::Entity matEntity = scene.Entity_CreateMaterial("SharedPlaceholder_mat");
+    auto* material = scene.materials.GetComponent(matEntity);
+    if (material) {
+        material->baseColor = DirectX::XMFLOAT4(r, g, b, 1.0f);
+        material->CreateRenderData();
+    }
+
+    float h = size * 0.5f;
+    DirectX::XMFLOAT3 verts[8] = {
+        {-h, 0,  -h}, { h, 0,  -h}, { h, size, -h}, {-h, size, -h},
+        {-h, 0,   h}, { h, 0,   h}, { h, size,  h}, {-h, size,  h}
+    };
+    uint32_t indices[36] = {
+        0,2,1, 0,3,2, 4,5,6, 4,6,7,
+        0,1,5, 0,5,4, 3,6,2, 3,7,6,
+        0,4,7, 0,7,3, 1,2,6, 1,6,5
+    };
+
+    mesh->subsets.push_back(wi::scene::MeshComponent::MeshSubset());
+    mesh->subsets.back().materialID = matEntity;
+    mesh->subsets.back().indexOffset = 0;
+    for (int i = 0; i < 8; i++) {
+        mesh->vertex_positions.push_back(verts[i]);
+        mesh->vertex_normals.push_back(DirectX::XMFLOAT3(0, 1, 0));
+        mesh->vertex_uvset_0.push_back(DirectX::XMFLOAT2(0, 0));
+    }
+    for (int i = 0; i < 36; i++) mesh->indices.push_back(indices[i]);
+    mesh->subsets.back().indexCount = 36;
+    mesh->CreateRenderData();
+
+    g_sharedPlaceholderMeshes[key] = meshEntity;
+    weLog("    Created shared placeholder mesh (r=" + std::to_string(r) +
+          " g=" + std::to_string(g) + " b=" + std::to_string(b) +
+          " size=" + std::to_string(size) + ")");
+    return meshEntity;
+}
+
+// Create a placeholder box instance that references a shared mesh (no new GPU allocation)
+static wi::ecs::Entity createPlaceholderBox(wi::scene::Scene& scene, const std::string& name,
+                                             float r, float g, float b, float size = 5.0f) {
+    wi::ecs::Entity sharedMesh = getSharedPlaceholderMesh(scene, r, g, b, size);
+    if (sharedMesh == wi::ecs::INVALID_ENTITY) return wi::ecs::INVALID_ENTITY;
+
+    wi::ecs::Entity entity = scene.Entity_CreateObject(name);
+    auto* object = scene.objects.GetComponent(entity);
+    if (object) object->meshID = sharedMesh;
+    return entity;
+}
+
+// Cache of WE mesh entities created from Irrlicht-converted models (by filepath)
+static std::unordered_map<std::string, wi::ecs::Entity> g_convertedMeshCache;
+
+// Create a WE mesh entity from Irrlicht-converted model data (standalone, not attached to any root)
+// textureNames: optional list of texture filenames scanned from the model file
+// modelDir: directory containing the model (for resolving relative texture paths)
+static wi::ecs::Entity createWEMeshFromConverted(wi::scene::Scene& scene,
+                                                   const bc::ConvertedModel& model,
+                                                   const std::string& baseName,
+                                                   const std::vector<std::string>& textureNames = {},
+                                                   const std::string& modelDir = "") {
+    wi::ecs::Entity meshEntity = scene.Entity_CreateMesh(baseName + "_mesh");
+    auto* mesh = scene.meshes.GetComponent(meshEntity);
+    if (!mesh) return wi::ecs::INVALID_ENTITY;
+
+    uint32_t vertexOffset = 0;
+    for (size_t i = 0; i < model.submeshes.size(); i++) {
+        const auto& sub = model.submeshes[i];
+
+        // Create material (standalone entity)
+        wi::ecs::Entity matEntity = scene.Entity_CreateMaterial(
+            baseName + "_mat" + std::to_string(i));
+        auto* material = scene.materials.GetComponent(matEntity);
+        if (material) {
+            material->baseColor = DirectX::XMFLOAT4(
+                sub.material.r, sub.material.g, sub.material.b, sub.material.a);
+            material->emissiveColor = DirectX::XMFLOAT4(
+                sub.material.er, sub.material.eg, sub.material.eb,
+                std::max({sub.material.er, sub.material.eg, sub.material.eb}));
+            float roughness = 1.0f - (sub.material.shininess / 128.0f);
+            material->roughness = std::max(0.04f, std::min(1.0f, roughness));
+
+            // Assign texture: prefer per-submesh name from Irrlicht (correct mapping),
+            // fall back to scanned names by index (approximate)
+            std::string texPath;
+            if (!sub.material.textureName.empty()) {
+                texPath = sub.material.textureName;
+                // If just a filename (no directory), prepend model directory
+                if (!modelDir.empty() && texPath.find('/') == std::string::npos &&
+                    texPath.find('\\') == std::string::npos &&
+                    texPath.find(':') == std::string::npos) {
+                    texPath = modelDir + texPath;
+                }
+            } else if (i < textureNames.size() && !textureNames[i].empty()) {
+                texPath = modelDir + textureNames[i];
+            }
+            if (!texPath.empty()) {
+                material->textures[wi::scene::MaterialComponent::BASECOLORMAP].name = texPath;
+            }
+
+            // Models from mixed formats (.x=CW, .3ds=CCW winding), render both sides
+            material->SetDoubleSided(true);
+
+            // Enable alpha blending for transparent materials (e.g. ship windows)
+            if (sub.material.a < 0.99f) {
+                material->userBlendMode = wi::enums::BLENDMODE_ALPHA;
+                material->SetCastShadow(false);
+                // Make semi-transparent materials more see-through for bridge windows
+                if (material->baseColor.w > 0.3f) {
+                    material->baseColor.w *= 0.4f;
+                }
+            }
+
+            material->CreateRenderData();
+        }
+
+        // Add mesh subset
+        mesh->subsets.push_back(wi::scene::MeshComponent::MeshSubset());
+        auto& subset = mesh->subsets.back();
+        subset.materialID = matEntity;
+        subset.indexOffset = static_cast<uint32_t>(mesh->indices.size());
+        subset.indexCount = static_cast<uint32_t>(sub.indices.size());
+
+        // Add vertices (no Z-flip: .x files are already left-handed like WE)
+        for (const auto& v : sub.vertices) {
+            mesh->vertex_positions.push_back(DirectX::XMFLOAT3(v.px, v.py, v.pz));
+            mesh->vertex_normals.push_back(DirectX::XMFLOAT3(v.nx, v.ny, v.nz));
+            mesh->vertex_uvset_0.push_back(DirectX::XMFLOAT2(v.u, v.v));
+        }
+
+        // Add indices (offset by vertices from previous submeshes)
+        for (uint32_t idx : sub.indices) {
+            mesh->indices.push_back(idx + vertexOffset);
+        }
+
+        vertexOffset += static_cast<uint32_t>(sub.vertices.size());
+    }
+
+    mesh->CreateRenderData();
+    return meshEntity;
+}
+
+// Create an object entity referencing a shared mesh
+static wi::ecs::Entity createObjectFromMesh(wi::scene::Scene& scene,
+                                              wi::ecs::Entity meshEntity,
+                                              const std::string& name) {
+    wi::ecs::Entity rootEntity = wi::ecs::CreateEntity();
+    scene.transforms.Create(rootEntity);
+    scene.names.Create(rootEntity) = name;
+
+    wi::ecs::Entity objectEntity = scene.Entity_CreateObject(name + "_obj");
+    scene.Component_Attach(objectEntity, rootEntity);
+    auto* object = scene.objects.GetComponent(objectEntity);
+    if (object) object->meshID = meshEntity;
+    return rootEntity;
+}
+
+// Try to load a model: WE native → Irrlicht conversion → placeholder box
+static wi::ecs::Entity loadModelOrPlaceholder(wi::scene::Scene& scene,
+                                               const std::string& modelPath,
+                                               const std::string& name,
+                                               float r, float g, float b,
+                                               float placeholderSize = 5.0f) {
+    // Fast path: reuse already-converted mesh
+    auto cachedIt = g_convertedMeshCache.find(modelPath);
+    if (cachedIt != g_convertedMeshCache.end()) {
+        return createObjectFromMesh(scene, cachedIt->second, name);
+    }
+
+    // Try WE native loader first (.obj, .gltf, .wiscene)
+    wi::ecs::Entity entity = wi::ecs::INVALID_ENTITY;
+    try {
+        entity = bc::graphics::wicked::LoadModelFromFile(modelPath, scene);
+    } catch (...) {
+        weLogErr("Exception in LoadModelFromFile: " + modelPath);
+    }
+    if (entity != wi::ecs::INVALID_ENTITY) return entity;
+
+    // Try Irrlicht conversion (.x, .3ds, etc.)
+    try {
+        bc::ConvertedModel converted = bc::convertModelViaIrrlicht(modelPath);
+        if (converted.valid) {
+            size_t totalVerts = 0, totalIdx = 0;
+            for (const auto& s : converted.submeshes) {
+                totalVerts += s.vertices.size();
+                totalIdx += s.indices.size();
+            }
+            // Scan model file for texture filenames
+            std::vector<std::string> textureNames = bc::scanTextureNames(modelPath);
+            // Get model directory for resolving relative texture paths
+            std::string modelDir;
+            size_t lastSlash = modelPath.find_last_of("/\\");
+            if (lastSlash != std::string::npos)
+                modelDir = modelPath.substr(0, lastSlash + 1);
+
+            // Count submeshes with per-submesh texture names from Irrlicht
+            size_t irrlichtTexCount = 0;
+            for (const auto& s : converted.submeshes) {
+                if (!s.material.textureName.empty()) irrlichtTexCount++;
+            }
+
+            wi::ecs::Entity meshEntity = createWEMeshFromConverted(
+                scene, converted, name, textureNames, modelDir);
+            if (meshEntity != wi::ecs::INVALID_ENTITY) {
+                g_convertedMeshCache[modelPath] = meshEntity;
+                weLog("    Loaded via Irrlicht: " + modelPath +
+                      " (" + std::to_string(converted.submeshes.size()) + " submeshes, " +
+                      std::to_string(totalVerts) + " verts, " +
+                      std::to_string(totalIdx / 3) + " tris, " +
+                      std::to_string(irrlichtTexCount) + "/" +
+                      std::to_string(converted.submeshes.size()) + " per-submesh textures, " +
+                      std::to_string(textureNames.size()) + " scanned)");
+                return createObjectFromMesh(scene, meshEntity, name);
+            }
+        }
+    } catch (...) {
+        weLogErr("Exception in Irrlicht conversion: " + modelPath);
+    }
+
+    // Fall back to placeholder box
+    weLog("    Using placeholder box for: " + modelPath);
+    return createPlaceholderBox(scene, name, r, g, b, placeholderSize);
+}
+
+// Toggle renderable on an entity and all its child objects
+static void setEntityVisible(wi::scene::Scene& scene, wi::ecs::Entity entity, bool visible) {
+    auto* obj = scene.objects.GetComponent(entity);
+    if (obj) obj->SetRenderable(visible);
+    for (size_t i = 0; i < scene.hierarchy.GetCount(); i++) {
+        if (scene.hierarchy[i].parentID == entity) {
+            wi::ecs::Entity child = scene.hierarchy.GetEntity(i);
+            auto* childObj = scene.objects.GetComponent(child);
+            if (childObj) childObj->SetRenderable(visible);
+        }
+    }
+}
+
+// Position and rotate a WE entity
+static void setEntityTransform(wi::scene::Scene& scene, wi::ecs::Entity entity,
+                                float x, float y, float z,
+                                float rotYDeg = 0, float scale = 1.0f) {
+    auto* transform = scene.transforms.GetComponent(entity);
+    if (!transform) return;
+    transform->ClearTransform();
+    transform->Translate(DirectX::XMFLOAT3(x, y, z)); // both BC and WE are left-handed Y-up, no Z flip
+    if (rotYDeg != 0) {
+        float rad = rotYDeg * (float)M_PI / 180.0f;
+        transform->RotateRollPitchYaw(DirectX::XMFLOAT3(0, rad, 0));
+    }
+    if (scale != 1.0f) {
+        transform->Scale(DirectX::XMFLOAT3(scale, scale, scale));
+    }
+    transform->UpdateTransform();
+}
+
+// Resolve a model path, checking user folder and world folder for overrides
+static std::string resolveModelPath(const std::string& basePath,
+                                     const std::string& userFolder,
+                                     const std::string& worldPath) {
+    if (Utilities::pathExists(userFolder + basePath))
+        return userFolder + basePath;
+    if (!worldPath.empty() && Utilities::pathExists(worldPath + "/" + basePath))
+        return worldPath + "/" + basePath;
+    return basePath;
+}
+
+int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioData,
+                    int width, int height, bool fullscreen) {
+    // Open crash diagnostic log
+    g_weLog.open("wicked_engine.log", std::ios::out | std::ios::trunc);
+
+    const std::string& worldName = scenarioData.worldName;
+    weLog("Starting Wicked Engine backend (DX12)...");
+    weLog("  Scenario: " + scenarioData.scenarioName);
+    weLog("  World: " + worldName);
+    weLog("  Window: " + std::to_string(width) + "x" + std::to_string(height) +
+          (fullscreen ? " fullscreen" : " windowed"));
+
+    // Resolve world path
+    std::string worldPath = "World/" + worldName + "/";
+    if (!Utilities::pathExists(worldPath)) {
+        worldPath = userFolder + "World/" + worldName + "/";
+    }
+    if (!Utilities::pathExists(worldPath)) {
+        weLogErr("World not found: " + worldName);
+        g_weLog.close();
+        return EXIT_FAILURE;
+    }
+    weLog("  World path: " + worldPath);
+
+    // --- Win32 window creation ---
+    HINSTANCE hInstance = GetModuleHandle(nullptr);
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
+    WNDCLASSEXW wcex = {};
+    wcex.cbSize = sizeof(WNDCLASSEX);
+    wcex.style = CS_HREDRAW | CS_VREDRAW;
+    wcex.lpfnWndProc = WickedWndProc;
+    wcex.hInstance = hInstance;
+    wcex.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wcex.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wcex.lpszClassName = L"BridgeCommandWicked";
+    RegisterClassExW(&wcex);
+
+    DWORD style = fullscreen ? WS_POPUP : WS_OVERLAPPEDWINDOW;
+    RECT rc = {0, 0, (LONG)width, (LONG)height};
+    AdjustWindowRect(&rc, style, FALSE);
+
+    std::wstring windowTitle = L"Bridge Command - " +
+        std::wstring(scenarioData.scenarioName.begin(), scenarioData.scenarioName.end()) +
+        L" (Wicked Engine DX12)";
+    HWND hWnd = CreateWindowW(
+        wcex.lpszClassName,
+        windowTitle.c_str(),
+        style,
+        CW_USEDEFAULT, 0,
+        rc.right - rc.left, rc.bottom - rc.top,
+        nullptr, nullptr, hInstance, nullptr);
+
+    if (!hWnd) {
+        weLogErr("Failed to create Win32 window for Wicked Engine");
+        g_weLog.close();
+        return EXIT_FAILURE;
+    }
+    weLog("  Win32 window created.");
+    ShowWindow(hWnd, SW_SHOWDEFAULT);
+    UpdateWindow(hWnd);
+
+    // --- Initialize Wicked Engine ---
+    wi::Application application;
+    g_weApp = &application;
+    application.SetWindow(hWnd);
+
+    // Set shader path
+    std::string shaderPath;
+    std::vector<std::string> shaderSearchPaths = {
+        "../../WickedEngine/WickedEngine/shaders/",
+        "../WickedEngine/WickedEngine/shaders/",
+        "../WickedEngine/shaders/",
+    };
+    const char* envShaderPath = std::getenv("WE_SHADER_PATH");
+    if (envShaderPath) {
+        shaderSearchPaths.insert(shaderSearchPaths.begin(), std::string(envShaderPath));
+    }
+    for (const auto& p : shaderSearchPaths) {
+        if (Utilities::pathExists(p + "objectVS.hlsl") || Utilities::pathExists(p + "globals.hlsli")) {
+            shaderPath = p;
+            break;
+        }
+    }
+    if (!shaderPath.empty()) {
+        wi::renderer::SetShaderPath(shaderPath);
+        weLog("  Shader path: " + shaderPath);
+    } else {
+        weLogErr("Could not find WickedEngine shader directory.");
+    }
+
+    // Create 3D render path
+    wi::RenderPath3D renderPath;
+    renderPath.setSSREnabled(true);
+    renderPath.setFXAAEnabled(true);
+    renderPath.setBloomEnabled(true);
+    application.ActivatePath(&renderPath);
+
+    application.infoDisplay.active = true;
+    application.infoDisplay.watermark = true;
+    application.infoDisplay.resolution = true;
+    application.infoDisplay.fpsinfo = true;
+
+    // Run a few frames to let WE initialize its graphics device, job system, and shaders.
+    // Scene setup (mesh creation, ocean, materials) requires the GPU device to be ready.
+    weLog("  Initializing Wicked Engine (10 warmup frames)...");
+    for (int i = 0; i < 10; i++) {
+        MSG initMsg = {};
+        while (PeekMessage(&initMsg, NULL, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&initMsg);
+            DispatchMessage(&initMsg);
+        }
+        application.Run();
+    }
+    weLog("  Wicked Engine initialized.");
+
+    // --- Set up the scene ---
+    wi::scene::Scene& scene = wi::scene::GetScene();
+    wi::scene::CameraComponent& camera = wi::scene::GetCamera();
+
+    // Declare variables needed after scene setup (outside try block)
+    CoordConverter coords;
+    std::unique_ptr<bc::graphics::wicked::WickedTerrainNode> terrainNode;
+    bc::graphics::wicked::WickedWater ocean;
+    float ownShipX = 0, ownShipZ = 0;
+    float ownShipHeading = scenarioData.ownShipData.initialBearing;
+    float ownShipSpeed = scenarioData.ownShipData.initialSpeed; // knots
+    float ownShipRudder = 0; // degrees (-35 to 35)
+    float ownShipEngine = 0; // -1.0 to 1.0
+    float ownShipScaleFactor = 1.0f;
+    float ownShipHeightCorr = 0;
+    float cameraViewX = 0, cameraViewY = 10.0f, cameraViewZ = 0; // bridge position in world coords
+    float viewLocalX = 0, viewLocalY = 0, viewLocalZ = 0; // bridge view in ship-local coords (pre-scale)
+    wi::ecs::Entity ownShipEntity = wi::ecs::INVALID_ENTITY; // stored to toggle visibility
+
+    // Other ship movement state
+    struct OtherShipState {
+        wi::ecs::Entity entity = wi::ecs::INVALID_ENTITY;
+        float x, z;           // current world position
+        float heading;         // current heading (degrees)
+        float speed;           // current speed (knots)
+        float heightCorr;      // Y position
+        float scaleFactor;
+        int currentLeg;        // index into legs
+        float distTravelled;   // nautical miles along current leg
+    };
+    std::vector<OtherShipState> otherShipStates;
+
+    try { // Wrap scene setup in try-catch to diagnose crashes
+
+    // ===== SUN / LIGHTING =====
+    weLog("  Setting up sun/lighting...");
+    wi::ecs::Entity sunEntity = scene.Entity_CreateLight("Sun");
+    wi::scene::LightComponent* sunLight = scene.lights.GetComponent(sunEntity);
+    if (sunLight) {
+        sunLight->SetType(wi::scene::LightComponent::DIRECTIONAL);
+        sunLight->intensity = 8.0f;
+        sunLight->SetCastShadow(true);
+    }
+    // Position sun based on time of day
+    float timeOfDay = scenarioData.startTime; // hours (0-24)
+    float sunRise = scenarioData.sunRise > 0 ? scenarioData.sunRise : 6.0f;
+    float sunSet = scenarioData.sunSet > 0 ? scenarioData.sunSet : 18.0f;
+    float dayLength = sunSet - sunRise;
+    float sunProgress = (dayLength > 0) ? (timeOfDay - sunRise) / dayLength : 0.5f;
+    sunProgress = std::max(0.0f, std::min(1.0f, sunProgress));
+    float sunElevation = -((float)M_PI * sunProgress); // 0=horizon, -PI/2=zenith
+    float sunAzimuth = 0.3f; // slightly from south
+
+    wi::scene::TransformComponent* sunTransform = scene.transforms.GetComponent(sunEntity);
+    if (sunTransform) {
+        sunTransform->RotateRollPitchYaw(DirectX::XMFLOAT3(sunElevation, sunAzimuth, 0.0f));
+        sunTransform->UpdateTransform();
+    }
+
+    // ===== ATMOSPHERE / WEATHER =====
+    scene.weather.SetRealisticSky(true);
+    scene.weather.SetVolumetricClouds(true);
+    scene.weather.ambient = DirectX::XMFLOAT3(0.3f, 0.35f, 0.4f);
+
+    // Fog from visibility range
+    float visRange = scenarioData.visibilityRange;
+    if (visRange <= 0) visRange = 10.0f; // default 10 nm
+    float fogDistMeters = visRange * 1852.0f; // nm to meters
+    scene.weather.fogStart = fogDistMeters * 0.3f;
+    // WE uses fogDensity instead of fogEnd; higher density = thicker fog
+    if (visRange < 5.0f) {
+        scene.weather.fogDensity = 0.01f / std::max(visRange, 0.1f);
+    }
+
+    // ===== OCEAN =====
+    weLog("  Setting up ocean...");
+    float beaufort = scenarioData.weather;
+    if (beaufort < 0) beaufort = 3.0f;
+    try {
+        ocean.load(&scene, beaufort);
+        weLog("  Ocean initialized (Beaufort " + std::to_string(beaufort) + ")");
+    } catch (const std::exception& e) {
+        weLogErr("Ocean setup failed: " + std::string(e.what()));
+    } catch (...) {
+        weLogErr("Ocean setup failed (unknown error)");
+    }
+
+    // ===== TERRAIN =====
+    weLog("  Setting up terrain...");
+    std::string terrainFile = worldPath + "terrain.ini";
+    if (Utilities::pathExists(terrainFile)) {
+        int terrainCount = IniFile::iniFileTou32(terrainFile, "Number");
+        if (terrainCount > 0) {
+            // Load primary terrain (terrain 1) for coordinate reference
+            std::string hmName = IniFile::iniFileToString(terrainFile, IniFile::enumerate1("HeightMap", 1));
+            std::string txName = IniFile::iniFileToString(terrainFile, IniFile::enumerate1("Texture", 1));
+            float tLat = IniFile::iniFileTof32(terrainFile, IniFile::enumerate1("TerrainLat", 1));
+            float tLon = IniFile::iniFileTof32(terrainFile, IniFile::enumerate1("TerrainLong", 1));
+            float tLatExt = IniFile::iniFileTof32(terrainFile, IniFile::enumerate1("TerrainLatExtent", 1));
+            float tLonExt = IniFile::iniFileTof32(terrainFile, IniFile::enumerate1("TerrainLongExtent", 1));
+            float tMaxH = IniFile::iniFileTof32(terrainFile, IniFile::enumerate1("TerrainMaxHeight", 1));
+            float tSeaD = IniFile::iniFileTof32(terrainFile, IniFile::enumerate1("SeaMaxDepth", 1));
+
+            // Initialize coordinate converter using primary terrain
+            coords.init(tLon, tLat, tLonExt, tLatExt);
+
+            bc::graphics::wicked::TerrainTileConfig config;
+            config.heightmapPath = worldPath + hmName;
+            config.texturePath = worldPath + txName;
+            config.latitude = tLat;
+            config.longitude = tLon;
+            config.latExtent = tLatExt;
+            config.lonExtent = tLonExt;
+            config.maxHeight = tMaxH;
+            config.seaMaxDepth = tSeaD;
+
+            // Check for F32 heightmap rows/cols
+            config.heightmapRows = IniFile::iniFileTou32(terrainFile, IniFile::enumerate1("TerrainHeightMapRows", 1));
+            config.heightmapCols = IniFile::iniFileTou32(terrainFile, IniFile::enumerate1("TerrainHeightMapColumns", 1));
+            if (config.heightmapRows == 0 || config.heightmapCols == 0) {
+                int legacySize = IniFile::iniFileTou32(terrainFile, IniFile::enumerate1("TerrainHeightMapSize", 1));
+                if (legacySize > 0) {
+                    config.heightmapRows = legacySize;
+                    config.heightmapCols = legacySize;
+                }
+            }
+
+            config.usesRGB = IniFile::iniFileTou32(terrainFile, IniFile::enumerate1("UsesRGB", 1)) > 0;
+
+            // Use terrain SW corner as reference point to align with CoordConverter
+            // (CoordConverter.longToX/latToZ are relative to tLon/tLat)
+            float refLon = tLon;
+            float refLat = tLat;
+
+            terrainNode = std::make_unique<bc::graphics::wicked::WickedTerrainNode>(&scene);
+            if (terrainNode->loadFromConfig(config, refLon, refLat)) {
+                weLog("  Terrain loaded: " + config.heightmapPath);
+                weLog("    worldWidth=" + std::to_string(coords.terrainXWidth) +
+                      " worldDepth=" + std::to_string(coords.terrainZWidth));
+            } else {
+                weLogErr("Failed to load terrain heightmap");
+                terrainNode.reset();
+            }
+        }
+    } else {
+        weLog("  No terrain.ini found, running without terrain");
+    }
+
+    // ===== OWN SHIP =====
+    weLog("  Setting up own ship...");
+    if (!scenarioData.ownShipData.ownShipName.empty()) {
+        std::string shipName = scenarioData.ownShipData.ownShipName;
+        std::string basePath = resolveModelPath("Models/Ownship/" + shipName + "/",
+                                                 userFolder, "");
+
+        std::string boatIni = basePath + "boat.ini";
+        std::string modelFileName = IniFile::iniFileToString(boatIni, "FileName");
+        float scaleFactor = IniFile::iniFileTof32(boatIni, "ScaleFactor");
+        if (scaleFactor <= 0) scaleFactor = 1.0f;
+
+        float yCorrection = IniFile::iniFileTof32(boatIni, "YCorrection");
+        float heightCorrection = yCorrection * scaleFactor;
+        ownShipScaleFactor = scaleFactor;
+        ownShipHeightCorr = heightCorrection;
+
+        // Get camera view position (first view = bridge view)
+        uint32_t numViews = (uint32_t)IniFile::iniFileTof32(boatIni, "Views");
+        if (numViews > 0) {
+            viewLocalX = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("ViewX", 1));
+            viewLocalY = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("ViewY", 1));
+            viewLocalZ = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("ViewZ", 1));
+        }
+
+        // Convert own ship lat/lon to world coordinates
+        ownShipX = coords.longToX(scenarioData.ownShipData.initialLong);
+        ownShipZ = coords.latToZ(scenarioData.ownShipData.initialLat);
+
+        // Compute bridge view position in world coords
+        float headRad = ownShipHeading * (float)M_PI / 180.0f;
+        float vxScaled = viewLocalX * scaleFactor;
+        float vzScaled = viewLocalZ * scaleFactor;
+        cameraViewX = ownShipX + vxScaled * std::cos(headRad) + vzScaled * std::sin(headRad);
+        cameraViewY = heightCorrection + viewLocalY * scaleFactor;
+        cameraViewZ = ownShipZ - vxScaled * std::sin(headRad) + vzScaled * std::cos(headRad);
+
+        // Load ship model
+        std::string modelPath = basePath + modelFileName;
+        ownShipEntity = loadModelOrPlaceholder(scene, modelPath,
+                                               "OwnShip", 0.5f, 0.5f, 0.6f, 20.0f);
+        setEntityTransform(scene, ownShipEntity, ownShipX, heightCorrection, ownShipZ,
+                           ownShipHeading, scaleFactor);
+        weLog("  Own ship: " + shipName + " at (" +
+              std::to_string(ownShipX) + ", " + std::to_string(ownShipZ) +
+              ") heading " + std::to_string(ownShipHeading));
+    }
+
+    // ===== OTHER SHIPS =====
+    weLog("  Setting up " + std::to_string(scenarioData.otherShipsData.size()) + " other ships...");
+    otherShipStates.resize(scenarioData.otherShipsData.size());
+    for (size_t s = 0; s < scenarioData.otherShipsData.size(); s++) {
+        const OtherShipData& shipData = scenarioData.otherShipsData[s];
+        std::string shipName = shipData.shipName;
+
+        // Check Othership folder first, then Ownship
+        std::string basePath = "Models/Othership/" + shipName + "/";
+        if (!Utilities::pathExists(basePath) && !Utilities::pathExists(userFolder + basePath)) {
+            basePath = "Models/Ownship/" + shipName + "/";
+        }
+        basePath = resolveModelPath(basePath, userFolder, "");
+
+        std::string boatIni = basePath + "boat.ini";
+        std::string modelFileName = IniFile::iniFileToString(boatIni, "FileName");
+        float scaleFactor = IniFile::iniFileTof32(boatIni, "ScaleFactor");
+        if (scaleFactor <= 0) scaleFactor = 1.0f;
+        float yCorrection = IniFile::iniFileTof32(boatIni, "YCorrection");
+        float heightCorrection = yCorrection * scaleFactor;
+
+        float shipX = coords.longToX(shipData.initialLong);
+        float shipZ = coords.latToZ(shipData.initialLat);
+        float heading = 0;
+        float speed = 0;
+        if (!shipData.legs.empty()) {
+            heading = shipData.legs[0].bearing;
+            speed = shipData.legs[0].speed;
+        }
+
+        std::string modelPath = basePath + modelFileName;
+        std::string objName = "OtherShip_" + std::to_string(s);
+        wi::ecs::Entity shipEntity = loadModelOrPlaceholder(scene, modelPath,
+                                                             objName, 0.6f, 0.6f, 0.6f, 15.0f);
+        setEntityTransform(scene, shipEntity, shipX, heightCorrection, shipZ,
+                           heading, scaleFactor);
+
+        // Store state for movement simulation
+        otherShipStates[s].entity = shipEntity;
+        otherShipStates[s].x = shipX;
+        otherShipStates[s].z = shipZ;
+        otherShipStates[s].heading = heading;
+        otherShipStates[s].speed = speed;
+        otherShipStates[s].heightCorr = heightCorrection;
+        otherShipStates[s].scaleFactor = scaleFactor;
+        otherShipStates[s].currentLeg = 0;
+        otherShipStates[s].distTravelled = 0;
+
+        weLog("  Other ship " + std::to_string(s) + ": " + shipName +
+              " speed=" + std::to_string(speed) + "kn heading=" + std::to_string(heading));
+    }
+
+    // ===== BUOYS =====
+    weLog("  Setting up buoys...");
+    std::string buoyIniFile = worldPath + "buoy.ini";
+    if (Utilities::pathExists(buoyIniFile)) {
+        uint32_t numBuoys = IniFile::iniFileTou32(buoyIniFile, "Number");
+        weLog("  Found " + std::to_string(numBuoys) + " buoys in buoy.ini");
+        for (uint32_t b = 1; b <= numBuoys; b++) {
+            std::string buoyType = IniFile::iniFileToString(buoyIniFile, IniFile::enumerate1("Type", b));
+            float buoyLon = IniFile::iniFileTof32(buoyIniFile, IniFile::enumerate1("Long", b));
+            float buoyLat = IniFile::iniFileTof32(buoyIniFile, IniFile::enumerate1("Lat", b));
+            float heightCorr = IniFile::iniFileTof32(buoyIniFile, IniFile::enumerate1("HeightCorrection", b));
+
+            float bx = coords.longToX(buoyLon);
+            float bz = coords.latToZ(buoyLat);
+
+            // Load buoy model
+            std::string buoyBasePath = resolveModelPath("Models/Buoy/" + buoyType + "/",
+                                                         userFolder, worldPath);
+            std::string buoyModelIni = buoyBasePath + "buoy.ini";
+            std::string buoyFileName = IniFile::iniFileToString(buoyModelIni, "FileName", "buoy.x");
+            float buoyScale = IniFile::iniFileTof32(buoyModelIni, "Scalefactor", 1.f);
+
+            std::string buoyModelPath = buoyBasePath + buoyFileName;
+            std::string objName = "Buoy_" + std::to_string(b - 1);
+            wi::ecs::Entity buoyEntity = loadModelOrPlaceholder(scene, buoyModelPath,
+                                                                 objName, 0.8f, 0.2f, 0.2f, 3.0f);
+            setEntityTransform(scene, buoyEntity, bx, heightCorr, bz, 0, buoyScale);
+        }
+        weLog("  Loaded " + std::to_string(numBuoys) + " buoys");
+    }
+
+    // ===== LAND OBJECTS =====
+    weLog("  Setting up land objects...");
+    std::string landObjIniFile = worldPath + "landobject.ini";
+    if (Utilities::pathExists(landObjIniFile)) {
+        uint32_t numLandObjs = IniFile::iniFileTou32(landObjIniFile, "Number");
+        weLog("  Found " + std::to_string(numLandObjs) + " land objects");
+        for (uint32_t lo = 1; lo <= numLandObjs; lo++) {
+            std::string objType = IniFile::iniFileToString(landObjIniFile, IniFile::enumerate1("Type", lo));
+            float objLon = IniFile::iniFileTof32(landObjIniFile, IniFile::enumerate1("Long", lo));
+            float objLat = IniFile::iniFileTof32(landObjIniFile, IniFile::enumerate1("Lat", lo));
+            float objY = IniFile::iniFileTof32(landObjIniFile, IniFile::enumerate1("HeightCorrection", lo));
+            float rotation = IniFile::iniFileTof32(landObjIniFile, IniFile::enumerate1("Rotation", lo));
+
+            float ox = coords.longToX(objLon);
+            float oz = coords.latToZ(objLat);
+
+            // Place at terrain surface height + correction (BC LandObjects.cpp logic)
+            // Absolute=0: relative to terrain, Absolute=1: absolute Y, Absolute=2: relative but clamped to sea level
+            uint32_t absolute = IniFile::iniFileTou32(landObjIniFile, IniFile::enumerate1("Absolute", lo));
+            if (absolute == 0 && terrainNode) {
+                objY += terrainNode->getHeightAt(ox, oz) + terrainNode->getPosition().y;
+            } else if (absolute == 2 && terrainNode) {
+                objY += std::max(0.0f, terrainNode->getHeightAt(ox, oz) + terrainNode->getPosition().y);
+            }
+
+            // Load land object model
+            std::string loBasePath = resolveModelPath("Models/LandObject/" + objType + "/",
+                                                       userFolder, worldPath);
+            std::string loModelIni = loBasePath + "object.ini";
+            std::string loFileName = IniFile::iniFileToString(loModelIni, "FileName", "object.x");
+            float loScale = IniFile::iniFileTof32(loModelIni, "Scalefactor", 1.f);
+
+            std::string loModelPath = loBasePath + loFileName;
+            weLog("  LandObject " + std::to_string(lo) + "/" + std::to_string(numLandObjs) +
+                  ": " + objType + " model=" + loModelPath);
+            std::string objName = "LandObject_" + std::to_string(lo - 1);
+            wi::ecs::Entity loEntity = loadModelOrPlaceholder(scene, loModelPath,
+                                                               objName, 0.5f, 0.35f, 0.2f, 8.0f);
+            setEntityTransform(scene, loEntity, ox, objY, oz, rotation, loScale);
+        }
+        weLog("  Loaded " + std::to_string(numLandObjs) + " land objects");
+    }
+
+    // ===== SHUTDOWN IRRLICHT CONVERTER =====
+    // All models loaded; release the headless Irrlicht device
+    bc::shutdownIrrlichtConverter();
+    weLog("  Irrlicht model converter shutdown.");
+
+    // ===== CAMERA SETUP =====
+    // First-person bridge view: camera AT the bridge position, looking along heading
+    camPosX = cameraViewX;
+    camPosY = std::max(cameraViewY, 3.0f);
+    camPosZ = cameraViewZ; // both BC and WE are left-handed, no Z flip
+    camYaw = ownShipHeading;
+    camPitch = 0.0f;
+    camOrbitMode = false;
+
+    // Orbit mode target (for when 'O' is pressed)
+    camTargetX = ownShipX;
+    camTargetY = camPosY;
+    camTargetZ = ownShipZ;
+    camDistance = 200.0f;
+
+    weLog("  Camera bridge pos: (" + std::to_string(camPosX) + ", " +
+          std::to_string(camPosY) + ", " + std::to_string(camPosZ) + ")");
+    weLog("  Camera heading=" + std::to_string(camYaw) +
+          " mode=" + (camOrbitMode ? std::string("orbit") : std::string("bridge")));
+
+    } catch (const std::exception& e) {
+        weLogErr("During scene setup: " + std::string(e.what()));
+    } catch (...) {
+        weLogErr("During scene setup (unknown exception)");
+    }
+
+    weLog("  Scene setup complete.");
+    weLog("Entering Wicked Engine render loop...");
+    weLog("  Controls: Mouse-drag=look, WASD=move, O=orbit/bridge, Scroll=zoom(orbit)/FOV(bridge), ESC=quit");
+
+    static bool keyOWasDown = false;
+    // Bridge view uses 75 horizontal FOV; WE camera.fov is vertical FOV
+    // Convert: VFOV = 2 * atan(tan(HFOV/2) / aspect)
+    float hfovRad = 75.0f * (float)M_PI / 180.0f;
+    float aspect = (float)width / (float)height;
+    float cameraFov = 2.0f * std::atan(std::tan(hfovRad / 2.0f) / aspect) * 180.0f / (float)M_PI;
+
+    // Timing for simulation
+    auto lastFrameTime = std::chrono::high_resolution_clock::now();
+    static constexpr float KNOTS_TO_MPS = 0.514444f; // 1 knot = 0.514444 m/s
+    static constexpr float NM_TO_M = 1852.0f;        // 1 nautical mile = 1852 m
+
+    MSG msg = {};
+    while (msg.message != WM_QUIT) {
+        if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        } else {
+            // Frame timing
+            auto now = std::chrono::high_resolution_clock::now();
+            float dt = std::chrono::duration<float>(now - lastFrameTime).count();
+            dt = std::min(dt, 0.1f); // clamp to prevent huge jumps
+            lastFrameTime = now;
+
+            // ESC = quit
+            if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) {
+                PostQuitMessage(0);
+                continue;
+            }
+
+            // ===== OWN SHIP CONTROLS =====
+            // Arrow Up/Down: engine ahead/astern
+            if (GetAsyncKeyState(VK_UP) & 0x8000) {
+                ownShipEngine = std::min(1.0f, ownShipEngine + 0.5f * dt);
+            }
+            if (GetAsyncKeyState(VK_DOWN) & 0x8000) {
+                ownShipEngine = std::max(-1.0f, ownShipEngine - 0.5f * dt);
+            }
+            // Arrow Left/Right: rudder
+            if (GetAsyncKeyState(VK_LEFT) & 0x8000) {
+                ownShipRudder = std::max(-35.0f, ownShipRudder - 30.0f * dt);
+            } else if (GetAsyncKeyState(VK_RIGHT) & 0x8000) {
+                ownShipRudder = std::min(35.0f, ownShipRudder + 30.0f * dt);
+            } else {
+                // Rudder returns to center when no key pressed
+                if (ownShipRudder > 0.5f) ownShipRudder -= 15.0f * dt;
+                else if (ownShipRudder < -0.5f) ownShipRudder += 15.0f * dt;
+                else ownShipRudder = 0;
+            }
+
+            // Simple own ship physics
+            float maxSpeedKnots = 16.0f; // typical max speed
+            float engineForce = ownShipEngine * maxSpeedKnots; // simplified: engine directly targets speed
+            float speedDiff = engineForce - ownShipSpeed;
+            ownShipSpeed += speedDiff * 0.3f * dt; // smooth approach to target speed
+            if (ownShipSpeed < -5.0f) ownShipSpeed = -5.0f; // limit astern
+
+            // Rudder turns ship (faster at higher speeds)
+            float turnRate = ownShipRudder * std::abs(ownShipSpeed) * 0.02f; // deg/s
+            ownShipHeading += turnRate * dt;
+            if (ownShipHeading < 0) ownShipHeading += 360.0f;
+            if (ownShipHeading >= 360.0f) ownShipHeading -= 360.0f;
+
+            // Move own ship
+            float ownSpeedMps = ownShipSpeed * KNOTS_TO_MPS;
+            float headRad = ownShipHeading * (float)M_PI / 180.0f;
+            ownShipX += std::sin(headRad) * ownSpeedMps * dt;
+            ownShipZ += std::cos(headRad) * ownSpeedMps * dt;
+
+            // Update own ship entity position
+            if (ownShipEntity != wi::ecs::INVALID_ENTITY) {
+                setEntityTransform(scene, ownShipEntity, ownShipX, ownShipHeightCorr, ownShipZ,
+                                   ownShipHeading, ownShipScaleFactor);
+            }
+
+            // Update bridge camera position (follows own ship)
+            if (!camOrbitMode) {
+                float vxScaled = viewLocalX * ownShipScaleFactor;
+                float vzScaled = viewLocalZ * ownShipScaleFactor;
+                camPosX = ownShipX + vxScaled * std::cos(headRad) + vzScaled * std::sin(headRad);
+                camPosY = ownShipHeightCorr + viewLocalY * ownShipScaleFactor;
+                camPosZ = ownShipZ - vxScaled * std::sin(headRad) + vzScaled * std::cos(headRad);
+            }
+
+            // ===== OTHER SHIP MOVEMENT =====
+            for (size_t s = 0; s < otherShipStates.size(); s++) {
+                auto& st = otherShipStates[s];
+                const auto& shipData = scenarioData.otherShipsData[s];
+                if (st.currentLeg >= (int)shipData.legs.size()) continue;
+
+                const auto& leg = shipData.legs[st.currentLeg];
+                if (leg.speed <= 0) continue; // stationary
+
+                // Move along current leg
+                float moveDistNm = (leg.speed * KNOTS_TO_MPS * dt) / NM_TO_M;
+                st.distTravelled += moveDistNm;
+
+                // Check if we've completed this leg
+                if (st.distTravelled >= leg.distance && st.currentLeg + 1 < (int)shipData.legs.size()) {
+                    st.distTravelled = 0;
+                    st.currentLeg++;
+                    st.heading = shipData.legs[st.currentLeg].bearing;
+                    st.speed = shipData.legs[st.currentLeg].speed;
+                }
+
+                // Move in world coords
+                float moveM = leg.speed * KNOTS_TO_MPS * dt;
+                float legHeadRad = st.heading * (float)M_PI / 180.0f;
+                st.x += std::sin(legHeadRad) * moveM;
+                st.z += std::cos(legHeadRad) * moveM;
+
+                setEntityTransform(scene, st.entity, st.x, st.heightCorr, st.z,
+                                   st.heading, st.scaleFactor);
+            }
+
+            // Toggle orbit/bridge mode with 'O'
+            bool keyODown = (GetAsyncKeyState('O') & 0x8000) != 0;
+            if (keyODown && !keyOWasDown) {
+                camOrbitMode = !camOrbitMode;
+                if (camOrbitMode) {
+                    camTargetX = ownShipX;
+                    camTargetY = camPosY;
+                    camTargetZ = ownShipZ;
+                    camDistance = 200.0f;
+                    camPitch = 25.0f;
+                }
+                // Show own ship in orbit mode, hide in bridge mode
+                if (ownShipEntity != wi::ecs::INVALID_ENTITY) {
+                    setEntityVisible(scene, ownShipEntity, camOrbitMode);
+                }
+            }
+            keyOWasDown = keyODown;
+
+            float moveSpeed = 2.0f;
+            if (GetAsyncKeyState(VK_SHIFT) & 0x8000) moveSpeed = 10.0f;
+
+            // Mouse look / orbit (left or right drag)
+            POINT mousePos;
+            GetCursorPos(&mousePos);
+            ScreenToClient(hWnd, &mousePos);
+
+            bool lbDown = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+            bool rbDown = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
+            bool anyMouseDrag = lbDown || rbDown;
+
+            if (anyMouseDrag) {
+                if (!mouseLeftDown && !mouseRightDown) {
+                    lastMouseX = mousePos.x;
+                    lastMouseY = mousePos.y;
+                }
+                int dx = mousePos.x - lastMouseX;
+                int dy = mousePos.y - lastMouseY;
+                if (camOrbitMode) {
+                    camYaw += dx * 0.3f;
+                } else {
+                    camYawOffset += dx * 0.3f;
+                }
+                camPitch += dy * 0.3f;
+                camPitch = std::max(-89.0f, std::min(89.0f, camPitch));
+                lastMouseX = mousePos.x;
+                lastMouseY = mousePos.y;
+            }
+            mouseLeftDown = lbDown;
+            mouseRightDown = rbDown;
+
+            // Yaw in WE left-handed space (heading convention)
+            // In bridge mode, camYaw = ownShipHeading + camYawOffset (set above in ship controls)
+            float effectiveYaw = camOrbitMode ? camYaw : (ownShipHeading + camYawOffset);
+            float yawRad = effectiveYaw * (float)M_PI / 180.0f;
+
+            // Scroll wheel: zoom in orbit, FOV in bridge
+            float scroll = wi::input::GetPointer().z;
+            if (scroll != 0) {
+                if (camOrbitMode) {
+                    camDistance -= scroll * camDistance * 0.1f;
+                    camDistance = std::max(5.0f, std::min(50000.0f, camDistance));
+                } else {
+                    cameraFov -= scroll * 3.0f;
+                    cameraFov = std::max(20.0f, std::min(120.0f, cameraFov));
+                }
+            }
+
+            float camX, camY, camZ, lookX, lookY, lookZ;
+
+            if (camOrbitMode) {
+                // WASD moves the orbit target
+                if (GetAsyncKeyState('W') & 0x8000) {
+                    camTargetX += std::sin(yawRad) * moveSpeed;
+                    camTargetZ += std::cos(yawRad) * moveSpeed;
+                }
+                if (GetAsyncKeyState('S') & 0x8000) {
+                    camTargetX -= std::sin(yawRad) * moveSpeed;
+                    camTargetZ -= std::cos(yawRad) * moveSpeed;
+                }
+                if (GetAsyncKeyState('A') & 0x8000) {
+                    camTargetX -= std::cos(yawRad) * moveSpeed;
+                    camTargetZ += std::sin(yawRad) * moveSpeed;
+                }
+                if (GetAsyncKeyState('D') & 0x8000) {
+                    camTargetX += std::cos(yawRad) * moveSpeed;
+                    camTargetZ -= std::sin(yawRad) * moveSpeed;
+                }
+
+                float pitchRad = camPitch * (float)M_PI / 180.0f;
+                camX = camTargetX - camDistance * std::sin(yawRad) * std::cos(pitchRad);
+                camY = camTargetY + camDistance * std::sin(pitchRad) + 5.0f;
+                camZ = camTargetZ - camDistance * std::cos(yawRad) * std::cos(pitchRad);
+                lookX = camTargetX;
+                lookY = camTargetY;
+                lookZ = camTargetZ;
+            } else {
+                // Bridge first-person mode
+                // Camera position follows own ship (updated above in ship controls)
+                camX = camPosX;
+                camY = camPosY;
+                camZ = camPosZ;
+
+                // Look direction from yaw/pitch
+                float pitchRad = camPitch * (float)M_PI / 180.0f;
+                lookX = camX + std::sin(yawRad) * std::cos(pitchRad) * 100.0f;
+                lookY = camY - std::sin(pitchRad) * 100.0f;
+                lookZ = camZ + std::cos(yawRad) * std::cos(pitchRad) * 100.0f;
+            }
+
+            // Apply camera
+            float fovRad = cameraFov * (float)M_PI / 180.0f;
+            camera.zNearP = 0.5f;
+            camera.zFarP = 50000.0f;
+            camera.fov = fovRad;
+
+            DirectX::XMVECTOR vEye = DirectX::XMVectorSet(camX, camY, camZ, 1.0f);
+            DirectX::XMVECTOR vAt = DirectX::XMVectorSet(lookX, lookY, lookZ, 1.0f);
+            DirectX::XMVECTOR vUp = DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+            DirectX::XMMATRIX viewMat = DirectX::XMMatrixLookAtLH(vEye, vAt, vUp);
+            DirectX::XMMATRIX invView = DirectX::XMMatrixInverse(nullptr, viewMat);
+            camera.TransformCamera(invView);
+
+            // Update window title with ship status HUD
+            {
+                int hdg = (int)std::round(ownShipHeading) % 360;
+                int spd = (int)std::round(std::abs(ownShipSpeed) * 10.0f);
+                int eng = (int)std::round(ownShipEngine * 100.0f);
+                int rud = (int)std::round(ownShipRudder);
+                char buf[256];
+                snprintf(buf, sizeof(buf),
+                    "Bridge Command (WE DX12) | HDG %03d | SPD %.1f kn | ENG %d%% | RUD %d | "
+                    "Arrow keys: engine/rudder, O: orbit, Mouse: look, ESC: quit",
+                    hdg, spd / 10.0f, eng, rud);
+                SetWindowTextA(hWnd, buf);
+            }
+
+            application.Run();
+        }
+    }
+
+    // Cleanup
+    weLog("Shutting down Wicked Engine...");
+    g_convertedMeshCache.clear();
+    g_sharedPlaceholderMeshes.clear();
+    terrainNode.reset();
+    g_weApp = nullptr;
+    wi::jobsystem::ShutDown();
+
+    DestroyWindow(hWnd);
+    UnregisterClassW(wcex.lpszClassName, hInstance);
+
+    weLog("Wicked Engine shutdown complete.");
+    g_weLog.close();
+    return EXIT_SUCCESS;
+}
+
+#endif // WITH_WICKED_ENGINE

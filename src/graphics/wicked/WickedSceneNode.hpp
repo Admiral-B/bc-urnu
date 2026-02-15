@@ -202,7 +202,7 @@ public:
             float degToRad = 3.14159265358979f / 180.0f;
             transform->ClearTransform();
             transform->Translate(toXM(getPosition()));
-            transform->RotateRollPitchYaw({rot.x * degToRad, rot.y * degToRad, rot.z * degToRad});
+            transform->RotateRollPitchYaw(DirectX::XMFLOAT3(rot.x * degToRad, rot.y * degToRad, rot.z * degToRad));
             transform->UpdateTransform();
         }
     }
@@ -325,7 +325,7 @@ public:
             float degToRad = 3.14159265358979f / 180.0f;
             transform->ClearTransform();
             transform->Translate(toXM(getPosition()));
-            transform->RotateRollPitchYaw({rot.x * degToRad, rot.y * degToRad, rot.z * degToRad});
+            transform->RotateRollPitchYaw(DirectX::XMFLOAT3(rot.x * degToRad, rot.y * degToRad, rot.z * degToRad));
             transform->UpdateTransform();
         }
     }
@@ -514,7 +514,7 @@ public:
             float degToRad = 3.14159265358979f / 180.0f;
             transform->ClearTransform();
             transform->Translate(toXM(getPosition()));
-            transform->RotateRollPitchYaw({rot.x * degToRad, rot.y * degToRad, rot.z * degToRad});
+            transform->RotateRollPitchYaw(DirectX::XMFLOAT3(rot.x * degToRad, rot.y * degToRad, rot.z * degToRad));
             transform->UpdateTransform();
         }
     }
@@ -667,7 +667,7 @@ public:
             float degToRad = 3.14159265358979f / 180.0f;
             transform->ClearTransform();
             transform->Translate(toXM(getPosition()));
-            transform->RotateRollPitchYaw({rot.x * degToRad, rot.y * degToRad, rot.z * degToRad});
+            transform->RotateRollPitchYaw(DirectX::XMFLOAT3(rot.x * degToRad, rot.y * degToRad, rot.z * degToRad));
             transform->UpdateTransform();
         }
     }

@@ -56,7 +56,7 @@ public:
         if (transform) {
             float degToRad = 3.14159265358979f / 180.0f;
             transform->Translate(toXM(position));
-            transform->RotateRollPitchYaw({rotation.x * degToRad, rotation.y * degToRad, rotation.z * degToRad});
+            transform->RotateRollPitchYaw(DirectX::XMFLOAT3(rotation.x * degToRad, rotation.y * degToRad, rotation.z * degToRad));
             transform->Scale(toXM(scale));
             transform->UpdateTransform();
         }
@@ -89,7 +89,7 @@ public:
         if (transform) {
             float degToRad = 3.14159265358979f / 180.0f;
             transform->Translate(toXM(position));
-            transform->RotateRollPitchYaw({rotation.x * degToRad, rotation.y * degToRad, rotation.z * degToRad});
+            transform->RotateRollPitchYaw(DirectX::XMFLOAT3(rotation.x * degToRad, rotation.y * degToRad, rotation.z * degToRad));
             transform->Scale(toXM(scale));
             transform->UpdateTransform();
         }
@@ -227,7 +227,7 @@ public:
         if (transform) {
             float degToRad = 3.14159265358979f / 180.0f;
             transform->Translate(toXM(position));
-            transform->RotateRollPitchYaw({rotation.x * degToRad, rotation.y * degToRad, rotation.z * degToRad});
+            transform->RotateRollPitchYaw(DirectX::XMFLOAT3(rotation.x * degToRad, rotation.y * degToRad, rotation.z * degToRad));
             transform->Scale(toXM(scale));
             transform->UpdateTransform();
         }

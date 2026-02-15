@@ -25,6 +25,35 @@
 #include <sstream>
 #include <algorithm>
 #include <iostream>
+#include <cstdlib>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
+// Set GDAL_DATA and PROJ_DATA environment variables if not already set,
+// pointing to data directories relative to the executable.
+static void setupGdalDataPaths() {
+#ifdef _WIN32
+    char exePath[MAX_PATH] = {};
+    GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+    std::string exeDir(exePath);
+    auto pos = exeDir.find_last_of("\\/");
+    if (pos != std::string::npos) exeDir = exeDir.substr(0, pos);
+
+    if (!getenv("GDAL_DATA")) {
+        std::string gdalData = exeDir + "\\gdal-data";
+        _putenv_s("GDAL_DATA", gdalData.c_str());
+    }
+    if (!getenv("PROJ_DATA")) {
+        std::string projData = exeDir + "\\proj-data";
+        _putenv_s("PROJ_DATA", projData.c_str());
+    }
+#endif
+}
 
 ChartReader::ChartReader() : dataset(nullptr), gdalInitialized(false) {
 }
@@ -35,6 +64,7 @@ ChartReader::~ChartReader() {
 
 bool ChartReader::open(const std::string& chartPath) {
     if (!gdalInitialized) {
+        setupGdalDataPaths();
         GDALAllRegister();
         gdalInitialized = true;
     }
@@ -490,6 +520,57 @@ std::vector<UrbanArea> ChartReader::extractUrbanAreas() {
         }
 
         OGRFeature::DestroyFeature(feature);
+    }
+
+    return areas;
+}
+
+// ── TSS extraction ────────────────────────────────────────────────────────
+
+std::vector<TSSArea> ChartReader::extractTSSAreas() {
+    std::vector<TSSArea> areas;
+    if (!dataset) return areas;
+
+    // S-57 TSS layer names
+    const char* tssLayers[] = {"TSSLPT", "TSSRON", "TSEZNE", nullptr};
+
+    for (int li = 0; tssLayers[li] != nullptr; li++) {
+        OGRLayer* layer = dataset->GetLayerByName(tssLayers[li]);
+        if (!layer) continue;
+
+        layer->ResetReading();
+        OGRFeature* feature;
+        while ((feature = layer->GetNextFeature()) != nullptr) {
+            OGRGeometry* geom = feature->GetGeometryRef();
+            if (!geom) {
+                OGRFeature::DestroyFeature(feature);
+                continue;
+            }
+
+            auto extractPoly = [&](const OGRPolygon* poly) {
+                const OGRLinearRing* ring = poly->getExteriorRing();
+                if (!ring) return;
+                TSSArea area;
+                area.layerName = tssLayers[li];
+                for (int i = 0; i < ring->getNumPoints(); i++) {
+                    area.boundary.push_back({ring->getX(i), ring->getY(i)});
+                }
+                if (!area.boundary.empty())
+                    areas.push_back(std::move(area));
+            };
+
+            OGRwkbGeometryType gtype = wkbFlatten(geom->getGeometryType());
+            if (gtype == wkbPolygon) {
+                extractPoly(static_cast<const OGRPolygon*>(geom));
+            } else if (gtype == wkbMultiPolygon) {
+                const OGRMultiPolygon* mp = static_cast<const OGRMultiPolygon*>(geom);
+                for (int i = 0; i < mp->getNumGeometries(); i++) {
+                    extractPoly(static_cast<const OGRPolygon*>(mp->getGeometryRef(i)));
+                }
+            }
+
+            OGRFeature::DestroyFeature(feature);
+        }
     }
 
     return areas;

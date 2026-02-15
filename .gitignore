@@ -43,6 +43,7 @@ __pycache__/
 *.pyo
 
 # Natural Earth raw downloads (large; only the compact .bin files are committed)
+tools/.ne_work/
 ne_*_land/
 ne_*_land.zip
 *.geojson
@@ -61,11 +62,28 @@ tilecache/
 # ImGui layout state
 imgui.ini
 
-# Compiled binaries in bin/ (assets are tracked, binaries are not)
-bin/*.exe
+# Compiled binaries
+*.exe
 bin/bridgecommand-*
 bin/bc
 bin/ed
 bin/BridgeCommand.app/Contents/MacOS/
 bin/BridgeCommand.app/Contents/Resources/
 bin/BridgeCommand.app/Contents/Helpers/*/Contents/MacOS/[!.]*
+
+# bin/Data is large and user-specific
+bin/Data/
+
+# GDAL/vcpkg runtime DLLs and data (installed via vcpkg, not committed)
+bin/*.dll
+bin/gdal-data/
+bin/proj-data/
+
+# Downloaded chart files (large, user-specific)
+bin/Charts/
+
+# VS build output
+src/Visual Studio solution/Release/
+src/Visual Studio solution/Debug/
+src/Visual Studio solution/.vs/
+*.vcxproj.user

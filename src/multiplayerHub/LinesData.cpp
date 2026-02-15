@@ -28,6 +28,12 @@ LinesData::LinesData(unsigned int numberOfShips)
     }
 }
 
+void LinesData::addShip()
+{
+    std::vector<LineData> emptyShipDataEntry;
+    linesData.push_back(emptyShipDataEntry);
+}
+
 int LinesData::getNumberOfLines() 
 {
     int overallLinesSize = 0;

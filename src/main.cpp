@@ -58,6 +58,10 @@
 
 #include "VRInterface.hpp"
 
+#ifdef WITH_WICKED_ENGINE
+#include "WickedMain.hpp"
+#endif
+
 #include "profile.hpp"
 
 //Mac OS:
@@ -440,6 +444,27 @@ int main(int argc, char ** argv)
         std::cout << "Using Ini file >" << iniFilename << "<" << std::endl;
     }
 
+    // Check for --connect flag (multiplayer client mode: connect to hub)
+    std::string connectToHub = "";
+    bool useWickedEngine = false;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--connect") == 0 && i + 1 < argc) {
+            connectToHub = std::string(argv[i + 1]);
+            i++;
+        }
+        #ifdef WITH_WICKED_ENGINE
+        if (strcmp(argv[i], "--wicked") == 0) {
+            useWickedEngine = true;
+        }
+        #endif
+    }
+    // Also check bc5.ini for use_wicked_engine=1
+    #ifdef WITH_WICKED_ENGINE
+    if (!useWickedEngine && IniFile::iniFileTou32(iniFilename, "use_wicked_engine") == 1) {
+        useWickedEngine = true;
+    }
+    #endif
+
     std::string scriptToExe = IniFile::iniFileToString(iniFilename, "script_start_BC");
     if (!scriptToExe.empty()) {
         std::string scriptPath;
@@ -676,9 +701,7 @@ int main(int argc, char ** argv)
         } else {
             //Get user to move a dialog, so their mouse is positioned on the monitor they want
             if (GetSystemMetrics(SM_CMONITORS) > 1) {
-                irr::core::stringw locationMessageW = language.translate("moveMessage");
-
-                std::wstring wlocationMessage = std::wstring(locationMessageW.c_str());
+                std::wstring wlocationMessage = language.translate("moveMessage");
                 std::string slocationMessage(wlocationMessage.begin(), wlocationMessage.end());
 
                 MessageBoxA(nullptr, slocationMessage.c_str(), "Multi monitor", MB_OK);
@@ -848,6 +871,12 @@ int main(int argc, char ** argv)
         mode = OperatingMode::Secondary;
     }
 
+    // --connect flag overrides to MultiplayerClient mode
+    if (!connectToHub.empty()) {
+        mode = OperatingMode::MultiplayerClient;
+        hostname = connectToHub;
+    }
+
     if (mode == OperatingMode::Normal) {
         ScenarioChoice scenarioChoice(device,&language);
         scenarioChoice.chooseScenario(scenarioName, hostname, udpPort, mode, scenarioPath);
@@ -908,11 +937,18 @@ int main(int argc, char ** argv)
     network->connectToServer(hostname);
 
     // If in multiplayer mode, also start 'normal' network, so we can send data to secondary displays
+    // In legacy Multiplayer mode, the hostname field contains secondary addresses.
+    // In MultiplayerClient mode, read secondary addresses from ini (secondary_hostname).
     Network* extraNetwork = 0;
     if ((mode == OperatingMode::Multiplayer) && (hostname.length() > 0 )) {
         extraNetwork = Network::createNetwork(OperatingMode::Normal, udpPort, device);
         extraNetwork->connectToServer(hostname);
-        //std::cout << "Starting extra network to " << hostname << " on " << udpPort << std::endl;
+    } else if (mode == OperatingMode::MultiplayerClient) {
+        std::string secondaryHostname = IniFile::iniFileToString(iniFilename, "secondary_hostname");
+        if (!secondaryHostname.empty()) {
+            extraNetwork = Network::createNetwork(OperatingMode::Normal, udpPort, device);
+            extraNetwork->connectToServer(secondaryHostname);
+        }
     }
 
     //Read in scenario data (work in progress)
@@ -939,11 +975,62 @@ int main(int argc, char ** argv)
             network->getScenarioFromNetwork(receivedSerialisedScenarioData);
         }
         scenarioData.deserialise(receivedSerialisedScenarioData);
+
+        // Check if required world exists locally
+        std::string worldCheckPath = "World/" + scenarioData.worldName;
+        std::string userWorldPath = Utilities::getUserDir() + worldCheckPath;
+        if (!scenarioData.worldName.empty() &&
+            !Utilities::pathExists(worldCheckPath) && !Utilities::pathExists(userWorldPath)) {
+            std::string errMsg = "Missing world: " + scenarioData.worldName
+                + ". Please install it or ask the host to send the scenario pack.";
+            std::cerr << errMsg << std::endl;
+            device->getGUIEnvironment()->addMessageBox(L"Missing World",
+                irr::core::stringw(errMsg.c_str()).c_str());
+            while (device->run()) {
+                driver->beginScene(irr::video::ECBF_COLOR|irr::video::ECBF_DEPTH, irr::video::SColor(0,200,200,200));
+                device->getGUIEnvironment()->drawAll();
+                driver->endScene();
+            }
+            device->drop();
+            return EXIT_FAILURE;
+        }
+
+        // Check own ship model exists
+        std::string shipCheckPath = "Models/Ownship/" + scenarioData.ownShipData.ownShipName;
+        std::string userShipPath = Utilities::getUserDir() + shipCheckPath;
+        if (!scenarioData.ownShipData.ownShipName.empty() &&
+            !Utilities::pathExists(shipCheckPath) && !Utilities::pathExists(userShipPath)) {
+            std::string errMsg = "Missing ship model: " + scenarioData.ownShipData.ownShipName
+                + ". Please install it or ask the host which models are needed.";
+            std::cerr << errMsg << std::endl;
+            device->getGUIEnvironment()->addMessageBox(L"Missing Ship Model",
+                irr::core::stringw(errMsg.c_str()).c_str());
+            while (device->run()) {
+                driver->beginScene(irr::video::ECBF_COLOR|irr::video::ECBF_DEPTH, irr::video::SColor(0,200,200,200));
+                device->getGUIEnvironment()->drawAll();
+                driver->endScene();
+            }
+            device->drop();
+            return EXIT_FAILURE;
+        }
     }
     std::string serialisedScenarioData = scenarioData.serialise(false);
 
     //Note: We could use this serialised format as a scenario import/export format or for online distribution
-    
+
+    // Wicked Engine backend: use WE for rendering after scenario selection
+    #ifdef WITH_WICKED_ENGINE
+    if (useWickedEngine && mode == OperatingMode::Normal) {
+        std::cout << "Switching to Wicked Engine renderer for scenario: "
+                  << scenarioData.scenarioName << std::endl;
+        IniFile::irrlichtLogger = nullptr; // Clear before dropping device to avoid dangling pointer
+        device->closeDevice();
+        device->drop();
+        return runWickedEngine(userFolder, scenarioData,
+                               graphicsWidth, graphicsHeight, fullScreen);
+    }
+    #endif
+
     // Check VR mode
     bool vr3dMode = false;
     if (IniFile::iniFileTou32(iniFilename, "vr_mode")==1) {
@@ -1158,6 +1245,14 @@ int main(int argc, char ** argv)
         network->update();
         if (extraNetwork) {
             extraNetwork->update();
+        }
+
+        // Process incoming chat messages
+        if (network->hasPendingChat()) {
+            auto chatMsgs = network->getPendingChatMessages();
+            for (auto& cm : chatMsgs) {
+                guiMain.addChatMessage(cm);
+            }
         }
 //        networkProfile.toc();
 

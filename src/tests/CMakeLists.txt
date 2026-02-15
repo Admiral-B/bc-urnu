@@ -15,6 +15,7 @@ set(BC_TESTABLE_SOURCES
     ${CMAKE_SOURCE_DIR}/ScenarioDataStructure.cpp
     ${CMAKE_SOURCE_DIR}/MMGPhysicsModel.cpp
     ${CMAKE_SOURCE_DIR}/LegacyPhysicsModel.cpp
+    ${CMAKE_SOURCE_DIR}/multiplayerHub/ShipPositions.cpp
     test_stubs.cpp
 )
 
@@ -23,6 +24,9 @@ set(BC_TEST_SOURCES
     test_utilities.cpp
     test_mmg_physics.cpp
     test_legacy_physics.cpp
+    test_tile_math.cpp
+    test_global_data.cpp
+    test_multiplayer.cpp
 )
 
 # Conditionally add chart/world generation if GDAL is available

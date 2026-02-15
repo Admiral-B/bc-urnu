@@ -19,30 +19,55 @@
 
 #include <string>
 #include <vector>
+#include <deque>
+#include <utility>
 
 #include <enet/enet.h>
 
 class Network
 {
 public:
-    Network(int port);
+    Network(int port, bool serverMode = false);
     ~Network();
+
+    // Server mode: start listening for connections
+    void startServer(int maxPlayers = 32);
+
+    // Legacy client mode: connect out to peers
     void connectToServer(std::string hostnames);
-    unsigned int getNumberOfPeers();
+
+    unsigned int getNumberOfPeers();          // Total peer slots (including disconnected)
+    unsigned int getNumberOfConnectedPeers(); // Only currently connected peers
+    bool isPeerConnected(unsigned int peerNumber);
 
     void sendString(std::string stringToSend, bool reliable, unsigned int peerNumber);
     void listenForMessages();
     std::string getLatestMessage(unsigned int peerNumber);
+    std::string getPeerAddress(unsigned int peerNumber) const;
 
+    // Event queries (drain pending events since last call)
+    std::vector<unsigned int> getNewConnections();
+    std::vector<unsigned int> getNewDisconnections();
+
+    // Chat message queue (pair of peerIndex, message string)
+    std::deque<std::pair<unsigned int, std::string>> getPendingChatMessages();
 
 private:
     int port;
+    bool isServer;
 
-    ENetHost* client; //One client
+    ENetHost* host;
     ENetEvent event;
     std::vector<ENetPeer*> peers;
     std::vector<std::string> latestMessageFromPeer;
+    std::vector<bool> peerConnected;
 
+    // Pending event queues
+    std::vector<unsigned int> pendingConnections;
+    std::vector<unsigned int> pendingDisconnections;
+
+    // Pending chat messages (peerIndex, raw message string)
+    std::deque<std::pair<unsigned int, std::string>> pendingChatMessages;
 };
 
 #endif

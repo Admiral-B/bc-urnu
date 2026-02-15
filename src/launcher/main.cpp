@@ -15,6 +15,7 @@
 
 #include "irrlicht.h"
 #include <iostream>
+#include <fstream>
 #include <thread>
 #include "../IniFile.hpp"
 #include "../Lang.hpp"
@@ -39,12 +40,14 @@ extern char **environ;
 // We fork so the launcher stays alive, and exec the binary inside the .app
 // bundle so it inherits the working directory (Contents/Resources).
 // Note: Using /usr/bin/open fails on macOS Tahoe for unsigned helper bundles.
-static void macLaunchHelper(const char* binaryPath, const char* extraArg = nullptr) {
+static void macLaunchHelper(const char* binaryPath, const char* arg1 = nullptr, const char* arg2 = nullptr) {
     pid_t pid = fork();
     if (pid == 0) {
         // Child process: exec the helper binary
-        if (extraArg) {
-            execl(binaryPath, binaryPath, extraArg, nullptr);
+        if (arg1 && arg2) {
+            execl(binaryPath, binaryPath, arg1, arg2, nullptr);
+        } else if (arg1) {
+            execl(binaryPath, binaryPath, arg1, nullptr);
         } else {
             execl(binaryPath, binaryPath, nullptr);
         }
@@ -90,8 +93,13 @@ const int32_t INI_MH_BUTTON = 9;
 const int32_t DOC_BUTTON = 10;
 const int32_t USER_BUTTON = 11;
 const int32_t EXIT_BUTTON = 12;
+const int32_t MP_JOIN_BUTTON = 13;
+const int32_t MP_CONNECT_BUTTON = 14;
 
 std::string userFolder;
+std::string bcExtraArgs; // Extra arguments to pass to bridgecommand-bc.exe
+irr::gui::IGUIEditBox* mpHostEdit = nullptr;
+irr::IrrlichtDevice* globalDevice = nullptr;
 
 //Event receiver: This does the actual launching
 class Receiver : public irr::IEventReceiver
@@ -116,14 +124,23 @@ public:
 
                 if (id == BC_BUTTON) {
                     #ifdef _WIN32
-                        ShellExecute(NULL, NULL, "bridgecommand-bc.exe", NULL, NULL, SW_SHOW);
-                        //_execl("./bridgecommand-bc.exe", "bridgecommand-bc.exe", NULL);
+                        ShellExecute(NULL, NULL, "bridgecommand-bc.exe",
+                                     bcExtraArgs.empty() ? NULL : bcExtraArgs.c_str(),
+                                     NULL, SW_SHOW);
                     #else
                     #ifdef __APPLE__
-                        macLaunchHelper("../Helpers/bc.app/Contents/MacOS/bc");
+                        if (!bcExtraArgs.empty()) {
+                            macLaunchHelper("../Helpers/bc.app/Contents/MacOS/bc", bcExtraArgs.c_str());
+                        } else {
+                            macLaunchHelper("../Helpers/bc.app/Contents/MacOS/bc");
+                        }
                     #else
                         //Other (assumed posix)
-                        execl("./bridgecommand-bc", "bridgecommand-bc", NULL);
+                        if (!bcExtraArgs.empty()) {
+                            execl("./bridgecommand-bc", "bridgecommand-bc", bcExtraArgs.c_str(), NULL);
+                        } else {
+                            execl("./bridgecommand-bc", "bridgecommand-bc", NULL);
+                        }
                     #endif
                     #endif
                 }
@@ -178,6 +195,61 @@ public:
                         execl("./bridgecommand-mh", "bridgecommand-mh", NULL);
                     #endif
                     #endif
+                }
+                if (id == MP_JOIN_BUTTON) {
+                    // Show join multiplayer dialog
+                    if (globalDevice) {
+                        irr::gui::IGUIEnvironment* guienv = globalDevice->getGUIEnvironment();
+                        irr::gui::IGUIWindow* wnd = guienv->addWindow(
+                            irr::core::rect<int32_t>(10, 200, 290, 330), true, L"Join Multiplayer Session");
+                        guienv->addStaticText(L"Hub IP:Port",
+                            irr::core::rect<int32_t>(10, 30, 270, 48), false, false, wnd);
+
+                        // Load saved IP
+                        std::string savedHost = "localhost:18305";
+                        std::string savedFile = userFolder + "mp_lasthost.txt";
+                        if (Utilities::pathExists(savedFile)) {
+                            std::string loaded = IniFile::iniFileToString(savedFile, "host");
+                            if (!loaded.empty()) savedHost = loaded;
+                        }
+                        irr::core::stringw wHost(savedHost.c_str());
+                        mpHostEdit = guienv->addEditBox(wHost.c_str(),
+                            irr::core::rect<int32_t>(10, 50, 270, 72), true, wnd);
+
+                        guienv->addButton(
+                            irr::core::rect<int32_t>(80, 85, 200, 110), wnd, MP_CONNECT_BUTTON, L"Connect");
+                    }
+                    return true;
+                }
+                if (id == MP_CONNECT_BUTTON) {
+                    if (mpHostEdit) {
+                        irr::core::stringc hostStr(mpHostEdit->getText());
+                        std::string host = hostStr.c_str();
+
+                        // Save for next time
+                        if (!userFolder.empty()) {
+                            std::ofstream saveFile(userFolder + "mp_lasthost.txt");
+                            if (saveFile.is_open()) {
+                                saveFile << "host=" << host << std::endl;
+                                saveFile.close();
+                            }
+                        }
+
+                        std::string connectArg = "--connect " + host;
+                        #ifdef _WIN32
+                            ShellExecute(NULL, NULL, "bridgecommand-bc.exe", connectArg.c_str(), NULL, SW_SHOW);
+                        #else
+                        #ifdef __APPLE__
+                            macLaunchHelper("../Helpers/bc.app/Contents/MacOS/bc", "--connect", host.c_str());
+                        #else
+                            //Other (assumed posix)
+                            execl("./bridgecommand-bc", "bridgecommand-bc", "--connect", host.c_str(), NULL);
+                        #endif
+                        #endif
+
+                        mpHostEdit = nullptr;
+                    }
+                    return true;
                 }
                 if (id == INI_BC_BUTTON) {
                     #ifdef _WIN32
@@ -324,6 +396,20 @@ int main (int argc, char ** argv)
         iniFilename = userFolder + iniFilename;
     }
 
+    // Check for --wicked flag or use_wicked_engine ini setting
+    bool useWicked = false;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--wicked") == 0) {
+            useWicked = true;
+        }
+    }
+    if (!useWicked && IniFile::iniFileTou32(iniFilename, "use_wicked_engine") == 1) {
+        useWicked = true;
+    }
+    if (useWicked) {
+        bcExtraArgs = "--wicked";
+    }
+
     std::string modifier = IniFile::iniFileToString(iniFilename, "lang");
     if (modifier.length()==0) {
         modifier = "en"; //Default
@@ -346,7 +432,7 @@ int main (int argc, char ** argv)
     }
 
     uint32_t graphicsWidth = 300;
-    uint32_t graphicsHeight = 620;
+    uint32_t graphicsHeight = 650;
     uint32_t graphicsDepth = 32;
     bool fullScreen = false;
 
@@ -416,6 +502,9 @@ int main (int argc, char ** argv)
     y1 = y2 +   bR; y2 = y1 +   bH; irr::gui::IGUIButton* launchMH    = device->getGUIEnvironment()->addButton(irr::core::rect<int32_t>(x1,y1,x2,y2),0,MH_BUTTON,language.translate("startMH").c_str()); //i18n
     launchMH->setImage(driver->getTexture("media/startMH.png"));
     launchMH->setUseAlphaChannel();
+    y1 = y2 +   bR; y2 = y1 +   bH; irr::gui::IGUIButton* joinMP     = device->getGUIEnvironment()->addButton(irr::core::rect<int32_t>(x1,y1,x2,y2),0,MP_JOIN_BUTTON,L"Join Session");
+    joinMP->setImage(driver->getTexture("media/startMH.png"));
+    joinMP->setUseAlphaChannel();
     y1 = y2 + 3*bR; y2 = y1 +   bH; irr::gui::IGUIButton* launchINIBC = device->getGUIEnvironment()->addButton(irr::core::rect<int32_t>(x1,y1,x2,y2),0,INI_BC_BUTTON,language.translate("startINIBC").c_str()); //i18n
     launchINIBC->setImage(driver->getTexture("media/settings.png"));
     launchINIBC->setUseAlphaChannel();
@@ -446,6 +535,7 @@ int main (int argc, char ** argv)
 
     device->getGUIEnvironment()->setFocus(launchBC);
 
+    globalDevice = device;
     Receiver receiver;
     device->setEventReceiver(&receiver);
 

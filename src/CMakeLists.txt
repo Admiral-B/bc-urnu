@@ -62,6 +62,16 @@ else()
     message(STATUS "GDAL not found - chart integration disabled")
 endif()
 
+# Optional: libcurl for HTTP tile downloads (scenario editor)
+# On Windows with VS solution, WinHTTP is used instead (no external dependency)
+find_package(CURL)
+if(CURL_FOUND)
+    message(STATUS "libcurl found: ${CURL_VERSION_STRING}")
+    add_definitions(-DWITH_CURL)
+else()
+    message(STATUS "libcurl not found - using platform HTTP fallback or tile downloads disabled")
+endif()
+
 # Optional: Wicked Engine for modern graphics backend
 # Set WICKED_ENGINE_DIR to the WE source root and WICKED_ENGINE_LIB to the built library
 if(DEFINED WICKED_ENGINE_DIR AND EXISTS "${WICKED_ENGINE_DIR}/WickedEngine/WickedEngine.h")

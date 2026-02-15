@@ -20,6 +20,7 @@
 
 #include <vector>
 #include <cstdint>
+#include <memory>
 
 #include "../graphics/Types.hpp"
 #include "PositionDataStruct.hpp"
@@ -36,6 +37,10 @@ namespace irr {
 
 #include "GUI.hpp"
 #include "../Lang.hpp"
+
+class MapTileSources;
+class MapWidget;
+class CoastlineRenderer;
 
 class ControllerModel //Start of the 'Model' part of MVC
 {
@@ -77,6 +82,14 @@ public:
     void increaseZoom();
     void decreaseZoom();
 
+    void toggleTileMapSource(); // Toggle between satellite/street tiles (M key)
+    bool isTileMapEnabled() const { return tileMapEnabled; }
+    void setTileMapEnabled(bool enabled) { tileMapEnabled = enabled; }
+    MapWidget* getMapWidget() { return mapWidget.get(); }
+
+    bool isCoastlineEnabled() const { return coastlineEnabled; }
+    void setCoastlineEnabled(bool enabled) { coastlineEnabled = enabled; }
+
 private:
 
     GUIMain* gui;
@@ -116,6 +129,14 @@ private:
     int32_t selectedShip; //Own ship as -1, other ships as 0 upwards
     int32_t selectedLeg; //No leg as -1, legs as 0 upwards
 
+    // Tile map system
+    std::unique_ptr<MapTileSources> tileSources;
+    std::unique_ptr<MapWidget> mapWidget;
+    bool tileMapEnabled = true; // Show tile map by default
+
+    // Coastline overlay
+    std::unique_ptr<CoastlineRenderer> coastlineRenderer;
+    bool coastlineEnabled = true;
 };
 
 #endif // __CONTROLLERMODEL_HPP_INCLUDED__

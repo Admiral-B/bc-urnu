@@ -19,7 +19,7 @@
 
 namespace OperatingMode
 {
-    enum Mode {Normal,Secondary,Multiplayer};
+    enum Mode {Normal,Secondary,Multiplayer,MultiplayerClient};
 }
 
 #endif

@@ -26,9 +26,9 @@
 NetworkSecondary::NetworkSecondary(int port, OperatingMode::Mode mode, irr::IrrlichtDevice* dev)
 {
     server = 0;
+    hubPeer = 0;
     device = dev;
 
-    ENetAddress address;
     this->mode = mode;
     model=0; //Not linked at the moment
 
@@ -41,37 +41,48 @@ NetworkSecondary::NetworkSecondary(int port, OperatingMode::Mode mode, irr::Irrl
         exit(EXIT_FAILURE);
     }
 
-    /* Bind the server to the default localhost. */
-    /* A specific host address can be specified by */
-    /* enet_address_set_host (& address, "x.x.x.x"); */
-    address.host = ENET_HOST_ANY;
-    /* Bind the server to port XXXXX. */
+    if (mode == OperatingMode::MultiplayerClient) {
+        // Client mode: create ENet client host (connects TO the hub)
+        server = enet_host_create(NULL /* create a client host */,
+            1 /* only 1 outgoing connection (to hub) */,
+            2 /* number of channels */,
+            0 /* unlimited bandwidth */,
+            0 /* unlimited bandwidth */);
 
-    int tries=0;
+        if (server == NULL) {
+            std::cerr << "An error occurred while trying to create an ENet client host." << std::endl;
+            enet_deinitialize();
+            exit(EXIT_FAILURE);
+        }
+    } else {
+        // Server mode (original): create ENet server host
+        ENetAddress address;
+        address.host = ENET_HOST_ANY;
 
-    while (server==NULL && tries < 10) {
-        address.port = port;
-        server = enet_host_create (& address /* the address to bind the server host to */,
-        32 /* allow up to 32 clients and/or outgoing connections */,
-        0 /* allow maximum number of channels */,
-        0 /* assume any amount of incoming bandwidth */,
-        0 /* assume any amount of outgoing bandwidth */);
+        int tries=0;
 
-        //Update for next attempt if needed
-        if (server==NULL) {
-            tries++;
-            port++;
+        while (server==NULL && tries < 10) {
+            address.port = port;
+            server = enet_host_create (& address /* the address to bind the server host to */,
+            32 /* allow up to 32 clients and/or outgoing connections */,
+            0 /* allow maximum number of channels */,
+            0 /* assume any amount of incoming bandwidth */,
+            0 /* assume any amount of outgoing bandwidth */);
+
+            //Update for next attempt if needed
+            if (server==NULL) {
+                tries++;
+                port++;
+            }
+        }
+
+        if (server == NULL)
+        {
+            std::cerr << "An error occurred while trying to create an ENet server host." << std::endl;
+            enet_deinitialize();
+            exit (EXIT_FAILURE);
         }
     }
-
-    if (server == NULL)
-    {
-        std::cerr << "An error occurred while trying to create an ENet server host." << std::endl;
-		enet_deinitialize();
-		exit (EXIT_FAILURE);
-    }
-
-
 }
 
 NetworkSecondary::~NetworkSecondary()
@@ -82,7 +93,45 @@ NetworkSecondary::~NetworkSecondary()
 
 void NetworkSecondary::connectToServer(std::string hostnames)
 {
-    //Don't need to do anything
+    if (mode != OperatingMode::MultiplayerClient) {
+        return; // Server mode: nothing to do, hub connects to us
+    }
+
+    // Client mode: connect to the hub
+    std::string hubHostname = Utilities::trim(hostnames);
+    if (hubHostname.empty()) {
+        std::cerr << "No hub hostname specified for MultiplayerClient mode." << std::endl;
+        return;
+    }
+
+    ENetAddress address;
+    address.port = 18305; // Default hub port (18305, not 18304 which is Primary/Secondary)
+
+    // Check if hostname contains a port (host:port)
+    if (hubHostname.find(':') != std::string::npos) {
+        std::vector<std::string> parts = Utilities::split(hubHostname, ':');
+        if (parts.size() == 2) {
+            hubHostname = parts[0];
+            address.port = Utilities::lexical_cast<enet_uint16>(parts[1]);
+        }
+    }
+
+    enet_address_set_host(&address, hubHostname.c_str());
+
+    hubPeer = enet_host_connect(server, &address, 2, 0);
+    if (hubPeer == NULL) {
+        std::cerr << "No available peers for initiating an ENet connection to hub." << std::endl;
+        return;
+    }
+
+    // Wait up to 5 seconds for the connection to succeed
+    if (enet_host_service(server, &event, 5000) > 0 && event.type == ENET_EVENT_TYPE_CONNECT) {
+        std::cout << "Connected to hub at " << hubHostname << ":" << address.port << std::endl;
+    } else {
+        enet_peer_reset(hubPeer);
+        hubPeer = 0;
+        std::cerr << "Failed to connect to hub at " << hubHostname << ":" << address.port << std::endl;
+    }
 }
 
 void NetworkSecondary::getScenarioFromNetwork(std::string& dataString) //Not used by primary
@@ -500,7 +549,7 @@ void NetworkSecondary::receiveMessage()
                 //Todo: Think about how to get best synchronisation (and movement between updates, speed etc)
 
                 //If in multiplayer mode, send back a message with our position and heading
-                if (mode==OperatingMode::Multiplayer) {
+                if (mode==OperatingMode::Multiplayer || mode==OperatingMode::MultiplayerClient) {
 
                     std::string multiplayerFeedback = "MPF";
                     multiplayerFeedback.append(Utilities::lexical_cast<std::string>(model->getPosX()));
@@ -518,6 +567,18 @@ void NetworkSecondary::receiveMessage()
 
                     // Mooring/towing lines
                     multiplayerFeedback.append(makeNetworkLinesString(model));
+
+                    // Extended state fields (backward compatible - old hubs ignore these)
+                    multiplayerFeedback.append("#");
+                    multiplayerFeedback.append(Utilities::lexical_cast<std::string>(model->getRudder()));
+                    multiplayerFeedback.append("#");
+                    multiplayerFeedback.append(Utilities::lexical_cast<std::string>((model->getPortEngineRPM() + model->getStbdEngineRPM()) / 2.0f));
+                    multiplayerFeedback.append("#");
+                    multiplayerFeedback.append("0"); // navLights (placeholder)
+                    multiplayerFeedback.append("#");
+                    multiplayerFeedback.append("0"); // hornActive (placeholder)
+                    multiplayerFeedback.append("#");
+                    multiplayerFeedback.append(Utilities::lexical_cast<std::string>(model->getOwnShipMMSI()));
 
                     //Send back to event.peer
                     ENetPacket* packet = enet_packet_create (multiplayerFeedback.c_str(), strlen (multiplayerFeedback.c_str()) + 1,0/*reliable flag*/);
@@ -607,6 +668,60 @@ void NetworkSecondary::receiveMessage()
 	{
 	  device->closeDevice();
 	}
+	else if (receivedString.length() > 5 && receivedString.substr(0, 5) == "CHAT#")
+	{
+	    // Parse: CHAT#shipIndex#timestamp#message_text
+	    std::vector<std::string> parts = Utilities::split(receivedString, '#');
+	    if (parts.size() >= 4) {
+	        ChatMessage cm;
+	        cm.shipIndex = Utilities::lexical_cast<int>(parts[1]);
+	        cm.timestamp = parts[2];
+	        cm.text = parts[3];
+	        // Sender name will be resolved by the display code using scenario data
+	        cm.senderName = "Player " + parts[1];
+	        pendingChatMessages.push_back(cm);
+	        while (pendingChatMessages.size() > 100) {
+	            pendingChatMessages.pop_front();
+	        }
+	    }
+	}
     }
 
+}
+
+void NetworkSecondary::sendChatMessage(const std::string& text)
+{
+    if (mode != OperatingMode::Multiplayer && mode != OperatingMode::MultiplayerClient)
+        return;
+
+    // Build CHAT message. Ship index is set to -1 here; the hub resolves the actual index from peer mapping.
+    // We send our own ship index from the model if available.
+    int shipIdx = -1;
+    // We don't have our own ship index easily available here, so use -1.
+    // The hub knows our ship index from the peer mapping.
+
+    std::string chatMsg = "CHAT#" + Utilities::lexical_cast<std::string>(shipIdx) + "#0#" + text;
+
+    // Send reliably to hub/primary
+    ENetPacket* packet = enet_packet_create(chatMsg.c_str(), chatMsg.length() + 1, ENET_PACKET_FLAG_RELIABLE);
+    if (packet) {
+        if (mode == OperatingMode::MultiplayerClient && hubPeer) {
+            enet_peer_send(hubPeer, 0, packet);
+        } else if (event.peer) {
+            enet_peer_send(event.peer, 0, packet);
+        }
+        enet_host_flush(server);
+    }
+}
+
+bool NetworkSecondary::hasPendingChat()
+{
+    return !pendingChatMessages.empty();
+}
+
+std::deque<ChatMessage> NetworkSecondary::getPendingChatMessages()
+{
+    std::deque<ChatMessage> result;
+    result.swap(pendingChatMessages);
+    return result;
 }

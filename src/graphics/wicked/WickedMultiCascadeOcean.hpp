@@ -15,8 +15,8 @@
 // Forward declarations
 namespace wi {
     class Ocean;
-    namespace scene { class Scene; }
-    namespace graphics { class CommandList; }
+    namespace scene { struct Scene; }
+    namespace graphics { struct CommandList; }
 }
 
 namespace bc { namespace graphics { namespace wicked {

@@ -35,6 +35,8 @@ class LinesData {
     public:
     LinesData(unsigned int numberOfShips);
 
+    void addShip(); // Add a new ship slot (for late join)
+
     int getNumberOfLines(); // Overall number of lines from all peers
     int getNumberOfOtherLines(int thisPeer); // Overall number of lines from all peers, excluding this one
     // setLineData will add an entry if lineNumber >= getNumberOfLines

@@ -85,6 +85,11 @@ struct ChartLandmark {
     std::string layerName; // LNDMRK or BUISGL
 };
 
+struct TSSArea {
+    std::string layerName;  // TSSLPT, TSSRON, or TSEZNE
+    std::vector<ChartPoint> boundary;  // Polygon boundary
+};
+
 class ChartReader {
 public:
     ChartReader();
@@ -101,6 +106,7 @@ public:
     std::vector<CoastlineSegment> extractCoastlines();
     std::vector<ChartLandmark> extractLandmarks();
     std::vector<UrbanArea> extractUrbanAreas();
+    std::vector<TSSArea> extractTSSAreas();
 
     // Map S-57 buoy data to Bridge Command buoy model name
     static std::string mapBuoyType(const ChartBuoy& buoy);

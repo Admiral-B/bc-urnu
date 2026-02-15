@@ -248,9 +248,7 @@ int main (int argc, char ** argv)
         } else {
             //Get user to move a dialog, so their mouse is positioned on the monitor they want
             if (GetSystemMetrics(SM_CMONITORS) > 1) {
-                irr::core::stringw locationMessageW = language.translate("moveMessage");
-
-                std::wstring wlocationMessage = std::wstring(locationMessageW.c_str());
+                std::wstring wlocationMessage = language.translate("moveMessage");
                 std::string slocationMessage(wlocationMessage.begin(), wlocationMessage.end());
 
                 MessageBoxA(nullptr, slocationMessage.c_str(), "Multi monitor", MB_OK);

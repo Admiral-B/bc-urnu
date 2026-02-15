@@ -56,24 +56,28 @@ void WickedWater::load(wi::scene::Scene* scene, float weather, int /*segments*/)
     // Water height will be set by tide in update()
     op.waterHeight = 0.0f;
 
-    // Set initial wind from weather parameter
-    // Beaufort scale approximate: weather 0=calm, 4=moderate, 8=gale
-    float approxWindKts = weather * 5.0f; // rough mapping
+    // Beaufort-to-wind mapping (midpoint of each Beaufort range in knots)
+    // B0=0, B1=2, B2=5, B3=8.5, B4=13, B5=19, B6=24, B7=30, B8=37, B9=44, B10=52, B11=60, B12=68
+    static const float beaufortToKnots[] = {0,2,5,8.5f,13,19,24,30,37,44,52,60,68};
+    int bi = std::max(0, std::min(12, (int)weather));
+    float frac = weather - bi;
+    float nextKts = (bi < 12) ? beaufortToKnots[bi + 1] : beaufortToKnots[12];
+    float approxWindKts = beaufortToKnots[bi] + frac * (nextKts - beaufortToKnots[bi]);
+
     float windMps = approxWindKts * 0.5144f;
     float Hs = 0.0246f * windMps * windMps;
-    if (Hs < 0.01f) Hs = 0.01f;
+    if (Hs < 0.001f) Hs = 0.001f;
     if (Hs > 15.0f) Hs = 15.0f;
 
-    // WE wave_amplitude is in internal units (scaled by 1e-7 inside WE)
-    // Empirically: wave_amplitude ~1000 gives moderate seas at wind_speed ~600
-    // Scale proportionally to Hs²
-    op.wave_amplitude = 1000.0f * (Hs * Hs) / (0.5f * 0.5f);
-    if (op.wave_amplitude < 10.0f) op.wave_amplitude = 10.0f;
+    // WE wave_amplitude: Phillips spectrum constant. Linear scaling with Hs.
+    // Calibration: Hs=2.0m (Beaufort 5) → amplitude=1000 (moderate seas)
+    op.wave_amplitude = 500.0f * Hs;
+    if (op.wave_amplitude < 1.0f) op.wave_amplitude = 1.0f;
     if (op.wave_amplitude > 50000.0f) op.wave_amplitude = 50000.0f;
 
     // Default wind direction (north)
     op.wind_dir = XMFLOAT2(0.0f, 1.0f);
-    op.wind_speed = std::max(100.0f, windMps * 100.0f); // WE uses cm/s scale
+    op.wind_speed = std::max(10.0f, windMps * 100.0f);
     op.wind_dependency = 0.07f;
 
     // Create the ocean with these parameters
@@ -105,10 +109,10 @@ void WickedWater::update(float tideHeight, const Vec3& /*viewPosition*/,
     if (Hs < 0.01f) Hs = 0.01f;
     if (Hs > 15.0f) Hs = 15.0f;
 
-    // Map Hs to WE wave_amplitude
-    // Calibration: Hs=0.5m → amplitude=1000 (moderate seas)
-    op.wave_amplitude = 1000.0f * (Hs * Hs) / (0.5f * 0.5f);
-    if (op.wave_amplitude < 10.0f) op.wave_amplitude = 10.0f;
+    // Map Hs to WE wave_amplitude (linear scaling)
+    // Calibration: Hs=2.0m (Beaufort 5) → amplitude=1000
+    op.wave_amplitude = 500.0f * Hs;
+    if (op.wave_amplitude < 1.0f) op.wave_amplitude = 1.0f;
     if (op.wave_amplitude > 50000.0f) op.wave_amplitude = 50000.0f;
 
     // Wind direction: BC uses meteorological convention (where wind blows FROM)

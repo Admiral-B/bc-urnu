@@ -1678,6 +1678,9 @@ guiTideHeight = guiData->tideHeight;
         if (bearingButton->isPressed()){
             draw2dBearing();
         }
+
+        // Draw chat overlay
+        drawChat();
     }
 
     void GUIMain::draw2dRadar()
@@ -1866,4 +1869,86 @@ guiTideHeight = guiData->tideHeight;
     void GUIMain::setLinesControlsText(std::string textToShow)
     {
         linesText->setText(irr::core::stringw(textToShow.c_str()).c_str());
+    }
+
+    void GUIMain::addChatMessage(const ChatMessage& msg)
+    {
+        chatMessages.push_back(msg);
+        while (chatMessages.size() > MAX_CHAT_DISPLAY) {
+            chatMessages.pop_front();
+        }
+    }
+
+    void GUIMain::openChatInput()
+    {
+        if (chatInputActive) return;
+        chatInputActive = true;
+        int32_t editY = sh - 30;
+        chatEditBox = guienv->addEditBox(L"", irr::core::rect<int32_t>(10, editY, su - 10, sh - 5));
+        chatEditBox->setOverrideColor(irr::video::SColor(255, 255, 255, 255));
+        chatEditBox->setDrawBackground(true);
+        chatEditBox->setDrawBorder(true);
+        guienv->setFocus(chatEditBox);
+    }
+
+    void GUIMain::closeChatInput(bool send)
+    {
+        if (!chatInputActive || !chatEditBox) return;
+        // Nothing to do with the text here - caller reads it first via getChatInputText()
+        chatEditBox->remove();
+        chatEditBox = nullptr;
+        chatInputActive = false;
+    }
+
+    bool GUIMain::isChatInputOpen() const
+    {
+        return chatInputActive;
+    }
+
+    std::string GUIMain::getChatInputText() const
+    {
+        if (!chatEditBox) return "";
+        irr::core::stringw wtext = chatEditBox->getText();
+        irr::core::stringc narrow(wtext);
+        return std::string(narrow.c_str());
+    }
+
+    void GUIMain::drawChat()
+    {
+        if (chatMessages.empty() && !chatInputActive) return;
+
+        irr::gui::IGUIFont* font = guienv->getSkin()->getFont();
+        if (!font) return;
+
+        // Display last few chat messages above the input area
+        int maxVisible = 6;
+        int lineHeight = 16;
+        int chatBottom = chatInputActive ? (int)sh - 35 : (int)sh - 5;
+        int startIdx = (int)chatMessages.size() - maxVisible;
+        if (startIdx < 0) startIdx = 0;
+
+        for (int i = startIdx; i < (int)chatMessages.size(); i++) {
+            int y = chatBottom - ((int)chatMessages.size() - i) * lineHeight;
+            if (y < 0) continue;
+
+            // Semi-transparent background
+            device->getVideoDriver()->draw2DRectangle(
+                irr::video::SColor(160, 0, 0, 0),
+                irr::core::rect<int32_t>(5, y, su - 5, y + lineHeight));
+
+            std::string line = "[" + chatMessages[i].timestamp + "] " +
+                chatMessages[i].senderName + ": " + chatMessages[i].text;
+            std::wstring wline(line.begin(), line.end());
+
+            font->draw(wline.c_str(),
+                irr::core::rect<int32_t>(10, y, su - 10, y + lineHeight),
+                irr::video::SColor(255, 220, 220, 100));
+        }
+
+        if (chatInputActive) {
+            // Draw label before edit box
+            device->getVideoDriver()->draw2DRectangle(
+                irr::video::SColor(200, 0, 0, 0),
+                irr::core::rect<int32_t>(5, sh - 32, su - 5, sh - 3));
+        }
     }

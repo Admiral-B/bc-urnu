@@ -295,13 +295,14 @@ wi::ecs::Entity LoadModelFromFile(const std::string& filename, Scene& scene) {
     } else if (ext == ".x" || ext == ".3ds") {
         // DirectX .x and .3ds formats are not supported by Wicked Engine.
         // These models need to be converted to .obj or .gltf first.
-        // Use the conversion utility: tools/convert_models.py (Phase 2B-05)
         std::cerr << "WickedModelImporter: Unsupported format '" << ext
                   << "' for file: " << filename << std::endl;
-        std::cerr << "  Convert to .obj or .gltf first." << std::endl;
-        // Return root with no geometry so scene graph isn't broken
+        scene.Entity_Remove(rootEntity);
+        return INVALID_ENTITY;
     } else {
         std::cerr << "WickedModelImporter: Unknown format: " << ext << std::endl;
+        scene.Entity_Remove(rootEntity);
+        return INVALID_ENTITY;
     }
 
     return rootEntity;

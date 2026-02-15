@@ -8,6 +8,10 @@
 #ifdef WITH_WICKED_ENGINE
 
 #include "WickedTerrainNode.hpp"
+
+// stb_image implementation is already in WickedEngine_Windows.lib -- just include the header
+#include "../../libs/stb/stb_image.h"
+
 #include <cmath>
 #include <fstream>
 #include <iostream>
@@ -32,7 +36,9 @@ WickedTerrainNode::~WickedTerrainNode() {
 bool WickedTerrainNode::loadFromConfig(const TerrainTileConfig& config,
                                          float refLongitude, float refLatitude) {
     // Calculate world-space dimensions from geo coordinates
-    float cosLat = std::cos(config.latitude * DEG_TO_RAD);
+    // Use mid-latitude cosine to match BC's Terrain.cpp coordinate conversion
+    float midLat = config.latitude + config.latExtent / 2.0f;
+    float cosLat = std::cos(midLat * DEG_TO_RAD);
     worldWidth_ = config.lonExtent * DEG_TO_RAD * EARTH_RADIUS * cosLat;
     worldDepth_ = config.latExtent * DEG_TO_RAD * EARTH_RADIUS;
     maxHeight_ = config.maxHeight;
@@ -79,37 +85,36 @@ bool WickedTerrainNode::loadFromHeightData(const std::vector<std::vector<float>>
 
 bool WickedTerrainNode::loadHeightmapPNG(const std::string& path,
                                            const TerrainTileConfig& config) {
-    // Load via WE's resource manager
-    wi::vector<uint8_t> filedata;
-    if (!wi::helper::FileRead(path, filedata)) {
-        std::cerr << "WickedTerrainNode: Failed to read heightmap: " << path << std::endl;
+    // Decode PNG/image using stb_image (force grayscale)
+    int imgW = 0, imgH = 0, imgChannels = 0;
+    unsigned char* pixels = stbi_load(path.c_str(), &imgW, &imgH, &imgChannels, 1); // force 1 channel
+    if (!pixels) {
+        std::cerr << "WickedTerrainNode: Failed to load heightmap image: " << path
+                  << " (" << stbi_failure_reason() << ")" << std::endl;
         return false;
     }
 
-    // Decode PNG using WE's image loading
-    int width = 0, height = 0;
-    wi::graphics::TextureDesc texDesc;
-    wi::vector<uint8_t> decoded;
+    // Convert pixel values to height data
+    // BC convention: pixel 0 = 0 (terrain base), pixel 255 = maxHeight + seaMaxDepth
+    // Terrain is then positioned at Y = -seaMaxDepth
+    // Image row 0 = top = north, but BC Z=0 = south (low latitude), so flip rows
+    float heightRange = maxHeight_ + seaMaxDepth_;
+    float invMaxPixel = heightRange / 255.0f;
 
-    // Use WE's texture loading to decode the image
-    wi::Resource resource = wi::resourcemanager::Load(path);
-    if (!resource.IsValid()) {
-        std::cerr << "WickedTerrainNode: Failed to decode heightmap: " << path << std::endl;
-        return false;
+    heightData_.resize(imgH, std::vector<float>(imgW));
+    for (int r = 0; r < imgH; r++) {
+        int srcRow = imgH - 1 - r; // flip: image top (north) -> high Z in world
+        for (int c = 0; c < imgW; c++) {
+            float pixelValue = static_cast<float>(pixels[srcRow * imgW + c]);
+            heightData_[r][c] = pixelValue * invMaxPixel;
+        }
     }
 
-    // For now, create a placeholder heightmap from file metadata
-    // Full implementation would decode PNG pixels and build height grid
-    // This is a framework that will be completed when rendering is tested
+    stbi_image_free(pixels);
 
-    // Create empty heightmap with correct dimensions
-    int gridSize = 256; // Default resolution
-    if (config.heightmapRows > 0) gridSize = config.heightmapRows;
-
-    heightData_.resize(gridSize, std::vector<float>(gridSize, 0.0f));
-
-    std::cout << "WickedTerrainNode: Loaded heightmap placeholder ("
-              << gridSize << "x" << gridSize << ") from " << path << std::endl;
+    std::cout << "WickedTerrainNode: Loaded heightmap (" << imgW << "x" << imgH
+              << ", " << imgChannels << "ch) from " << path
+              << " heightRange=" << heightRange << "m" << std::endl;
     return true;
 }
 
@@ -174,8 +179,12 @@ bool WickedTerrainNode::createTerrainMesh(const std::string& texturePath) {
     Entity matEntity = weScene->Entity_CreateMaterial("BC_TerrainMat");
     weScene->Component_Attach(matEntity, rootEntity_);
     auto* material = weScene->materials.GetComponent(matEntity);
-    if (material && !texturePath.empty()) {
-        material->textures[MaterialComponent::BASECOLORMAP].name = texturePath;
+    if (material) {
+        material->roughness = 0.95f;   // terrain is rough earth/grass, not shiny
+        material->metalness = 0.0f;    // non-metallic
+        if (!texturePath.empty()) {
+            material->textures[MaterialComponent::BASECOLORMAP].name = texturePath;
+        }
         material->CreateRenderData();
     }
 
@@ -213,12 +222,10 @@ bool WickedTerrainNode::createTerrainMesh(const std::string& texturePath) {
 
             DirectX::XMFLOAT2 uv(
                 static_cast<float>(c) / (meshCols - 1),
-                static_cast<float>(r) / (meshRows - 1)
+                1.0f - static_cast<float>(r) / (meshRows - 1) // flip V: row 0=south→V=1, last=north→V=0
             );
 
-            // WE is left-handed, flip Z for coordinate consistency
-            pos.z *= -1;
-            nor.z *= -1;
+            // Both BC and WE are left-handed Y-up, no Z flip needed
 
             mesh->vertex_positions.push_back(pos);
             mesh->vertex_normals.push_back(nor);
@@ -234,14 +241,14 @@ bool WickedTerrainNode::createTerrainMesh(const std::string& texturePath) {
             uint32_t bl = (r + 1) * meshCols + c;
             uint32_t br = bl + 1;
 
-            // Two triangles per quad
+            // Two triangles per quad (clockwise winding for DirectX/WE front-facing)
             mesh->indices.push_back(tl);
-            mesh->indices.push_back(bl);
             mesh->indices.push_back(tr);
+            mesh->indices.push_back(bl);
 
             mesh->indices.push_back(tr);
-            mesh->indices.push_back(bl);
             mesh->indices.push_back(br);
+            mesh->indices.push_back(bl);
         }
     }
 
@@ -251,7 +258,7 @@ bool WickedTerrainNode::createTerrainMesh(const std::string& texturePath) {
     // Position the terrain
     auto* transform = weScene->transforms.GetComponent(rootEntity_);
     if (transform) {
-        transform->Translate({position_.x, position_.y, -position_.z}); // flip Z
+        transform->Translate(DirectX::XMFLOAT3(position_.x, position_.y, position_.z));
         transform->UpdateTransform();
     }
 
@@ -300,7 +307,7 @@ void WickedTerrainNode::setPosition(const Vec3& pos) {
         auto* transform = weScene->transforms.GetComponent(rootEntity_);
         if (transform) {
             transform->ClearTransform();
-            transform->Translate({pos.x, pos.y, -pos.z});
+            transform->Translate(DirectX::XMFLOAT3(pos.x, pos.y, pos.z));
             transform->UpdateTransform();
         }
     }
@@ -317,8 +324,8 @@ void WickedTerrainNode::setRotation(const Vec3& rot) {
         if (transform) {
             float degToRad = 3.14159265358979f / 180.0f;
             transform->ClearTransform();
-            transform->Translate({position_.x, position_.y, -position_.z});
-            transform->RotateRollPitchYaw({rot.x * degToRad, rot.y * degToRad, rot.z * degToRad});
+            transform->Translate(DirectX::XMFLOAT3(position_.x, position_.y, position_.z));
+            transform->RotateRollPitchYaw(DirectX::XMFLOAT3(rot.x * degToRad, rot.y * degToRad, rot.z * degToRad));
             transform->UpdateTransform();
         }
     }
@@ -329,7 +336,7 @@ void WickedTerrainNode::setScale(const Vec3& scale) {
     if (rootEntity_ != INVALID_ENTITY) {
         auto* transform = weScene->transforms.GetComponent(rootEntity_);
         if (transform) {
-            transform->scale_local = {scale.x, scale.y, scale.z};
+            transform->scale_local = DirectX::XMFLOAT3(scale.x, scale.y, scale.z);
             transform->SetDirty();
         }
     }

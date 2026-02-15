@@ -16,7 +16,7 @@
 
 // Forward declarations
 namespace wi {
-    namespace scene { class Scene; }
+    namespace scene { struct Scene; }
 }
 
 namespace bc { namespace graphics { namespace wicked {

@@ -12,6 +12,7 @@
 #include "GUI.hpp"
 #include "ImportExportGUI.hpp"
 #include "EventReceiver.hpp"
+#include "EditorApp.hpp"
 
 #include "../Constants.hpp"
 #include "../IniFile.hpp"
@@ -291,6 +292,25 @@ void checkUserScenarioDir(void)
 
 int main (int argc, char ** argv)
 {
+    // Check for --legacy flag to launch the old Irrlicht-based editor
+    bool useLegacyEditor = false;
+    for (int i = 1; i < argc; i++) {
+        if (std::string(argv[i]) == "--legacy") {
+            useLegacyEditor = true;
+        }
+    }
+
+    // Default: launch new ImGui-based editor
+    if (!useLegacyEditor) {
+        EditorApp app;
+        if (!app.init(1400, 900, "Bridge Command - Scenario Editor")) {
+            std::cerr << "Failed to initialise ImGui editor" << std::endl;
+            return 1;
+        }
+        app.run();
+        app.shutdown();
+        return 0;
+    }
 
     #ifdef FOR_DEB
     chdir("/usr/share/bridgecommand");

@@ -329,6 +329,7 @@ public:
     bool debugModeOn() const;
     float getOwnShipMass() const;
     float getOwnShipMassEstimate() const;
+    uint32_t getOwnShipMMSI() const;
     float getOtherShipMassEstimate(int number) const;
 
     bool getMoveViewWithPrimary() const;

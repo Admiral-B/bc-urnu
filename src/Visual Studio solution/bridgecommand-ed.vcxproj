@@ -69,37 +69,38 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
-    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);..\libs\Irrlicht\irrlicht-svn\include;..\libs\asio\include</IncludePath>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);..\libs\Irrlicht\irrlicht-svn\include;..\libs\asio\include;..\graphics\wicked\imgui;C:\vcpkg\installed\x86-windows\include;C:\vcpkg\installed\x64-windows\include</IncludePath>
     <OutDir>..\..\bin</OutDir>
     <IntDir>$(Configuration)\ed\</IntDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);..\libs\Irrlicht\irrlicht-svn\include;..\libs\asio\include</IncludePath>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);..\libs\Irrlicht\irrlicht-svn\include;..\libs\asio\include;..\graphics\wicked\imgui;C:\vcpkg\installed\x86-windows\include;C:\vcpkg\installed\x64-windows\include</IncludePath>
     <OutDir>..\..\bin</OutDir>
     <IntDir>$(Configuration)\ed\</IntDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <OutDir>..\..\bin</OutDir>
     <IntDir>$(Configuration)\ed\</IntDir>
-    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);..\libs\Irrlicht\irrlicht-svn\include;..\libs\asio\include</IncludePath>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);..\libs\Irrlicht\irrlicht-svn\include;..\libs\asio\include;..\graphics\wicked\imgui;C:\vcpkg\installed\x86-windows\include;C:\vcpkg\installed\x64-windows\include</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <OutDir>..\..\bin</OutDir>
     <IntDir>$(Configuration)\ed\</IntDir>
-    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);..\libs\Irrlicht\irrlicht-svn\include;..\libs\asio\include</IncludePath>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);..\libs\Irrlicht\irrlicht-svn\include;..\libs\asio\include;..\graphics\wicked\imgui;C:\vcpkg\installed\x86-windows\include;C:\vcpkg\installed\x64-windows\include</IncludePath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_MBCS;%(PreprocessorDefinitions);ASIO_STANDALONE;ASIO_HAS_STD_THREAD;ASIO_HAS_STD_ADDRESSOF;ASIO_HAS_STD_ARRAY;ASIO_HAS_CSTDINT;ASIO_HAS_STD_SHARED_PTR;ASIO_HAS_STD_TYPE_TRAITS;_WIN32_WINNT=0x0501</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_MBCS;%(PreprocessorDefinitions);ASIO_STANDALONE;ASIO_HAS_STD_THREAD;ASIO_HAS_STD_ADDRESSOF;ASIO_HAS_STD_ARRAY;ASIO_HAS_CSTDINT;ASIO_HAS_STD_SHARED_PTR;ASIO_HAS_STD_TYPE_TRAITS;_WIN32_WINNT=0x0501;WITH_GDAL;_CRT_SECURE_NO_WARNINGS</PreprocessorDefinitions>
       <AdditionalOptions>/source-charset:utf-8 /execution-charset:utf-8 %(AdditionalOptions)</AdditionalOptions>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;winmm.lib;ws2_32.lib;Irrlicht.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>..\libs\Irrlicht\irrlicht-svn\lib\Win32-visualstudio</AdditionalLibraryDirectories>
+      <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;winmm.lib;ws2_32.lib;winhttp.lib;opengl32.lib;Irrlicht.lib;gdal.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>..\libs\Irrlicht\irrlicht-svn\lib\Win32-visualstudio;C:\vcpkg\installed\x86-windows\lib</AdditionalLibraryDirectories>
       <SubSystem>Console</SubSystem>
     </Link>
     <PostBuildEvent>
@@ -111,12 +112,13 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_MBCS;%(PreprocessorDefinitions);ASIO_STANDALONE;ASIO_HAS_STD_THREAD;ASIO_HAS_STD_ADDRESSOF;ASIO_HAS_STD_ARRAY;ASIO_HAS_CSTDINT;ASIO_HAS_STD_SHARED_PTR;ASIO_HAS_STD_TYPE_TRAITS;_WIN32_WINNT=0x0501</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_MBCS;%(PreprocessorDefinitions);ASIO_STANDALONE;ASIO_HAS_STD_THREAD;ASIO_HAS_STD_ADDRESSOF;ASIO_HAS_STD_ARRAY;ASIO_HAS_CSTDINT;ASIO_HAS_STD_SHARED_PTR;ASIO_HAS_STD_TYPE_TRAITS;_WIN32_WINNT=0x0501;WITH_GDAL;_CRT_SECURE_NO_WARNINGS</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
-      <AdditionalLibraryDirectories>..\libs\Irrlicht\irrlicht-svn\lib\Win64-visualstudio</AdditionalLibraryDirectories>
-      <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;winmm.lib;ws2_32.lib;Irrlicht.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>..\libs\Irrlicht\irrlicht-svn\lib\Win64-visualstudio;C:\vcpkg\installed\x64-windows\lib</AdditionalLibraryDirectories>
+      <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;winmm.lib;ws2_32.lib;winhttp.lib;opengl32.lib;Irrlicht.lib;gdal.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -126,15 +128,16 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_MBCS;%(PreprocessorDefinitions);ASIO_STANDALONE;ASIO_HAS_STD_THREAD;ASIO_HAS_STD_ADDRESSOF;ASIO_HAS_STD_ARRAY;ASIO_HAS_CSTDINT;ASIO_HAS_STD_SHARED_PTR;ASIO_HAS_STD_TYPE_TRAITS;_WIN32_WINNT=0x0501</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_MBCS;%(PreprocessorDefinitions);ASIO_STANDALONE;ASIO_HAS_STD_THREAD;ASIO_HAS_STD_ADDRESSOF;ASIO_HAS_STD_ARRAY;ASIO_HAS_CSTDINT;ASIO_HAS_STD_SHARED_PTR;ASIO_HAS_STD_TYPE_TRAITS;_WIN32_WINNT=0x0501;WITH_GDAL;_CRT_SECURE_NO_WARNINGS</PreprocessorDefinitions>
       <AdditionalOptions>/source-charset:utf-8 /execution-charset:utf-8 %(AdditionalOptions)</AdditionalOptions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalLibraryDirectories>..\libs\Irrlicht\irrlicht-svn\lib\Win32-visualstudio</AdditionalLibraryDirectories>
-      <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;winmm.lib;ws2_32.lib;Irrlicht.lib;winmm.lib;ws2_32.lib;Irrlicht.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>..\libs\Irrlicht\irrlicht-svn\lib\Win32-visualstudio;C:\vcpkg\installed\x86-windows\lib</AdditionalLibraryDirectories>
+      <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;winmm.lib;ws2_32.lib;winhttp.lib;opengl32.lib;Irrlicht.lib;gdal.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <SubSystem>Console</SubSystem>
     </Link>
     <PostBuildEvent>
@@ -148,14 +151,15 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_MBCS;%(PreprocessorDefinitions);ASIO_STANDALONE;ASIO_HAS_STD_THREAD;ASIO_HAS_STD_ADDRESSOF;ASIO_HAS_STD_ARRAY;ASIO_HAS_CSTDINT;ASIO_HAS_STD_SHARED_PTR;ASIO_HAS_STD_TYPE_TRAITS;_WIN32_WINNT=0x0501</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_MBCS;%(PreprocessorDefinitions);ASIO_STANDALONE;ASIO_HAS_STD_THREAD;ASIO_HAS_STD_ADDRESSOF;ASIO_HAS_STD_ARRAY;ASIO_HAS_CSTDINT;ASIO_HAS_STD_SHARED_PTR;ASIO_HAS_STD_TYPE_TRAITS;_WIN32_WINNT=0x0501;WITH_GDAL;_CRT_SECURE_NO_WARNINGS</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalLibraryDirectories>..\libs\Irrlicht\irrlicht-svn\lib\Win64-visualstudio</AdditionalLibraryDirectories>
-      <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;winmm.lib;ws2_32.lib;Irrlicht.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>..\libs\Irrlicht\irrlicht-svn\lib\Win64-visualstudio;C:\vcpkg\installed\x64-windows\lib</AdditionalLibraryDirectories>
+      <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;winmm.lib;ws2_32.lib;winhttp.lib;opengl32.lib;Irrlicht.lib;gdal.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -169,6 +173,36 @@
     <ClCompile Include="..\editor\GUI.cpp" />
     <ClCompile Include="..\editor\ImportExportGUI.cpp" />
     <ClCompile Include="..\editor\StartupEventReceiver.cpp" />
+    <ClCompile Include="..\editor\TileDownloader.cpp" />
+    <ClCompile Include="..\editor\TileTextureManager.cpp" />
+    <ClCompile Include="..\editor\MapWidget.cpp" />
+    <ClCompile Include="..\editor\MapTileSources.cpp" />
+    <ClCompile Include="..\editor\CoastlineData.cpp" />
+    <ClCompile Include="..\editor\CoastlineRenderer.cpp" />
+    <ClCompile Include="..\editor\GEBCOReader.cpp" />
+    <ClCompile Include="..\editor\ENCCatalog.cpp" />
+    <ClCompile Include="..\editor\EditorApp.cpp" />
+    <ClCompile Include="..\editor\LocationSearch.cpp" />
+    <ClCompile Include="..\editor\AreaSelector.cpp" />
+    <ClCompile Include="..\editor\ShipPlacer.cpp" />
+    <ClCompile Include="..\editor\ScenarioFileIO.cpp" />
+    <ClCompile Include="..\editor\ChartOverlay.cpp" />
+    <ClCompile Include="..\editor\MeasureTool.cpp" />
+    <ClCompile Include="..\editor\SatelliteTexture.cpp" />
+    <ClCompile Include="..\editor\OpenSeaMapSource.cpp" />
+    <ClCompile Include="..\ChartReader.cpp" />
+    <ClCompile Include="..\HeightmapGenerator.cpp" />
+    <ClCompile Include="..\WorldGenerator.cpp" />
+    <ClCompile Include="..\miniz\miniz.c" />
+    <ClCompile Include="..\miniz\miniz_tdef.c" />
+    <ClCompile Include="..\miniz\miniz_tinfl.c" />
+    <ClCompile Include="..\miniz\miniz_zip.c" />
+    <ClCompile Include="..\graphics\wicked\imgui\imgui.cpp" />
+    <ClCompile Include="..\graphics\wicked\imgui\imgui_draw.cpp" />
+    <ClCompile Include="..\graphics\wicked\imgui\imgui_tables.cpp" />
+    <ClCompile Include="..\graphics\wicked\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="..\graphics\wicked\imgui\backends\imgui_impl_win32.cpp" />
+    <ClCompile Include="..\graphics\wicked\imgui\backends\imgui_impl_opengl3.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\Constants.hpp" />
@@ -183,6 +217,28 @@
     <ClInclude Include="..\editor\ImportExportGUI.hpp" />
     <ClInclude Include="..\editor\PositionDataStruct.hpp" />
     <ClInclude Include="..\editor\StartupEventReceiver.hpp" />
+    <ClInclude Include="..\editor\TileDownloader.hpp" />
+    <ClInclude Include="..\editor\TileMath.hpp" />
+    <ClInclude Include="..\editor\TileTextureManager.hpp" />
+    <ClInclude Include="..\editor\MapWidget.hpp" />
+    <ClInclude Include="..\editor\MapTileSources.hpp" />
+    <ClInclude Include="..\editor\CoastlineData.hpp" />
+    <ClInclude Include="..\editor\CoastlineRenderer.hpp" />
+    <ClInclude Include="..\editor\GEBCOReader.hpp" />
+    <ClInclude Include="..\editor\ENCCatalog.hpp" />
+    <ClInclude Include="..\editor\EditorApp.hpp" />
+    <ClInclude Include="..\editor\LocationSearch.hpp" />
+    <ClInclude Include="..\editor\AreaSelector.hpp" />
+    <ClInclude Include="..\editor\ShipPlacer.hpp" />
+    <ClInclude Include="..\editor\ScenarioFileIO.hpp" />
+    <ClInclude Include="..\editor\ChartOverlay.hpp" />
+    <ClInclude Include="..\editor\MeasureTool.hpp" />
+    <ClInclude Include="..\editor\SatelliteTexture.hpp" />
+    <ClInclude Include="..\editor\OpenSeaMapSource.hpp" />
+    <ClInclude Include="..\ChartReader.hpp" />
+    <ClInclude Include="..\HeightmapGenerator.hpp" />
+    <ClInclude Include="..\WorldGenerator.hpp" />
+    <ClInclude Include="..\editor\UndoStack.hpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="..\icon.rc" />

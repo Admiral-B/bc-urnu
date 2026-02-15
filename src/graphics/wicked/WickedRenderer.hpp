@@ -17,7 +17,7 @@
 namespace wi {
     class Application;
     class RenderPath3D;
-    namespace scene { class Scene; }
+    namespace scene { struct Scene; }
 }
 
 namespace bc { namespace graphics { namespace wicked {

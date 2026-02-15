@@ -15,6 +15,9 @@
      51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA. */
 
 #include "ControllerModel.hpp"
+#include "MapTileSources.hpp"
+#include "MapWidget.hpp"
+#include "CoastlineRenderer.hpp"
 #include "irrlicht.h"
 #include "../IniFile.hpp"
 #include "../Constants.hpp"
@@ -234,6 +237,41 @@ ControllerModel::ControllerModel(irr::IrrlichtDevice* device, Lang* lang, GUIMai
     unscaledMap->drop();
     unscaledMap=0;
 
+    // Initialize tile map system
+    std::string tileCacheDir = Utilities::getUserDirBase() + "tilecache";
+    tileSources = std::make_unique<MapTileSources>(tileCacheDir, driver);
+    mapWidget = std::make_unique<MapWidget>(tileSources->getDownloader(), tileSources->getTextureManager());
+
+    // Center tile map on the world's center position
+    double centerLat = terrainLat + terrainLatExtent / 2.0;
+    double centerLon = terrainLong + terrainLongExtent / 2.0;
+    mapWidget->setCenter(centerLat, centerLon);
+
+    // Set zoom level based on terrain extent
+    // Roughly: zoom = log2(360 / extent)
+    double extent = std::max(terrainLongExtent, terrainLatExtent);
+    int tileZoom = 6;
+    if (extent > 0) {
+        tileZoom = static_cast<int>(std::log2(360.0 / extent));
+        tileZoom = std::max(2, std::min(18, tileZoom));
+    }
+    mapWidget->setZoom(tileZoom);
+
+    // Load coastline data
+    coastlineRenderer = std::make_unique<CoastlineRenderer>();
+    std::string dataDir = Utilities::getUserDirBase() + "../Data/Coastlines/";
+    // Try alongside the executable first, then in user dir
+    std::string exeDir = "";
+    // Get executable directory from device's file system
+    irr::io::IFileSystem* fs = device->getFileSystem();
+    if (fs) {
+        exeDir = std::string(irr::core::stringc(fs->getWorkingDirectory()).c_str()) + "/Data/Coastlines/";
+    }
+    if (!exeDir.empty() && coastlineRenderer->load(exeDir + "coastlines_50m.bin", exeDir + "coastlines_10m.bin")) {
+        // Loaded from executable directory
+    } else {
+        coastlineRenderer->load(dataDir + "coastlines_50m.bin", dataDir + "coastlines_10m.bin");
+    }
 }
 
 //Destructor
@@ -290,17 +328,43 @@ void ControllerModel::update()
     mouseClickedLastUpdate = mouseDown;
 
 
-    //TODO: Work out the required area of the map image, and create this as a texture to go to the gui
     irr::core::dimension2d<uint32_t> screenSize = device->getVideoDriver()->getScreenSize();
-    //grab an area this size from the scaled map
-    irr::video::IImage* tempImage = driver->createImage(scaledMap.at(currentZoom)->getColorFormat(),screenSize); //Empty image
-    tempImage->fill(irr::video::SColor(255,0,0,32)); //Initialise background
 
-    //Copy in data
-    int32_t topLeftX = -1*scenarioData->ownShipData.initialX/metresPerPx.at(currentZoom) + driver->getScreenSize().Width/2 + mapOffsetX;
-    int32_t topLeftZ = scenarioData->ownShipData.initialZ/metresPerPx.at(currentZoom)    + driver->getScreenSize().Height/2 - scaledMap.at(currentZoom)->getDimension().Height + mapOffsetZ;
+    // Render tile map as background if enabled (BEFORE the GUI, so overlays draw on top)
+    if (tileMapEnabled && mapWidget) {
+        // Sync tile map center with the existing editor's map center
+        // The editor's map center in world coords:
+        double mapCenterX = scenarioData->ownShipData.initialX - mapOffsetX * metresPerPx.at(currentZoom);
+        double mapCenterZ = scenarioData->ownShipData.initialZ + mapOffsetZ * metresPerPx.at(currentZoom);
 
-    scaledMap.at(currentZoom)->copyTo(tempImage,irr::core::position2d<int32_t>(topLeftX,topLeftZ)); //Fixme: Check bounds are reasonable
+        // Convert world coords to lat/lon
+        double centerLat = terrainLat + (mapCenterZ / terrainZWidth) * terrainLatExtent;
+        double centerLon = terrainLong + (mapCenterX / terrainXWidth) * terrainLongExtent;
+        mapWidget->setCenter(centerLat, centerLon);
+
+        // Calculate tile zoom from metresPerPx
+        double mpp = metresPerPx.at(currentZoom);
+        if (mpp > 0) {
+            int tileZoom = static_cast<int>(std::round(
+                std::log2(156543.03392 * std::cos(centerLat * M_PI / 180.0) / mpp)));
+            tileZoom = std::max(2, std::min(19, tileZoom));
+            mapWidget->setZoom(tileZoom);
+        }
+
+        // Render tiles as background (no grid/overlay -- the existing editor provides those)
+        mapWidget->showGrid = false;
+        mapWidget->showOverlay = false;
+        irr::gui::IGUIFont* font = device->getGUIEnvironment()->getBuiltInFont();
+        mapWidget->render(driver, font, 0, 0, screenSize.Width, screenSize.Height);
+
+        // Render coastlines on top of tiles
+        if (coastlineEnabled && coastlineRenderer && coastlineRenderer->isLoaded()) {
+            coastlineRenderer->render(driver, *mapWidget);
+        }
+    }
+
+    // Build the bitmap map texture (skip when tile map provides the background)
+    irr::video::ITexture* displayMapTexture = nullptr;
 
     //Drop any previous textures
     for(uint32_t i = 0; i < driver->getTextureCount(); i++) {
@@ -309,12 +373,22 @@ void ControllerModel::update()
         }
     }
 
-    //Make a texture - The name is required to remove the texture from memory.
-    irr::video::ITexture* displayMapTexture = driver->addTexture("DisplayTexture", tempImage);
+    if (!tileMapEnabled) {
+        irr::video::IImage* tempImage = driver->createImage(scaledMap.at(currentZoom)->getColorFormat(), screenSize);
+        // Original dark blue background for bitmap map
+        tempImage->fill(irr::video::SColor(255, 0, 0, 32));
 
-    tempImage->drop();
+        // Copy bitmap map data
+        int32_t topLeftX = -1*scenarioData->ownShipData.initialX/metresPerPx.at(currentZoom) + driver->getScreenSize().Width/2 + mapOffsetX;
+        int32_t topLeftZ = scenarioData->ownShipData.initialZ/metresPerPx.at(currentZoom)    + driver->getScreenSize().Height/2 - scaledMap.at(currentZoom)->getDimension().Height + mapOffsetZ;
+        scaledMap.at(currentZoom)->copyTo(tempImage, irr::core::position2d<int32_t>(topLeftX, topLeftZ));
 
-    //Send the current data to the gui, and update it
+        //Make a texture - The name is required to remove the texture from memory.
+        displayMapTexture = driver->addTexture("DisplayTexture", tempImage);
+        tempImage->drop();
+    }
+
+    //Send the current data to the gui, and update it (ships, controls render on top)
     gui->updateGuiData(*scenarioData,mapOffsetX,mapOffsetZ,metresPerPx.at(currentZoom),*buoysData,*landObjectsData,displayMapTexture,selectedShip,selectedLeg, terrainLong, terrainLongExtent, terrainXWidth, terrainLat, terrainLatExtent, terrainZWidth);
 }
 
@@ -706,4 +780,21 @@ void ControllerModel::save()
 void ControllerModel::setMouseDown(bool isMouseDown)
 {
     mouseDown = isMouseDown;
+}
+
+void ControllerModel::toggleTileMapSource()
+{
+    if (tileSources) {
+        tileSources->toggleSource();
+        // Update map widget to use the new source
+        if (mapWidget) {
+            // Recreate the map widget with the new source's downloader/texture manager
+            double lat = mapWidget->getCenterLat();
+            double lon = mapWidget->getCenterLon();
+            int zoom = mapWidget->getZoom();
+            mapWidget = std::make_unique<MapWidget>(tileSources->getDownloader(), tileSources->getTextureManager());
+            mapWidget->setCenter(lat, lon);
+            mapWidget->setZoom(zoom);
+        }
+    }
 }

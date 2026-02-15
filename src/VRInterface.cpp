@@ -19,6 +19,7 @@
 #define _CRT_SECURE_NO_WARNINGS //FIXME: Temporary fix
 
 #include "VRInterface.hpp"
+#include "ISound.hpp"
 #include "irrlicht.h"
 #include "Constants.hpp"
 #include <iostream>

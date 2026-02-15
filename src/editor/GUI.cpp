@@ -243,9 +243,10 @@ void GUIMain::updateEditBoxes()
 
 void GUIMain::updateGuiData(ScenarioData scenarioData, int32_t mapOffsetX, int32_t mapOffsetZ, float metresPerPx, const std::vector<PositionData>& buoys, const std::vector<PositionData>& landObjects, irr::video::ITexture* displayMapTexture, int32_t selectedShip, int32_t selectedLeg, float terrainLong, float terrainLongExtent, float terrainXWidth, float terrainLat, float terrainLatExtent, float terrainZWidth)
 {
-    //Show map texture
-    device->getVideoDriver()->draw2DImage(displayMapTexture, irr::core::position2d<int32_t>(0,0));
-    //TODO: Check that conversion to texture does not distort image
+    //Show map texture (nullptr when tile map provides the background instead)
+    if (displayMapTexture) {
+        device->getVideoDriver()->draw2DImage(displayMapTexture, irr::core::position2d<int32_t>(0,0));
+    }
 
     //Calculate map centre as displayed
     mapCentreX = scenarioData.ownShipData.initialX - mapOffsetX*metresPerPx;
