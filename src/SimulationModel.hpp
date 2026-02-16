@@ -170,6 +170,9 @@ public:
     float getSOG() const; //In metres/second
     float getSTW() const; //Speed through water in metres/second
     float getDepth() const;
+    float getPosY() const; // Vertical position (tide + height correction + wave heave)
+    float getPitch() const; // Pitch angle in degrees
+    float getRoll() const; // Roll angle in degrees
 
     float getWaveHeight(float posX, float posZ) const; //Return wave height (not tide) at the world position specified
     bc::graphics::Vec2 getLocalNormals(float relPosX, float relPosZ) const;

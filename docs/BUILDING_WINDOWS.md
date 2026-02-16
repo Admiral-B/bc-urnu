@@ -86,11 +86,17 @@ The `--wicked` flag is forwarded automatically from the launcher to `bridgecomma
 
 | Control | Action |
 |---|---|
-| Right-drag | Orbit camera |
-| Scroll wheel | Zoom in/out |
-| WASD | Move camera target |
-| Shift | Move faster |
+| Up/Down arrows | Port + stbd engine ahead/astern |
+| Left/Right arrows | Wheel (rudder) port/starboard |
+| Mouse drag | Look around (bridge mode) / orbit (orbit mode) |
+| Scroll wheel | FOV (bridge mode) / zoom (orbit mode) |
+| O | Toggle orbit/bridge camera mode |
+| H | Horn (hold) |
+| WASD | Move orbit target (orbit mode only) |
+| Shift | Move faster (orbit mode) |
 | Escape | Quit |
+
+ImGui sliders for port/stbd engine, bow thruster, and wheel are also available in the HUD.
 
 Requires `dxcompiler.dll` in `bin/` and WickedEngine shaders reachable at `../../WickedEngine/WickedEngine/shaders/` (or set `WE_SHADER_PATH`).
 

@@ -22,6 +22,7 @@
 #include "MeasureTool.hpp"
 #include "UndoStack.hpp"
 #include "TileDownloader.hpp"
+#include "OSMBuildingReader.hpp"
 #include "../ScenarioDataStructure.hpp"
 #include <unordered_map>
 
@@ -128,6 +129,13 @@ private:
     // Chart overlay (S-57)
     ChartOverlay chartOverlay;
     void loadChartFile(); // Opens file dialog and loads S-57 chart
+
+    // Building footprint overlay (OSM)
+    bool showBuildings = false;
+    OSMBuildingReader buildingReader;
+    bool buildingsQueried = false;  // true if we've queried for current view area
+    double buildingsQueryLat = 0, buildingsQueryLon = 0;
+    int buildingsQueryZoom = 0;
 
     // World generation dialog
     bool showGenerateDialog = false;

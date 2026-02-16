@@ -182,10 +182,40 @@ void ImportModel_OBJ(const std::string& filename, Scene& scene,
         if (material.textures[MaterialComponent::SURFACEMAP].name.empty())
             material.textures[MaterialComponent::SURFACEMAP].name = mat.specular_highlight_texname;
 
+        // TinyObjLoader PBR extensions: map_Pr (roughness), map_Pm (metallic)
+        if (material.textures[MaterialComponent::SURFACEMAP].name.empty() && !mat.roughness_texname.empty())
+            material.textures[MaterialComponent::SURFACEMAP].name = mat.roughness_texname;
+        if (material.textures[MaterialComponent::SURFACEMAP].name.empty() && !mat.metallic_texname.empty())
+            material.textures[MaterialComponent::SURFACEMAP].name = mat.metallic_texname;
+
         // Resolve texture paths relative to model directory
         for (auto& tex : material.textures) {
             if (!tex.name.empty()) {
                 tex.name = directory + tex.name;
+            }
+        }
+
+        // Auto-detect PBR maps alongside base texture if not explicitly set
+        // Convention: wall.png -> wall_Normal.png, wall_Roughness.png
+        std::string baseTexPath = material.textures[MaterialComponent::BASECOLORMAP].name;
+        if (!baseTexPath.empty()) {
+            size_t dotPos = baseTexPath.rfind('.');
+            if (dotPos != std::string::npos) {
+                std::string stem = baseTexPath.substr(0, dotPos);
+                std::string ext = baseTexPath.substr(dotPos);
+
+                if (material.textures[MaterialComponent::NORMALMAP].name.empty()) {
+                    std::string normalPath = stem + "_Normal" + ext;
+                    if (wi::helper::FileExists(normalPath)) {
+                        material.textures[MaterialComponent::NORMALMAP].name = normalPath;
+                    }
+                }
+                if (material.textures[MaterialComponent::SURFACEMAP].name.empty()) {
+                    std::string roughPath = stem + "_Roughness" + ext;
+                    if (wi::helper::FileExists(roughPath)) {
+                        material.textures[MaterialComponent::SURFACEMAP].name = roughPath;
+                    }
+                }
             }
         }
 

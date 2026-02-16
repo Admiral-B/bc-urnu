@@ -17,12 +17,19 @@
 #ifdef WITH_GDAL
 
 #include "WorldGenerator.hpp"
+#include "BuildingGenerator.hpp"
+#include "editor/OSMBuildingReader.hpp"
 
 #include <sstream>
 #include <fstream>
 #include <iostream>
 #include <algorithm>
+#include <cmath>
 #include <sys/stat.h>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 #ifdef _WIN32
 #include <windows.h>
@@ -369,6 +376,50 @@ WorldGeneratorResult WorldGenerator::generateWorld(const std::string& chartPath,
     {
         std::ofstream f(outputDir + "/landobject.ini");
         if (f.is_open()) f << ChartReader::generateLandObjectIni(landmarks);
+    }
+
+    // Query OSM for building footprints and generate building meshes
+    {
+        OSMBuildingReader bldgReader;
+        std::cout << "WorldGenerator: Querying OSM for buildings..." << std::endl;
+        if (bldgReader.query(bounds.minLat, bounds.maxLat,
+                             bounds.minLon, bounds.maxLon,
+                             [](const std::string& msg) {
+                                 std::cout << "WorldGenerator: " << msg << std::endl;
+                             })) {
+            const auto& footprints = bldgReader.getBuildings();
+            if (!footprints.empty()) {
+                // Build coordinate converter matching Terrain::longToX/latToZ
+                double lonExtentB = bounds.maxLon - bounds.minLon;
+                double latExtentB = bounds.maxLat - bounds.minLat;
+                double midLat = bounds.minLat + latExtentB / 2.0;
+                double cosLat = std::cos(midLat * M_PI / 180.0);
+                double xWidth = lonExtentB * 2.0 * M_PI * 6371000.0 * cosLat / 360.0;
+                double zWidth = latExtentB * 2.0 * M_PI * 6371000.0 / 360.0;
+
+                auto coordFunc = [&](double lat, double lon) -> std::pair<float, float> {
+                    float x = (lonExtentB > 0) ? static_cast<float>(((lon - bounds.minLon) * xWidth) / lonExtentB) : 0.0f;
+                    float z = (latExtentB > 0) ? static_cast<float>(((lat - bounds.minLat) * zWidth) / latExtentB) : 0.0f;
+                    return {x, z};
+                };
+
+                BuildingMesh batch = BuildingGenerator::generateBatch(footprints, coordFunc);
+                if (!batch.empty()) {
+                    std::string objContent = batch.toOBJ("building_facade");
+                    std::ofstream f(outputDir + "/buildings.obj");
+                    if (f.is_open()) {
+                        f << objContent;
+                        std::cout << "WorldGenerator: Wrote buildings.obj ("
+                                  << batch.vertexCount() << " vertices, "
+                                  << batch.triangleCount() << " triangles from "
+                                  << footprints.size() << " buildings)" << std::endl;
+                    }
+                }
+            }
+        } else {
+            std::cout << "WorldGenerator: OSM building query failed: "
+                      << bldgReader.getError() << std::endl;
+        }
     }
 
     // Write tide.ini and tidalstream.ini (empty defaults)

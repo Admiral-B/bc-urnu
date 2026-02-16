@@ -69,24 +69,24 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
-    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);..\libs\Irrlicht\irrlicht-svn\include;..\libs\asio\include;..\graphics\wicked\imgui;C:\vcpkg\installed\x86-windows\include;C:\vcpkg\installed\x64-windows\include</IncludePath>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);..\libs\Irrlicht\irrlicht-svn\include;..\libs\asio\include;..\graphics\wicked\imgui;C:\vcpkg\installed\x86-windows\include;C:\vcpkg\installed\x64-windows\include;..\libs\earcut</IncludePath>
     <OutDir>..\..\bin</OutDir>
     <IntDir>$(Configuration)\ed\</IntDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);..\libs\Irrlicht\irrlicht-svn\include;..\libs\asio\include;..\graphics\wicked\imgui;C:\vcpkg\installed\x86-windows\include;C:\vcpkg\installed\x64-windows\include</IncludePath>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);..\libs\Irrlicht\irrlicht-svn\include;..\libs\asio\include;..\graphics\wicked\imgui;C:\vcpkg\installed\x86-windows\include;C:\vcpkg\installed\x64-windows\include;..\libs\earcut</IncludePath>
     <OutDir>..\..\bin</OutDir>
     <IntDir>$(Configuration)\ed\</IntDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <OutDir>..\..\bin</OutDir>
     <IntDir>$(Configuration)\ed\</IntDir>
-    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);..\libs\Irrlicht\irrlicht-svn\include;..\libs\asio\include;..\graphics\wicked\imgui;C:\vcpkg\installed\x86-windows\include;C:\vcpkg\installed\x64-windows\include</IncludePath>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);..\libs\Irrlicht\irrlicht-svn\include;..\libs\asio\include;..\graphics\wicked\imgui;C:\vcpkg\installed\x86-windows\include;C:\vcpkg\installed\x64-windows\include;..\libs\earcut</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <OutDir>..\..\bin</OutDir>
     <IntDir>$(Configuration)\ed\</IntDir>
-    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);..\libs\Irrlicht\irrlicht-svn\include;..\libs\asio\include;..\graphics\wicked\imgui;C:\vcpkg\installed\x86-windows\include;C:\vcpkg\installed\x64-windows\include</IncludePath>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);..\libs\Irrlicht\irrlicht-svn\include;..\libs\asio\include;..\graphics\wicked\imgui;C:\vcpkg\installed\x86-windows\include;C:\vcpkg\installed\x64-windows\include;..\libs\earcut</IncludePath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -190,9 +190,11 @@
     <ClCompile Include="..\editor\MeasureTool.cpp" />
     <ClCompile Include="..\editor\SatelliteTexture.cpp" />
     <ClCompile Include="..\editor\OpenSeaMapSource.cpp" />
+    <ClCompile Include="..\editor\OSMBuildingReader.cpp" />
     <ClCompile Include="..\ChartReader.cpp" />
     <ClCompile Include="..\HeightmapGenerator.cpp" />
     <ClCompile Include="..\WorldGenerator.cpp" />
+    <ClCompile Include="..\BuildingGenerator.cpp" />
     <ClCompile Include="..\miniz\miniz.c" />
     <ClCompile Include="..\miniz\miniz_tdef.c" />
     <ClCompile Include="..\miniz\miniz_tinfl.c" />
@@ -235,9 +237,11 @@
     <ClInclude Include="..\editor\MeasureTool.hpp" />
     <ClInclude Include="..\editor\SatelliteTexture.hpp" />
     <ClInclude Include="..\editor\OpenSeaMapSource.hpp" />
+    <ClInclude Include="..\editor\OSMBuildingReader.hpp" />
     <ClInclude Include="..\ChartReader.hpp" />
     <ClInclude Include="..\HeightmapGenerator.hpp" />
     <ClInclude Include="..\WorldGenerator.hpp" />
+    <ClInclude Include="..\BuildingGenerator.hpp" />
     <ClInclude Include="..\editor\UndoStack.hpp" />
   </ItemGroup>
   <ItemGroup>

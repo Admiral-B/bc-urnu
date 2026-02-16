@@ -15,6 +15,7 @@ set(BC_TESTABLE_SOURCES
     ${CMAKE_SOURCE_DIR}/ScenarioDataStructure.cpp
     ${CMAKE_SOURCE_DIR}/MMGPhysicsModel.cpp
     ${CMAKE_SOURCE_DIR}/LegacyPhysicsModel.cpp
+    ${CMAKE_SOURCE_DIR}/BuildingGenerator.cpp
     ${CMAKE_SOURCE_DIR}/multiplayerHub/ShipPositions.cpp
     test_stubs.cpp
 )
@@ -27,6 +28,7 @@ set(BC_TEST_SOURCES
     test_tile_math.cpp
     test_global_data.cpp
     test_multiplayer.cpp
+    test_building_generator.cpp
 )
 
 # Conditionally add chart/world generation if GDAL is available
@@ -47,6 +49,7 @@ add_library(bc-testable STATIC ${BC_TESTABLE_SOURCES})
 target_include_directories(bc-testable PUBLIC
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/libs/Irrlicht/irrlicht-svn/include
+    ${CMAKE_SOURCE_DIR}/libs/earcut
 )
 target_compile_definitions(bc-testable PRIVATE _CRT_SECURE_NO_WARNINGS)
 if (APPLE)

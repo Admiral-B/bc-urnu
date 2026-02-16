@@ -80,12 +80,12 @@
     <IntDir>$(Configuration)\bc\</IntDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);..\libs\Irrlicht\irrlicht-svn\include;..\libs\asio\include;..\libs\libsndfile\include;..\libs\portaudio\include;..\libs\enet-1.3.14\include;..\..\..\WickedEngine\WickedEngine</IncludePath>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);..\libs\Irrlicht\irrlicht-svn\include;..\libs\asio\include;..\libs\libsndfile\include;..\libs\portaudio\include;..\libs\enet-1.3.14\include;..\..\..\WickedEngine\WickedEngine;..\libs\earcut</IncludePath>
     <OutDir>..\..\bin</OutDir>
     <IntDir>$(Configuration)\bc\</IntDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);..\libs\Irrlicht\irrlicht-svn\include;..\libs\asio\include;..\libs\libsndfile\include;..\libs\portaudio\include;..\libs\enet-1.3.14\include;..\..\..\WickedEngine\WickedEngine</IncludePath>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);..\libs\Irrlicht\irrlicht-svn\include;..\libs\asio\include;..\libs\libsndfile\include;..\libs\portaudio\include;..\libs\enet-1.3.14\include;..\..\..\WickedEngine\WickedEngine;..\libs\earcut</IncludePath>
     <OutDir>..\..\bin</OutDir>
     <IntDir>$(Configuration)\bc\</IntDir>
   </PropertyGroup>
@@ -236,6 +236,8 @@
     <ClCompile Include="..\WickedMain.cpp" />
     <ClCompile Include="..\IrrlichtModelConverter.cpp" />
     <ClCompile Include="..\SimulationBridge.cpp" />
+    <ClCompile Include="..\BuildingGenerator.cpp" />
+    <ClCompile Include="..\editor\OSMBuildingReader.cpp" />
     <ClCompile Include="..\graphics\wicked\WickedRenderer.cpp" />
     <ClCompile Include="..\graphics\wicked\WickedWater.cpp" />
     <ClCompile Include="..\graphics\wicked\WickedTerrainNode.cpp" />
@@ -322,6 +324,8 @@
     <ClInclude Include="..\WickedMain.hpp" />
     <ClInclude Include="..\IrrlichtModelConverter.hpp" />
     <ClInclude Include="..\SimulationBridge.hpp" />
+    <ClInclude Include="..\BuildingGenerator.hpp" />
+    <ClInclude Include="..\editor\OSMBuildingReader.hpp" />
     <ClInclude Include="..\graphics\IRenderer.hpp" />
     <ClInclude Include="..\graphics\ISceneManager.hpp" />
     <ClInclude Include="..\graphics\ISceneNode.hpp" />

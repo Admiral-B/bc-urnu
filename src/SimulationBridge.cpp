@@ -145,6 +145,9 @@ float getSOG()            { return g_model ? g_model->getSOG() : 0; }
 float getSTW()            { return g_model ? g_model->getSTW() : 0; }
 float getCOG()            { return g_model ? g_model->getCOG() : 0; }
 float getDepth()          { return g_model ? g_model->getDepth() : 0; }
+float getPosY()           { return g_model ? g_model->getPosY() : 0; }
+float getPitch()          { return g_model ? g_model->getPitch() : 0; }
+float getRoll()           { return g_model ? g_model->getRoll() : 0; }
 float getRudder()         { return g_model ? g_model->getRudder() : 0; }
 float getWheel()          { return g_model ? g_model->getWheel() : 0; }
 float getPortEngine()     { return g_model ? g_model->getPortEngine() : 0; }

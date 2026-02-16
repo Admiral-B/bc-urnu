@@ -338,6 +338,18 @@ SimulationModel::~SimulationModel()
         return ownShip.getDepth();
     }
 
+    float SimulationModel::getPosY() const{
+        return ownShip.getPosition().y;
+    }
+
+    float SimulationModel::getPitch() const{
+        return ownShip.getPitch();
+    }
+
+    float SimulationModel::getRoll() const{
+        return ownShip.getRoll();
+    }
+
     float SimulationModel::getWaveHeight(float posX, float posZ) const {
         return water.getWaveHeight(posX,posZ);
     }

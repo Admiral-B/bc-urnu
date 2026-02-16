@@ -12,6 +12,8 @@
 #include "gui/ImGuiOverlay.hpp"
 #include "IrrlichtModelConverter.hpp"
 #include "SimulationBridge.hpp"
+#include "BuildingGenerator.hpp"
+#include "editor/OSMBuildingReader.hpp"
 #include "IniFile.hpp"
 #include "Utilities.hpp"
 #include "Constants.hpp"
@@ -229,7 +231,8 @@ static wi::ecs::Entity createWEMeshFromConverted(wi::scene::Scene& scene,
                                                    const bc::ConvertedModel& model,
                                                    const std::string& baseName,
                                                    const std::vector<std::string>& textureNames = {},
-                                                   const std::string& modelDir = "") {
+                                                   const std::string& modelDir = "",
+                                                   bool allowTransparency = false) {
     wi::ecs::Entity meshEntity = scene.Entity_CreateMesh(baseName + "_mesh");
     auto* mesh = scene.meshes.GetComponent(meshEntity);
     if (!mesh) return wi::ecs::INVALID_ENTITY;
@@ -243,13 +246,28 @@ static wi::ecs::Entity createWEMeshFromConverted(wi::scene::Scene& scene,
             baseName + "_mat" + std::to_string(i));
         auto* material = scene.materials.GetComponent(matEntity);
         if (material) {
+            // Determine effective alpha:
+            // - Buildings/buoys: force opaque (unreliable alpha from .3ds/.x formats)
+            // - Ships: allow transparency for bridge windows (alpha 0.01-0.95)
+            float effectiveAlpha = 1.0f;
+            if (allowTransparency && sub.material.a > 0.01f && sub.material.a < 0.95f) {
+                // Genuinely semi-transparent (e.g. ship bridge windows)
+                effectiveAlpha = sub.material.a * 0.05f; // near-invisible glass
+            }
             material->baseColor = DirectX::XMFLOAT4(
-                sub.material.r, sub.material.g, sub.material.b, sub.material.a);
+                sub.material.r, sub.material.g, sub.material.b, effectiveAlpha);
             material->emissiveColor = DirectX::XMFLOAT4(
                 sub.material.er, sub.material.eg, sub.material.eb,
                 std::max({sub.material.er, sub.material.eg, sub.material.eb}));
             float roughness = 1.0f - (sub.material.shininess / 128.0f);
             material->roughness = std::max(0.04f, std::min(1.0f, roughness));
+            material->metalness = 0.0f; // buildings/structures are non-metallic
+
+            // Color-only models (no texture) look flat at roughness=1.0;
+            // give them a moderate sheen like painted concrete/plaster
+            if (sub.material.textureName.empty() && roughness > 0.7f) {
+                material->roughness = 0.55f;
+            }
 
             // Assign texture: prefer per-submesh name from Irrlicht (correct mapping),
             // fall back to scanned names by index (approximate)
@@ -279,6 +297,32 @@ static wi::ecs::Entity createWEMeshFromConverted(wi::scene::Scene& scene,
                     material->textures[wi::scene::MaterialComponent::BASECOLORMAP].resource =
                         wi::resourcemanager::Load(texPath);
                     weLog("    Texture[" + std::to_string(i) + "]: " + texPath + " [OK]");
+
+                    // Auto-detect PBR maps alongside base texture
+                    // Convention: wall.png -> wall_Normal.png, wall_Roughness.png
+                    size_t dotPos = texPath.rfind('.');
+                    if (dotPos != std::string::npos) {
+                        std::string stem = texPath.substr(0, dotPos);
+                        std::string ext = texPath.substr(dotPos);
+
+                        std::string normalPath = stem + "_Normal" + ext;
+                        if (wi::helper::FileExists(normalPath)) {
+                            material->textures[wi::scene::MaterialComponent::NORMALMAP].name = normalPath;
+                            material->textures[wi::scene::MaterialComponent::NORMALMAP].resource =
+                                wi::resourcemanager::Load(normalPath);
+                            weLog("    Normal[" + std::to_string(i) + "]: " + normalPath + " [OK]");
+                        }
+
+                        // WE SURFACEMAP = packed: R=occlusion, G=roughness, B=metalness, A=unused
+                        // If we find a _Roughness map, load it as surfacemap
+                        std::string roughPath = stem + "_Roughness" + ext;
+                        if (wi::helper::FileExists(roughPath)) {
+                            material->textures[wi::scene::MaterialComponent::SURFACEMAP].name = roughPath;
+                            material->textures[wi::scene::MaterialComponent::SURFACEMAP].resource =
+                                wi::resourcemanager::Load(roughPath);
+                            weLog("    Surface[" + std::to_string(i) + "]: " + roughPath + " [OK]");
+                        }
+                    }
                 } else {
                     weLog("    Texture[" + std::to_string(i) + "]: " + texPath + " [MISSING]");
                     weLog("      Raw Irrlicht name: " + sub.material.textureName);
@@ -288,14 +332,10 @@ static wi::ecs::Entity createWEMeshFromConverted(wi::scene::Scene& scene,
             // Models from mixed formats (.x=CW, .3ds=CCW winding), render both sides
             material->SetDoubleSided(true);
 
-            // Enable alpha blending for transparent materials (e.g. ship windows)
-            if (sub.material.a < 0.99f) {
+            // Enable alpha blending for ship windows
+            if (effectiveAlpha < 0.95f) {
                 material->userBlendMode = wi::enums::BLENDMODE_ALPHA;
                 material->SetCastShadow(false);
-                // Make semi-transparent materials nearly invisible for bridge windows
-                if (material->baseColor.w > 0.01f) {
-                    material->baseColor.w *= 0.05f;
-                }
             }
 
             material->CreateRenderData();
@@ -347,7 +387,8 @@ static wi::ecs::Entity loadModelOrPlaceholder(wi::scene::Scene& scene,
                                                const std::string& modelPath,
                                                const std::string& name,
                                                float r, float g, float b,
-                                               float placeholderSize = 5.0f) {
+                                               float placeholderSize = 5.0f,
+                                               bool allowTransparency = false) {
     // Fast path: reuse already-converted mesh
     auto cachedIt = g_convertedMeshCache.find(modelPath);
     if (cachedIt != g_convertedMeshCache.end()) {
@@ -387,7 +428,7 @@ static wi::ecs::Entity loadModelOrPlaceholder(wi::scene::Scene& scene,
             }
 
             wi::ecs::Entity meshEntity = createWEMeshFromConverted(
-                scene, converted, name, textureNames, modelDir);
+                scene, converted, name, textureNames, modelDir, allowTransparency);
             if (meshEntity != wi::ecs::INVALID_ENTITY) {
                 g_convertedMeshCache[modelPath] = meshEntity;
                 weLog("    Loaded via Irrlicht: " + modelPath +
@@ -409,6 +450,61 @@ static wi::ecs::Entity loadModelOrPlaceholder(wi::scene::Scene& scene,
     return createPlaceholderBox(scene, name, r, g, b, placeholderSize);
 }
 
+// Create a WE mesh entity from a BuildingMesh (procedural geometry, no model file)
+static wi::ecs::Entity createBuildingMeshEntity(wi::scene::Scene& scene,
+                                                  const BuildingMesh& bm,
+                                                  const std::string& name) {
+    if (bm.empty()) return wi::ecs::INVALID_ENTITY;
+
+    wi::ecs::Entity meshEntity = scene.Entity_CreateMesh(name + "_mesh");
+    auto* mesh = scene.meshes.GetComponent(meshEntity);
+    if (!mesh) return wi::ecs::INVALID_ENTITY;
+
+    // Material: basic building facade (warm grey concrete, fully opaque)
+    wi::ecs::Entity matEntity = scene.Entity_CreateMaterial(name + "_mat");
+    auto* material = scene.materials.GetComponent(matEntity);
+    if (material) {
+        material->baseColor = DirectX::XMFLOAT4(0.78f, 0.75f, 0.70f, 1.0f);
+        material->roughness = 0.65f;
+        material->metalness = 0.0f;
+        material->SetDoubleSided(true); // visible from both sides
+        material->SetCastShadow(true);
+        material->CreateRenderData();
+    }
+
+    mesh->subsets.push_back(wi::scene::MeshComponent::MeshSubset());
+    auto& subset = mesh->subsets.back();
+    subset.materialID = matEntity;
+    subset.indexOffset = 0;
+    subset.indexCount = static_cast<uint32_t>(bm.indices.size());
+
+    size_t nv = bm.vertexCount();
+    for (size_t i = 0; i < nv; i++) {
+        mesh->vertex_positions.push_back(DirectX::XMFLOAT3(
+            bm.positions[i * 3], bm.positions[i * 3 + 1], bm.positions[i * 3 + 2]));
+        mesh->vertex_normals.push_back(DirectX::XMFLOAT3(
+            bm.normals[i * 3], bm.normals[i * 3 + 1], bm.normals[i * 3 + 2]));
+        mesh->vertex_uvset_0.push_back(DirectX::XMFLOAT2(
+            bm.uvs[i * 2], bm.uvs[i * 2 + 1]));
+    }
+    for (uint32_t idx : bm.indices) {
+        mesh->indices.push_back(idx);
+    }
+
+    mesh->CreateRenderData();
+
+    // Create object referencing this mesh
+    wi::ecs::Entity rootEntity = wi::ecs::CreateEntity();
+    scene.transforms.Create(rootEntity);
+    scene.names.Create(rootEntity) = name;
+    wi::ecs::Entity objectEntity = scene.Entity_CreateObject(name + "_obj");
+    scene.Component_Attach(objectEntity, rootEntity);
+    auto* object = scene.objects.GetComponent(objectEntity);
+    if (object) object->meshID = meshEntity;
+
+    return rootEntity;
+}
+
 // Toggle renderable on an entity and all its child objects
 static void setEntityVisible(wi::scene::Scene& scene, wi::ecs::Entity entity, bool visible) {
     auto* obj = scene.objects.GetComponent(entity);
@@ -425,14 +521,18 @@ static void setEntityVisible(wi::scene::Scene& scene, wi::ecs::Entity entity, bo
 // Position and rotate a WE entity
 static void setEntityTransform(wi::scene::Scene& scene, wi::ecs::Entity entity,
                                 float x, float y, float z,
-                                float rotYDeg = 0, float scale = 1.0f) {
+                                float rotYDeg = 0, float scale = 1.0f,
+                                float pitchDeg = 0, float rollDeg = 0) {
     auto* transform = scene.transforms.GetComponent(entity);
     if (!transform) return;
     transform->ClearTransform();
     transform->Translate(DirectX::XMFLOAT3(x, y, z)); // both BC and WE are left-handed Y-up, no Z flip
-    if (rotYDeg != 0) {
-        float rad = rotYDeg * (float)M_PI / 180.0f;
-        transform->RotateRollPitchYaw(DirectX::XMFLOAT3(0, rad, 0));
+    if (rotYDeg != 0 || pitchDeg != 0 || rollDeg != 0) {
+        float yawRad = rotYDeg * (float)M_PI / 180.0f;
+        float pitchRad = pitchDeg * (float)M_PI / 180.0f;
+        float rollRad = rollDeg * (float)M_PI / 180.0f;
+        // WE RotateRollPitchYaw: XMFLOAT3(pitch, yaw, roll)
+        transform->RotateRollPitchYaw(DirectX::XMFLOAT3(pitchRad, yawRad, rollRad));
     }
     if (scale != 1.0f) {
         transform->Scale(DirectX::XMFLOAT3(scale, scale, scale));
@@ -595,9 +695,10 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     float ownShipX = 0, ownShipZ = 0;
     float ownShipHeading = scenarioData.ownShipData.initialBearing;
     float ownShipSpeed = scenarioData.ownShipData.initialSpeed; // knots
-    float ownShipRudder = 0; // degrees (-35 to 35)
+    float ownShipRudder = 0; // wheel angle degrees (-30 to 30)
     float ownShipPortEngine = 0; // -1.0 to 1.0
     float ownShipStbdEngine = 0; // -1.0 to 1.0
+    float maxSpeedAhead = 14.0f; // knots, read from boat.ini
     float ownShipBowThruster = 0; // -1.0 to 1.0
     float beaufortScale = 3.0f; // sea state for wave heading disturbance
     float ownShipScaleFactor = 1.0f;
@@ -618,6 +719,14 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
         float distTravelled;   // nautical miles along current leg
     };
     std::vector<OtherShipState> otherShipStates;
+
+    // Buoy state for per-frame tidal updates
+    struct BuoyState {
+        wi::ecs::Entity entity = wi::ecs::INVALID_ENTITY;
+        float heightCorr;
+        float scaleFactor;
+    };
+    std::vector<BuoyState> buoyStates;
 
     try { // Wrap scene setup in try-catch to diagnose crashes
 
@@ -752,6 +861,8 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
         float heightCorrection = yCorrection * scaleFactor;
         ownShipScaleFactor = scaleFactor;
         ownShipHeightCorr = heightCorrection;
+        maxSpeedAhead = IniFile::iniFileTof32(boatIni, "maxSpeedAhead");
+        if (maxSpeedAhead <= 0) maxSpeedAhead = 14.0f;
 
         // Get camera view position (first view = bridge view)
         uint32_t numViews = (uint32_t)IniFile::iniFileTof32(boatIni, "Views");
@@ -776,7 +887,8 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
         // Load ship model
         std::string modelPath = basePath + modelFileName;
         ownShipEntity = loadModelOrPlaceholder(scene, modelPath,
-                                               "OwnShip", 0.5f, 0.5f, 0.6f, 20.0f);
+                                               "OwnShip", 0.5f, 0.5f, 0.6f, 20.0f,
+                                               true /*allowTransparency: ship windows*/);
         setEntityTransform(scene, ownShipEntity, ownShipX, heightCorrection, ownShipZ,
                            ownShipHeading, scaleFactor);
         weLog("  Own ship: " + shipName + " at (" +
@@ -817,7 +929,8 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
         std::string modelPath = basePath + modelFileName;
         std::string objName = "OtherShip_" + std::to_string(s);
         wi::ecs::Entity shipEntity = loadModelOrPlaceholder(scene, modelPath,
-                                                             objName, 0.6f, 0.6f, 0.6f, 15.0f);
+                                                             objName, 0.6f, 0.6f, 0.6f, 15.0f,
+                                                             true /*allowTransparency: ship windows*/);
         setEntityTransform(scene, shipEntity, shipX, heightCorrection, shipZ,
                            heading, scaleFactor);
 
@@ -842,6 +955,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     if (Utilities::pathExists(buoyIniFile)) {
         uint32_t numBuoys = IniFile::iniFileTou32(buoyIniFile, "Number");
         weLog("  Found " + std::to_string(numBuoys) + " buoys in buoy.ini");
+        buoyStates.resize(numBuoys);
         for (uint32_t b = 1; b <= numBuoys; b++) {
             std::string buoyType = IniFile::iniFileToString(buoyIniFile, IniFile::enumerate1("Type", b));
             float buoyLon = IniFile::iniFileTof32(buoyIniFile, IniFile::enumerate1("Long", b));
@@ -863,6 +977,10 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             wi::ecs::Entity buoyEntity = loadModelOrPlaceholder(scene, buoyModelPath,
                                                                  objName, 0.8f, 0.2f, 0.2f, 3.0f);
             setEntityTransform(scene, buoyEntity, bx, heightCorr, bz, 0, buoyScale);
+
+            buoyStates[b - 1].entity = buoyEntity;
+            buoyStates[b - 1].heightCorr = heightCorr;
+            buoyStates[b - 1].scaleFactor = buoyScale;
         }
         weLog("  Loaded " + std::to_string(numBuoys) + " buoys");
     }
@@ -910,6 +1028,148 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
         weLog("  Loaded " + std::to_string(numLandObjs) + " land objects");
     }
 
+    // ===== OSM BUILDINGS (procedural) =====
+    // Query Overpass API for building footprints in the terrain bbox,
+    // generate 3D meshes, and create WE entities. Results are cached to disk.
+    if (coords.terrainLongExtent > 0 && coords.terrainLatExtent > 0) {
+        weLog("  Loading OSM buildings...");
+
+        double minLat = coords.terrainLat;
+        double maxLat = coords.terrainLat + coords.terrainLatExtent;
+        double minLon = coords.terrainLong;
+        double maxLon = coords.terrainLong + coords.terrainLongExtent;
+
+        std::string cacheFile = worldPath + "buildings_cache.dat";
+        OSMBuildingReader bldgReader;
+        bool haveBuildings = false;
+
+        // Try loading from cache first
+        if (bldgReader.loadCache(cacheFile)) {
+            weLog("  Loaded " + std::to_string(bldgReader.getBuildings().size()) +
+                  " buildings from cache");
+            haveBuildings = true;
+        } else {
+            // Query Overpass API (requires internet)
+            bool queryOk = bldgReader.query(minLat, maxLat, minLon, maxLon,
+                                             [](const std::string& msg) {
+                                                 weLog("  OSM: " + msg);
+                                             });
+            if (queryOk && !bldgReader.getBuildings().empty()) {
+                haveBuildings = true;
+                // Cache for next time
+                if (bldgReader.saveCache(cacheFile)) {
+                    weLog("  Cached building data to " + cacheFile);
+                }
+            } else if (!queryOk) {
+                weLog("  OSM building query failed: " + bldgReader.getError());
+            }
+        }
+
+        if (haveBuildings && !bldgReader.getBuildings().empty()) {
+            const auto& allFootprints = bldgReader.getBuildings();
+
+            auto coordFunc = [&](double lat, double lon) -> std::pair<float, float> {
+                float x = coords.longToX(static_cast<float>(lon));
+                float z = coords.latToZ(static_cast<float>(lat));
+                return {x, z};
+            };
+
+            // Sort buildings by distance to own ship so nearest are generated first
+            struct ScoredFP {
+                const BuildingFootprint* fp;
+                float distSq; // squared distance to camera in world coords
+            };
+            std::vector<ScoredFP> scored;
+            scored.reserve(allFootprints.size());
+            for (const auto& fp : allFootprints) {
+                if (fp.outline.size() < 3) continue;
+                double centLat = 0, centLon = 0;
+                for (const auto& [lat, lon] : fp.outline) {
+                    centLat += lat; centLon += lon;
+                }
+                centLat /= fp.outline.size();
+                centLon /= fp.outline.size();
+                float cx = coords.longToX(static_cast<float>(centLon));
+                float cz = coords.latToZ(static_cast<float>(centLat));
+                float dx = cx - ownShipX;
+                float dz = cz - ownShipZ;
+                scored.push_back({&fp, dx * dx + dz * dz});
+            }
+            std::sort(scored.begin(), scored.end(),
+                      [](const ScoredFP& a, const ScoredFP& b) { return a.distSq < b.distSq; });
+
+            // Limit: max 5000 buildings / 200K vertices to keep GPU happy
+            static const size_t MAX_BUILDINGS = 5000;
+            static const size_t MAX_VERTICES = 200000;
+            static const size_t VERTS_PER_TILE = 50000; // split into multiple mesh entities
+
+            float terrainPosY = (terrainNode) ? terrainNode->getPosition().y : 0.0f;
+            BuildingMesh batch;
+            int totalBuildings = 0, skippedWater = 0, tileIdx = 0;
+            size_t totalVerts = 0;
+
+            for (size_t si = 0; si < scored.size() && totalBuildings < (int)MAX_BUILDINGS; si++) {
+                const auto& fp = *scored[si].fp;
+
+                // Compute centroid for terrain height
+                double centLat = 0, centLon = 0;
+                for (const auto& [lat, lon] : fp.outline) {
+                    centLat += lat; centLon += lon;
+                }
+                centLat /= fp.outline.size();
+                centLon /= fp.outline.size();
+                float cx = coords.longToX(static_cast<float>(centLon));
+                float cz = coords.latToZ(static_cast<float>(centLat));
+
+                float groundY = 0.0f;
+                if (terrainNode) {
+                    groundY = terrainNode->getHeightAt(cx, cz) + terrainPosY;
+                }
+
+                if (groundY < -0.5f) { skippedWater++; continue; }
+                if (groundY < 0.0f) groundY = 0.0f;
+
+                BuildingMesh single = BuildingGenerator::generate(fp, coordFunc, groundY);
+                if (single.empty()) continue;
+
+                batch.append(single);
+                totalBuildings++;
+                totalVerts += single.vertexCount();
+
+                // Flush tile when it gets large enough
+                if (batch.vertexCount() >= VERTS_PER_TILE || totalVerts >= MAX_VERTICES) {
+                    wi::ecs::Entity e = createBuildingMeshEntity(
+                        scene, batch, "OSM_Buildings_" + std::to_string(tileIdx));
+                    if (e != wi::ecs::INVALID_ENTITY) {
+                        setEntityTransform(scene, e, 0, 0, 0);
+                    }
+                    batch = BuildingMesh(); // reset
+                    tileIdx++;
+                    if (totalVerts >= MAX_VERTICES) break;
+                }
+            }
+
+            // Flush remaining
+            if (!batch.empty()) {
+                wi::ecs::Entity e = createBuildingMeshEntity(
+                    scene, batch, "OSM_Buildings_" + std::to_string(tileIdx));
+                if (e != wi::ecs::INVALID_ENTITY) {
+                    setEntityTransform(scene, e, 0, 0, 0);
+                }
+                tileIdx++;
+            }
+
+            weLog("  Created " + std::to_string(totalBuildings) + "/" +
+                  std::to_string(allFootprints.size()) + " buildings in " +
+                  std::to_string(tileIdx) + " tiles (" +
+                  std::to_string(totalVerts) + " verts)");
+            if (skippedWater > 0)
+                weLog("  Skipped " + std::to_string(skippedWater) + " buildings in water");
+        } else if (!haveBuildings) {
+            weLog("  No buildings found in this area");
+        }
+    }
+
     // ===== SHUTDOWN IRRLICHT CONVERTER =====
     // All models loaded; release the headless Irrlicht device
     bc::shutdownIrrlichtConverter();
@@ -947,7 +1207,19 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     weLog("  Initializing SimulationBridge (physics/AI)...");
     SimBridge::init(&sound, scenarioData);
     SimBridge::start();
-    weLog("  SimulationBridge ready.");
+    // OwnShip sets axialSpd from InitialSpeed but leaves portEngine/stbdEngine at 0.
+    // Compute an initial engine setting from the scenario speed and ship max speed
+    // so the ship doesn't immediately decelerate.
+    {
+        float initSpeed = scenarioData.ownShipData.initialSpeed; // knots
+        float engineFraction = (maxSpeedAhead > 0) ? std::min(1.0f, initSpeed / maxSpeedAhead) : 0.0f;
+        ownShipPortEngine = engineFraction;
+        ownShipStbdEngine = engineFraction;
+        SimBridge::setPortEngine(ownShipPortEngine);
+        SimBridge::setStbdEngine(ownShipStbdEngine);
+    }
+    weLog("  SimulationBridge ready (initial engine: " +
+          std::to_string(ownShipPortEngine) + "/" + std::to_string(ownShipStbdEngine) + ")");
 
     weLog("Entering Wicked Engine render loop...");
     weLog("  Controls: Mouse-drag=look, WASD=move, O=orbit/bridge, Scroll=zoom(orbit)/FOV(bridge), ESC=quit");
@@ -998,11 +1270,11 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 ownShipPortEngine = std::max(-1.0f, ownShipPortEngine - 0.2f * dt);
                 ownShipStbdEngine = std::max(-1.0f, ownShipStbdEngine - 0.2f * dt);
             }
-            // Arrow Left/Right: wheel (helm rate ~5 deg/s, realistic for hydraulic steering)
+            // Arrow Left/Right: wheel (helm rate ~10 deg/s for responsive feel)
             if (!imguiWantsKB && !guiControlActive && GetAsyncKeyState(VK_LEFT) & 0x8000) {
-                ownShipRudder = std::max(-35.0f, ownShipRudder - 5.0f * dt);
+                ownShipRudder = std::max(-30.0f, ownShipRudder - 10.0f * dt);
             } else if (!imguiWantsKB && !guiControlActive && GetAsyncKeyState(VK_RIGHT) & 0x8000) {
-                ownShipRudder = std::min(35.0f, ownShipRudder + 5.0f * dt);
+                ownShipRudder = std::min(30.0f, ownShipRudder + 10.0f * dt);
             } else if (!guiControlActive) {
                 // Rudder returns to center slowly when no key pressed
                 if (ownShipRudder > 0.5f) ownShipRudder -= 3.0f * dt;
@@ -1025,23 +1297,37 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             ownShipZ = SimBridge::getPosZ();
             ownShipHeading = SimBridge::getHeading();
             ownShipSpeed = SimBridge::getSOG() / KNOTS_TO_MPS; // m/s -> knots
-            ownShipRudder = SimBridge::getRudder();
+            // Do NOT read rudder back into ownShipRudder -- that creates a feedback
+            // loop (rudder lags behind wheel, making steering unresponsive).
+            // ownShipRudder is the WHEEL command, SimBridge::getRudder() is the
+            // actual rudder angle (used for HUD display only).
             beaufortScale = SimBridge::getWeather();
 
             float headRad = ownShipHeading * (float)M_PI / 180.0f;
+            float ownShipY = SimBridge::getPosY();
+            float rawPitch = SimBridge::getPitch();
+            float rawRoll = SimBridge::getRoll();
 
-            // Update own ship entity position
+            // Clamp pitch/roll to reasonable values for visual comfort
+            // (large vessels shouldn't pitch/roll more than ~5 degrees in normal seas)
+            float ownShipPitch = std::max(-5.0f, std::min(5.0f, rawPitch));
+            float ownShipRollAngle = std::max(-8.0f, std::min(8.0f, rawRoll));
+
+            // Update own ship entity position (dynamic Y from wave heave + tide)
             if (ownShipEntity != wi::ecs::INVALID_ENTITY) {
-                setEntityTransform(scene, ownShipEntity, ownShipX, ownShipHeightCorr, ownShipZ,
-                                   ownShipHeading, ownShipScaleFactor);
+                setEntityTransform(scene, ownShipEntity, ownShipX, ownShipY, ownShipZ,
+                                   ownShipHeading, ownShipScaleFactor,
+                                   ownShipPitch, ownShipRollAngle);
             }
 
-            // Update bridge camera position (follows own ship)
+            // Update bridge camera position (follows own ship including wave motion)
+            // Apply attenuated Y motion to camera (bridge is high up, full heave feels excessive)
+            float camYAttenuation = 0.3f; // 30% of ship heave to camera
             if (!camOrbitMode) {
                 float vxScaled = viewLocalX * ownShipScaleFactor;
                 float vzScaled = viewLocalZ * ownShipScaleFactor;
                 camPosX = ownShipX + vxScaled * std::cos(headRad) + vzScaled * std::sin(headRad);
-                camPosY = ownShipHeightCorr + viewLocalY * ownShipScaleFactor;
+                camPosY = ownShipY * camYAttenuation + viewLocalY * ownShipScaleFactor;
                 camPosZ = ownShipZ - vxScaled * std::sin(headRad) + vzScaled * std::cos(headRad);
             }
 
@@ -1055,6 +1341,18 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                     st.heading = SimBridge::getOtherShipHeading(s);
                     setEntityTransform(scene, st.entity, st.x, st.heightCorr, st.z,
                                        st.heading, st.scaleFactor);
+                }
+            }
+
+            // ===== BUOY POSITIONS (tidal movement from SimulationModel) =====
+            {
+                int numBuoys = SimBridge::getNumberOfBuoys();
+                for (int b = 0; b < numBuoys && b < (int)buoyStates.size(); b++) {
+                    auto& bs = buoyStates[b];
+                    float bx = SimBridge::getBuoyPosX(b);
+                    float bz = SimBridge::getBuoyPosZ(b);
+                    setEntityTransform(scene, bs.entity, bx, bs.heightCorr, bz,
+                                       0, bs.scaleFactor);
                 }
             }
 

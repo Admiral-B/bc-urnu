@@ -35,6 +35,9 @@ float getSOG();          // m/s
 float getSTW();          // m/s (speed through water)
 float getCOG();          // degrees
 float getDepth();        // metres below keel
+float getPosY();         // vertical pos (tide + heightCorr + wave heave)
+float getPitch();        // degrees
+float getRoll();         // degrees
 float getRudder();       // degrees
 float getWheel();        // degrees
 float getPortEngine();   // -1..+1

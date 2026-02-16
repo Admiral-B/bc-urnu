@@ -28,6 +28,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include <string.h>
 #include <iostream>
 #include <vector>
+#include <cmath>
 
 #include "ISound.hpp"
 
@@ -68,8 +69,17 @@ private:
 	static float waveVolume;
 	static float engineVolume;
 	static float alarmVolume;
-	static float enginePitchValue;     // 0.5 = half speed, 1.0 = normal, 2.0 = double
-	static double engineReadPos;       // fractional read position for pitch-shifted playback
+	static float enginePitchValue;     // 0.5 = idle, 1.0 = full power
+	static double engineReadPos;       // (legacy, unused)
+
+	// Pre-decoded engine buffer for glitch-free playback
+	static std::vector<float> engineBuf;   // interleaved float samples
+	static sf_count_t engineBufFrames;     // total frames in buffer
+	static int engineBufChannels;          // channel count
+	static int engineSampleRate;           // sample rate (Hz)
+	static double enginePhase;             // fractional playback position (frames)
+	static double dieselPhase;             // procedural diesel firing oscillator
+	static float lpState[2];              // one-pole low-pass state (per channel)
 
 	bool soundLoaded;
 	static bool waveSoundLoaded;
@@ -108,39 +118,59 @@ private:
 		std::vector<float> hornBuffer(frameCount * channels);
 		std::vector<float> alarmBuffer(frameCount * channels);
 
-		// Pitch-shifted engine playback: read more samples than needed, resample
-		float pitch = enginePitchValue;
-		if (pitch < 0.25f) pitch = 0.25f;
-		if (pitch > 4.0f) pitch = 4.0f;
-		// We need frameCount output samples; read ceil(frameCount*pitch)+2 source samples
-		sf_count_t srcNeeded = (sf_count_t)(frameCount * pitch) + 2;
-		std::vector<float> engineSrc(srcNeeded * channels);
-		sf_count_t totalRead = 0;
-		while (totalRead < srcNeeded) {
-			num_read = sf_read_float(p_data->fileEngine, engineSrc.data() + totalRead * channels,
-			                         (srcNeeded - totalRead) * channels);
-			if (num_read <= 0) {
-				// Loop: seek to start
-				sf_count_t seekLocation = sf_seek(p_data->fileEngine, 0, SEEK_SET);
-				if (seekLocation == -1) return paComplete;
-				num_read = sf_read_float(p_data->fileEngine, engineSrc.data() + totalRead * channels,
-				                         (srcNeeded - totalRead) * channels);
-				if (num_read <= 0) return paComplete;
-			}
-			totalRead += num_read / channels;
-		}
-		// Resample engine source to output frameCount using linear interpolation
-		std::vector<float> engineBuffer(frameCount * channels);
-		for (unsigned long i = 0; i < frameCount; i++) {
-			double srcPos = i * (double)pitch;
-			sf_count_t idx = (sf_count_t)srcPos;
-			float frac = (float)(srcPos - idx);
-			if (idx + 1 >= totalRead) idx = totalRead - 2;
-			if (idx < 0) idx = 0;
-			for (int c = 0; c < channels; c++) {
-				float s0 = engineSrc[idx * channels + c];
-				float s1 = engineSrc[(idx + 1) * channels + c];
-				engineBuffer[i * channels + c] = s0 + frac * (s1 - s0);
+		// Engine: pre-decoded buffer with RPM-dependent filtering + diesel synthesis
+		std::vector<float> engineBuffer(frameCount * channels, 0.0f);
+		if (engineBufFrames > 0 && engineBufChannels == channels) {
+			float pitch = enginePitchValue;
+			if (pitch < 0.25f) pitch = 0.25f;
+			if (pitch > 2.0f) pitch = 2.0f;
+
+			// Constrained playback rate: small variation avoids unnatural pitch shift
+			// pitch 0.5 (idle) -> rate 0.92, pitch 1.0 (full) -> rate 1.08
+			float playRate = 0.85f + pitch * 0.23f;
+			if (playRate < 0.75f) playRate = 0.75f;
+			if (playRate > 1.25f) playRate = 1.25f;
+
+			// RPM-dependent low-pass: darker at low RPM, brighter at high
+			float lpCutoff = 1200.0f + pitch * 3000.0f;
+			float alpha = 1.0f - std::exp(-6.2832f * lpCutoff / (float)engineSampleRate);
+			if (alpha > 1.0f) alpha = 1.0f;
+
+			// Diesel firing pulse: 6-cyl 4-stroke, firing freq = RPM*6/120
+			// Map pitch to RPM: 0.5 -> ~400 RPM, 1.0 -> ~1000 RPM
+			float rpm = 200.0f + pitch * 800.0f;
+			float firingHz = rpm * 6.0f / 120.0f;
+			double dieselInc = (double)firingHz / (double)engineSampleRate;
+
+			for (unsigned long i = 0; i < frameCount; i++) {
+				sf_count_t idx0 = ((sf_count_t)enginePhase) % engineBufFrames;
+				sf_count_t idx1 = (idx0 + 1) % engineBufFrames;
+				float frac = (float)(enginePhase - (double)(sf_count_t)enginePhase);
+
+				// Procedural diesel: short raised-cosine burst at firing rate
+				float dp = (float)dieselPhase;
+				float pulse = (dp < 0.3f)
+					? 0.5f * (1.0f - std::cos(dp / 0.3f * 6.2832f)) : 0.0f;
+				float noise = ((float)(rand() & 0x7FFF) / 16384.0f - 1.0f);
+				float diesel = pulse * 0.15f + noise * pulse * 0.08f;
+
+				dieselPhase += dieselInc;
+				if (dieselPhase >= 1.0) dieselPhase -= 1.0;
+
+				for (int c = 0; c < channels; c++) {
+					float s0 = engineBuf[idx0 * channels + c];
+					float s1 = engineBuf[idx1 * channels + c];
+					float raw = s0 + frac * (s1 - s0);
+
+					// One-pole low-pass filter
+					lpState[c] += alpha * (raw - lpState[c]);
+
+					engineBuffer[i * channels + c] = lpState[c] * 0.75f + diesel * 0.25f;
+				}
+
+				enginePhase += (double)playRate;
+				if (enginePhase >= (double)engineBufFrames)
+					enginePhase -= (double)engineBufFrames;
 			}
 		}
 

@@ -30,6 +30,8 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 #include "../miniz/miniz.h"
 #include "SatelliteTexture.hpp"
 #include "OpenSeaMapSource.hpp"
+#include "OSMBuildingReader.hpp"
+#include "../BuildingGenerator.hpp"
 #include "CoastlineData.hpp"
 #include "TileMath.hpp"
 #include "../libs/stb/stb_image.h"
@@ -483,6 +485,8 @@ void EditorApp::renderFrame() {
                 tileSource = (tileSource == TILE_SATELLITE) ? TILE_STREET : TILE_SATELLITE;
             if (ImGui::IsKeyPressed(ImGuiKey_K))
                 seamarkOverlay = !seamarkOverlay;
+            if (ImGui::IsKeyPressed(ImGuiKey_B) && !io.KeyCtrl)
+                showBuildings = !showBuildings;
 
             // Delete selected ship
             if (ImGui::IsKeyPressed(ImGuiKey_Delete)) {
@@ -1296,6 +1300,85 @@ void EditorApp::renderMapPanel(float x, float y, float w, float h) {
                     drawList->AddText(ImVec2(pos.x + r + 2, pos.y - 6),
                                       IM_COL32(light.r, light.g, light.b, 160), rangeLabel);
                 }
+            }
+        }
+    }
+
+    // Render building footprints (OSM)
+    if (showBuildings && mapZoom >= 14) {
+        // Query Overpass API if we haven't already for this view area
+        // Re-query when center moves significantly or zoom changes
+        double dLat = std::abs(mapCenterLat - buildingsQueryLat);
+        double dLon = std::abs(mapCenterLon - buildingsQueryLon);
+        bool needQuery = !buildingsQueried || dLat > 0.02 || dLon > 0.02 ||
+                         std::abs(mapZoom - buildingsQueryZoom) > 2;
+
+        if (needQuery) {
+            // Compute visible bounds
+            double dppLon = degreesPerPixelLon(mapZoom);
+            double dppLat = degreesPerPixelLat(mapZoom, mapCenterLat);
+            double halfW = (mapW * 0.5) * dppLon;
+            double halfH = (mapH * 0.5) * dppLat;
+            double qMinLat = mapCenterLat - halfH;
+            double qMaxLat = mapCenterLat + halfH;
+            double qMinLon = mapCenterLon - halfW;
+            double qMaxLon = mapCenterLon + halfW;
+
+            buildingReader.query(qMinLat, qMaxLat, qMinLon, qMaxLon);
+            buildingsQueried = true;
+            buildingsQueryLat = mapCenterLat;
+            buildingsQueryLon = mapCenterLon;
+            buildingsQueryZoom = mapZoom;
+        }
+
+        // Draw building footprints as filled polygons
+        ImU32 fillCol = IM_COL32(180, 140, 100, 80);
+        ImU32 outlineCol = IM_COL32(160, 120, 80, 180);
+        float thickness = (mapZoom >= 16) ? 1.5f : 1.0f;
+
+        for (const auto& bldg : buildingReader.getBuildings()) {
+            if (bldg.outline.size() < 3) continue;
+
+            // Convert to screen coords and cull
+            std::vector<ImVec2> screenPoly;
+            screenPoly.reserve(bldg.outline.size());
+            bool anyOnScreen = false;
+
+            for (const auto& [lat, lon] : bldg.outline) {
+                ImVec2 p = latLonToPixel(lat, lon, mapCenterLat, mapCenterLon,
+                                          mapZoom, panelCx, panelCy);
+                screenPoly.push_back(p);
+                if (p.x >= mapX - 20 && p.x <= mapX + mapW + 20 &&
+                    p.y >= mapY - 20 && p.y <= mapY + mapH + 20)
+                    anyOnScreen = true;
+            }
+
+            if (!anyOnScreen) continue;
+
+            // Fill (convex approximation -- fine for most buildings)
+            if (screenPoly.size() >= 3 && screenPoly.size() <= 64) {
+                drawList->AddConvexPolyFilled(screenPoly.data(),
+                                               static_cast<int>(screenPoly.size()), fillCol);
+            }
+
+            // Outline
+            for (size_t i = 0; i < screenPoly.size(); i++) {
+                size_t j = (i + 1) % screenPoly.size();
+                drawList->AddLine(screenPoly[i], screenPoly[j], outlineCol, thickness);
+            }
+
+            // Show building name at high zoom
+            if (mapZoom >= 17 && !bldg.name.empty()) {
+                ImVec2 ctr = screenPoly[0];
+                for (size_t i = 1; i < screenPoly.size(); i++) {
+                    ctr.x += screenPoly[i].x;
+                    ctr.y += screenPoly[i].y;
+                }
+                ctr.x /= screenPoly.size();
+                ctr.y /= screenPoly.size();
+                ImVec2 textSize = ImGui::CalcTextSize(bldg.name.c_str());
+                drawList->AddText(ImVec2(ctr.x - textSize.x * 0.5f, ctr.y - textSize.y * 0.5f),
+                                  IM_COL32(80, 60, 40, 200), bldg.name.c_str());
             }
         }
     }
@@ -2190,6 +2273,41 @@ void EditorApp::generateWorldFromArea() {
             if (f3.is_open()) f3 << "Number=0\n";
         }
 
+        // Query OSM for building footprints and generate building mesh
+        {
+            generateStatus = "Querying OSM for buildings...";
+            OSMBuildingReader bldgReader;
+            if (bldgReader.query(minLat, maxLat, minLon, maxLon,
+                                  [this](const std::string& msg) { generateStatus = msg; })) {
+                const auto& footprints = bldgReader.getBuildings();
+                if (!footprints.empty()) {
+                    double lonExtent = maxLon - minLon;
+                    double latExtent = maxLat - minLat;
+                    double midLat = minLat + latExtent / 2.0;
+                    double cosLat = std::cos(midLat * 3.14159265358979323846 / 180.0);
+                    double xWidth = lonExtent * 2.0 * 3.14159265358979323846 * 6371000.0 * cosLat / 360.0;
+                    double zWidth = latExtent * 2.0 * 3.14159265358979323846 * 6371000.0 / 360.0;
+
+                    auto coordFunc = [&](double lat, double lon) -> std::pair<float, float> {
+                        float x = (lonExtent > 0) ? static_cast<float>(((lon - minLon) * xWidth) / lonExtent) : 0.0f;
+                        float z = (latExtent > 0) ? static_cast<float>(((lat - minLat) * zWidth) / latExtent) : 0.0f;
+                        return {x, z};
+                    };
+
+                    BuildingMesh batch = BuildingGenerator::generateBatch(footprints, coordFunc);
+                    if (!batch.empty()) {
+                        std::ofstream f(outputDir + "/buildings.obj");
+                        if (f.is_open()) f << batch.toOBJ("building_facade");
+                    }
+                    // Also save the building cache for runtime use
+                    bldgReader.saveCache(outputDir + "/buildings_cache.dat");
+
+                    resultMsg += (resultMsg.empty() ? "" : ", ") +
+                        std::to_string(footprints.size()) + " buildings";
+                }
+            }
+        }
+
         // Generate coastline-based heightmap
         generateStatus = "Generating heightmap from coastline data...";
         {
@@ -2432,6 +2550,7 @@ void EditorApp::renderHelpOverlay() {
         ImGui::Text("C"); ImGui::NextColumn(); ImGui::Text("Load S-57 chart"); ImGui::NextColumn();
         ImGui::Text("M"); ImGui::NextColumn(); ImGui::Text("Toggle satellite/street map"); ImGui::NextColumn();
         ImGui::Text("K"); ImGui::NextColumn(); ImGui::Text("Toggle seamark overlay"); ImGui::NextColumn();
+        ImGui::Text("B"); ImGui::NextColumn(); ImGui::Text("Toggle building footprints"); ImGui::NextColumn();
         ImGui::Text("Delete"); ImGui::NextColumn(); ImGui::Text("Delete selected ship"); ImGui::NextColumn();
         ImGui::Columns(1);
     }
