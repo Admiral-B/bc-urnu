@@ -104,12 +104,29 @@ void init(ISound* sound, const ScenarioData& scenarioData) {
                                   scenarioData, mp);
 
     std::cout << "SimulationBridge: initialized (headless Irrlicht + SimulationModel)" << std::endl;
+
+    // Diagnostic: log initial state to help debug terrain/depth issues
+    if (g_model) {
+        std::cout << "SimulationBridge: initial pos=(" << g_model->getPosX()
+                  << "," << g_model->getPosZ() << ") hdg=" << g_model->getHeading()
+                  << " depth=" << g_model->getDepth()
+                  << " posY=" << g_model->getPosY() << std::endl;
+    }
 }
 
 void start() {
     if (g_device) {
         g_device->getTimer()->setSpeed(1.0f);
         g_device->run(); // kick timer
+    }
+    // Run one update so depth/position have meaningful values
+    if (g_model && g_device) {
+        g_device->run();
+        g_model->update();
+        std::cout << "SimulationBridge::start() pos=(" << g_model->getPosX()
+                  << "," << g_model->getPosZ() << ") depth=" << g_model->getDepth()
+                  << " posY=" << g_model->getPosY()
+                  << " SOG=" << g_model->getSOG() << std::endl;
     }
 }
 

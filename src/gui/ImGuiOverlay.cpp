@@ -200,7 +200,11 @@ void ImGuiOverlay::renderSpeedDisplay() {
 
     ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1), "COG");
     ImGui::SameLine(70);
-    ImGui::Text("%03.1f", data_.courseOverGround);
+    if (data_.speedOverGround >= 0.5f) {
+        ImGui::Text("%05.1f", data_.courseOverGround);
+    } else {
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1), " ---");
+    }
 
     ImGui::End();
 }

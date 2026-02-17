@@ -834,8 +834,21 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             terrainNode = std::make_unique<bc::graphics::wicked::WickedTerrainNode>(&scene);
             if (terrainNode->loadFromConfig(config, refLon, refLat)) {
                 weLog("  Terrain loaded: " + config.heightmapPath);
+                weLog("    texture: " + config.texturePath);
                 weLog("    worldWidth=" + std::to_string(coords.terrainXWidth) +
                       " worldDepth=" + std::to_string(coords.terrainZWidth));
+                weLog("    position=(" + std::to_string(terrainNode->getPosition().x) +
+                      "," + std::to_string(terrainNode->getPosition().y) +
+                      "," + std::to_string(terrainNode->getPosition().z) + ")");
+                weLog("    usesRGB=" + std::to_string(config.usesRGB ? 1 : 0) +
+                      " maxHeight=" + std::to_string(config.maxHeight) +
+                      " seaMaxDepth=" + std::to_string(config.seaMaxDepth));
+                // Sample terrain heights at grid corners and center
+                float midX = coords.terrainXWidth / 2.0f;
+                float midZ = coords.terrainZWidth / 2.0f;
+                weLog("    heightAt(0,0)=" + std::to_string(terrainNode->getHeightAt(0, 0)) +
+                      " heightAt(mid,mid)=" + std::to_string(terrainNode->getHeightAt(midX, midZ)) +
+                      " heightAt(max,max)=" + std::to_string(terrainNode->getHeightAt(coords.terrainXWidth, coords.terrainZWidth)));
             } else {
                 weLogErr("Failed to load terrain heightmap");
                 terrainNode.reset();
@@ -1028,10 +1041,36 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
         weLog("  Loaded " + std::to_string(numLandObjs) + " land objects");
     }
 
-    // ===== OSM BUILDINGS (procedural) =====
-    // Query Overpass API for building footprints in the terrain bbox,
-    // generate 3D meshes, and create WE entities. Results are cached to disk.
-    if (coords.terrainLongExtent > 0 && coords.terrainLatExtent > 0) {
+    // ===== OSM BUILDINGS (procedural or pre-baked) =====
+    bool hasPrebaked = false;
+    {
+        std::string prebakePath = worldPath + "buildings.obj";
+        std::ifstream test(prebakePath);
+        hasPrebaked = test.good();
+    }
+    if (hasPrebaked) {
+        // Load pre-baked buildings.obj directly (world-space coordinates, no transform needed)
+        std::string prebakePath = worldPath + "buildings.obj";
+        weLog("  Loading pre-baked buildings: " + prebakePath);
+        wi::ecs::Entity bldgEntity = loadModelOrPlaceholder(scene, prebakePath,
+                                                             "PrebakeBuildings", 0.5f, 0.45f, 0.35f, 8.0f);
+        if (bldgEntity != wi::ecs::INVALID_ENTITY) {
+            // Set double-sided + shadow casting on building materials
+            // (OBJ .mtl format has no double-sided flag, must set in code)
+            for (size_t i = 0; i < scene.materials.GetCount(); i++) {
+                auto* nameComp = scene.names.GetComponent(scene.materials.GetEntity(i));
+                if (!nameComp) continue;
+                const auto& n = nameComp->name;
+                if (n.find("building") != std::string::npos ||
+                    n.find("Building") != std::string::npos ||
+                    n == "BC_DefaultMaterial") {
+                    scene.materials[i].SetDoubleSided(true);
+                    scene.materials[i].SetCastShadow(true);
+                }
+            }
+            weLog("  Pre-baked buildings loaded");
+        }
+    } else if (coords.terrainLongExtent > 0 && coords.terrainLatExtent > 0) {
         weLog("  Loading OSM buildings...");
 
         double minLat = coords.terrainLat;
@@ -1292,6 +1331,27 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             // Advance physics, AI, buoys, tide, wind, etc.
             SimBridge::update();
 
+            // Periodic diagnostic log (every ~3 seconds)
+            static float diagTimer = 0;
+            diagTimer += dt;
+            if (diagTimer > 3.0f) {
+                diagTimer = 0;
+                float weTerrainH = terrainNode ? terrainNode->getHeightAt(SimBridge::getPosX(), SimBridge::getPosZ()) : -999;
+                float weTerrainPosY = terrainNode ? terrainNode->getPosition().y : -999;
+                weLog("  [DIAG] dt=" + std::to_string(dt) +
+                      " eng=" + std::to_string(ownShipPortEngine) +
+                      "/" + std::to_string(ownShipStbdEngine) +
+                      " wheel=" + std::to_string(ownShipRudder) +
+                      " SOG=" + std::to_string(SimBridge::getSOG()) +
+                      " hdg=" + std::to_string(SimBridge::getHeading()) +
+                      " x=" + std::to_string(SimBridge::getPosX()) +
+                      " z=" + std::to_string(SimBridge::getPosZ()) +
+                      " depth=" + std::to_string(SimBridge::getDepth()) +
+                      " posY=" + std::to_string(SimBridge::getPosY()) +
+                      " weH=" + std::to_string(weTerrainH) +
+                      " wePosY=" + std::to_string(weTerrainPosY));
+            }
+
             // Read own ship state back from SimulationModel
             ownShipX = SimBridge::getPosX();
             ownShipZ = SimBridge::getPosZ();
@@ -1321,13 +1381,14 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             }
 
             // Update bridge camera position (follows own ship including wave motion)
-            // Apply attenuated Y motion to camera (bridge is high up, full heave feels excessive)
-            float camYAttenuation = 0.3f; // 30% of ship heave to camera
+            // ownShipY = heightCorrection + tide + waveHeave; only attenuate dynamic portion
+            float camYAttenuation = 0.3f; // 30% of wave/tide heave to camera
             if (!camOrbitMode) {
                 float vxScaled = viewLocalX * ownShipScaleFactor;
                 float vzScaled = viewLocalZ * ownShipScaleFactor;
                 camPosX = ownShipX + vxScaled * std::cos(headRad) + vzScaled * std::sin(headRad);
-                camPosY = ownShipY * camYAttenuation + viewLocalY * ownShipScaleFactor;
+                float dynamicY = ownShipY - ownShipHeightCorr; // tide + wave only
+                camPosY = ownShipHeightCorr + dynamicY * camYAttenuation + viewLocalY * ownShipScaleFactor;
                 camPosZ = ownShipZ - vxScaled * std::sin(headRad) + vzScaled * std::cos(headRad);
             }
 

@@ -2219,8 +2219,29 @@ void EditorApp::generateWorldFromArea() {
     generateStatus = wantOpenSeaMap ? "Querying OpenSeaMap..." : "Generating world...";
     std::string cacheDir = userDir + "tilecache";
 
+    // Resolve coastline data path (absolute) before thread starts
+    std::string coastlinePath;
+    {
+        namespace fs = std::filesystem;
+        const char* candidates[] = {
+            "Data/Coastlines/coastlines_10m.bin",
+            "bin/Data/Coastlines/coastlines_10m.bin",
+            "../bin/Data/Coastlines/coastlines_10m.bin",
+            "Data/Coastlines/coastlines_50m.bin",
+            "bin/Data/Coastlines/coastlines_50m.bin",
+            "../bin/Data/Coastlines/coastlines_50m.bin",
+        };
+        for (auto& p : candidates) {
+            if (fs::exists(p)) {
+                coastlinePath = fs::absolute(p).string();
+                break;
+            }
+        }
+    }
+
     std::thread([this, minLat, maxLat, minLon, maxLon, resolution,
-                 cacheDir, outputDir, wantSatellite, wantOpenSeaMap]() {
+                 cacheDir, outputDir, wantSatellite, wantOpenSeaMap,
+                 coastlinePath]() {
         std::string resultMsg;
         int buoyCount = 0, lightCount = 0, landmarkCount = 0;
 
@@ -2294,16 +2315,42 @@ void EditorApp::generateWorldFromArea() {
                         return {x, z};
                     };
 
-                    BuildingMesh batch = BuildingGenerator::generateBatch(footprints, coordFunc);
+                    // Cap buildings to avoid overwhelming the GPU at runtime
+                    static const size_t MAX_BUILDINGS = 5000;
+                    static const size_t MAX_VERTICES = 200000;
+
+                    size_t buildCount = std::min(footprints.size(), MAX_BUILDINGS);
+                    BuildingMesh batch;
+                    float landY = 2.0f; // Match land elevation in heightmap
+                    for (size_t i = 0; i < buildCount; i++) {
+                        BuildingMesh single = BuildingGenerator::generate(footprints[i], coordFunc, landY);
+                        if (single.empty()) continue;
+                        batch.append(single);
+                        if (batch.vertexCount() >= MAX_VERTICES) break;
+                    }
                     if (!batch.empty()) {
                         std::ofstream f(outputDir + "/buildings.obj");
                         if (f.is_open()) f << batch.toOBJ("building_facade");
+                        // Write .mtl file so OBJ importer picks up material properties
+                        std::ofstream mtl(outputDir + "/building_facade.mtl");
+                        if (mtl.is_open()) {
+                            mtl << "newmtl building_facade\n";
+                            mtl << "Kd 0.78 0.75 0.70\n";
+                            mtl << "Ka 0.1 0.1 0.1\n";
+                            mtl << "Ks 0.05 0.05 0.05\n";
+                            mtl << "Ns 10\n";
+                            mtl << "d 1.0\n";
+                            mtl << "Pr 0.65\n";
+                            mtl << "Pm 0.0\n";
+                        }
                     }
-                    // Also save the building cache for runtime use
+                    // Save the building cache for runtime use (all buildings,
+                    // runtime will sort by distance and cap independently)
                     bldgReader.saveCache(outputDir + "/buildings_cache.dat");
 
                     resultMsg += (resultMsg.empty() ? "" : ", ") +
-                        std::to_string(footprints.size()) + " buildings";
+                        std::to_string(buildCount) + " buildings (" +
+                        std::to_string(batch.vertexCount()) + " verts)";
                 }
             }
         }
@@ -2311,13 +2358,9 @@ void EditorApp::generateWorldFromArea() {
         // Generate coastline-based heightmap
         generateStatus = "Generating heightmap from coastline data...";
         {
-            float maxHeight = 5.0f;
-            float maxDepth = 50.0f;
-            float totalRange = maxHeight + maxDepth;
-
             // Try to load coastline data for land/sea distinction
             CoastlineData coastlines;
-            bool hasCoastlines = coastlines.load("Data/Coastlines/coastlines_50m.bin");
+            bool hasCoastlines = !coastlinePath.empty() && coastlines.load(coastlinePath);
 
             std::vector<uint8_t> heightRGB(resolution * resolution * 3);
             for (int py = 0; py < resolution; py++) {
@@ -2325,18 +2368,19 @@ void EditorApp::generateWorldFromArea() {
                 for (int px = 0; px < resolution; px++) {
                     double lon = minLon + (maxLon - minLon) * px / (resolution - 1);
 
-                    float elevation = -5.0f; // Default: shallow sea
+                    float elevation = -20.0f; // Default: 20m depth (enough for any ship draft)
                     if (hasCoastlines && coastlines.isLand(lon, lat)) {
                         elevation = 2.0f; // Low land
                     }
 
-                    float normalised = (elevation + maxDepth) / totalRange;
-                    int encoded = static_cast<int>(normalised * 65536.0f);
-                    encoded = std::max(0, std::min(65535, encoded));
+                    // Standard BC RGB encoding: Height = R*256 + G + B/256 - 32768
+                    float encoded = elevation + 32768.0f;
+                    int intPart = static_cast<int>(encoded);
+                    intPart = std::max(0, std::min(65535, intPart));
 
                     int idx = (py * resolution + px) * 3;
-                    heightRGB[idx + 0] = static_cast<uint8_t>(encoded / 256);
-                    heightRGB[idx + 1] = static_cast<uint8_t>(encoded % 256);
+                    heightRGB[idx + 0] = static_cast<uint8_t>(intPart / 256);
+                    heightRGB[idx + 1] = static_cast<uint8_t>(intPart % 256);
                     heightRGB[idx + 2] = 0;
                 }
             }

@@ -403,7 +403,18 @@ WorldGeneratorResult WorldGenerator::generateWorld(const std::string& chartPath,
                     return {x, z};
                 };
 
-                BuildingMesh batch = BuildingGenerator::generateBatch(footprints, coordFunc);
+                // Cap buildings to avoid overwhelming the GPU at runtime
+                static const size_t MAX_BUILDINGS = 5000;
+                static const size_t MAX_VERTICES = 200000;
+
+                size_t buildCount = (std::min)(footprints.size(), MAX_BUILDINGS);
+                BuildingMesh batch;
+                for (size_t i = 0; i < buildCount; i++) {
+                    BuildingMesh single = BuildingGenerator::generate(footprints[i], coordFunc, 0.0f);
+                    if (single.empty()) continue;
+                    batch.append(single);
+                    if (batch.vertexCount() >= MAX_VERTICES) break;
+                }
                 if (!batch.empty()) {
                     std::string objContent = batch.toOBJ("building_facade");
                     std::ofstream f(outputDir + "/buildings.obj");
@@ -412,7 +423,8 @@ WorldGeneratorResult WorldGenerator::generateWorld(const std::string& chartPath,
                         std::cout << "WorldGenerator: Wrote buildings.obj ("
                                   << batch.vertexCount() << " vertices, "
                                   << batch.triangleCount() << " triangles from "
-                                  << footprints.size() << " buildings)" << std::endl;
+                                  << buildCount << "/" << footprints.size()
+                                  << " buildings)" << std::endl;
                     }
                 }
             }

@@ -24,15 +24,29 @@
 ## What's Implemented
 
 ### Wicked Engine Backend (`WickedMain.cpp`)
-- PBR rendering with DX12 (terrain, ships, buoys, land objects, sky)
+
+- PBR rendering with DX12 (terrain, ships, buoys, land objects, procedural buildings, sky)
 - SimulationBridge wraps full SimulationModel (MMG physics, AI ships, buoys, tide, wind)
 - ImGui HUD: linear heading tape, SOG/STW/COG, rudder arc, depth gauge, engine RPM, wind
-- Twin screw controls (port/stbd engine sliders + bow thruster + wheel)
-- Bridge first-person camera with mouse look, orbit mode toggle (O key)
+- Twin screw controls (port/stbd engine sliders + bow thruster + wheel at +-30 deg, 10 deg/s)
+- Bridge first-person camera with mouse look, orbit mode toggle (O key), pitch/roll clamping
 - Engine sound: pre-decoded WAV buffer with procedural diesel synthesis, RPM-dependent filtering
 - Per-frame sync of other ship positions and buoy positions from SimulationModel
 - .3ds alpha confusion fix (transparency vs opacity)
 - Color-only building materials improved (roughness/metalness tuning)
+- PBR auto-detection: `_Normal.png` / `_Roughness.png` alongside base textures
+- Initial engine fraction from `initialSpeed / maxSpeedAhead` (boat.ini)
+
+### Procedural Buildings (OSM)
+
+- `OSMBuildingReader` queries Overpass API for building footprints in world bbox
+- `BuildingGenerator` extrudes footprints to 3D meshes (earcut triangulation + wall quads)
+- Terrain-aware Y placement, water culling, distance-sorted (nearest 5000, 200K vert cap)
+- Split into ~50K-vertex tile batches for GPU efficiency
+- Disk cache (`buildings_cache.dat`) avoids repeated API queries
+- Wired into both WE runtime (any scenario) and editor world generation (no-chart path)
+- World generation capped at 5000 buildings / 200K vertices (prevents GPU overload)
+- Runtime skips building generation when pre-baked buildings.obj exists (no double-loading)
 
 ### Physics (MMG)
 - 3-DOF hull forces, propeller KT(J), rudder with slipstream
@@ -41,17 +55,22 @@
 - 8 ships enabled: ProtisSingleScrew, Protis, VIC56, VIC56_360, Puffer, HMAS_Westralia, Alkmini
 - Legacy physics unchanged for all other ships
 
-### Chart Integration
+### Chart Integration & World Generation
+
 - S-57 reader (buoys, lights, coastlines, depths, landmarks)
 - Heightmap generator (DEPARE + sounding IDW + Copernicus DEM merge)
 - World generator pipeline (terrain.ini + height.png + texture.png + buoy/light/landobject.ini)
+- OSM building query + mesh generation integrated into both chart and no-chart paths
+- Editor no-chart path: OpenSeaMap seamarks + OSM buildings + coastline data + ESRI satellite
 
 ### Networking
 - NMEA VHW, MWV sentences
 - AIS Message 5 (static/voyage), Message 21 (AtoN buoys)
 
 ### Build & Test
-- C++17, Catch2 (89 tests, 235 assertions), CI on Linux amd64/arm64
+
+- C++17, Catch2 (100 tests, 250+ assertions), CI on Linux amd64/arm64
+- x64 builds link `Irrlicht_VS64.lib` / x86 link `Irrlicht.lib` (no DLL name collision in bin/)
 
 ## Remaining Work
 

@@ -85,36 +85,63 @@ bool WickedTerrainNode::loadFromHeightData(const std::vector<std::vector<float>>
 
 bool WickedTerrainNode::loadHeightmapPNG(const std::string& path,
                                            const TerrainTileConfig& config) {
-    // Decode PNG/image using stb_image (force grayscale)
     int imgW = 0, imgH = 0, imgChannels = 0;
-    unsigned char* pixels = stbi_load(path.c_str(), &imgW, &imgH, &imgChannels, 1); // force 1 channel
-    if (!pixels) {
-        std::cerr << "WickedTerrainNode: Failed to load heightmap image: " << path
-                  << " (" << stbi_failure_reason() << ")" << std::endl;
-        return false;
-    }
 
-    // Convert pixel values to height data
-    // BC convention: pixel 0 = 0 (terrain base), pixel 255 = maxHeight + seaMaxDepth
-    // Terrain is then positioned at Y = -seaMaxDepth
-    // Image row 0 = top = north, but BC Z=0 = south (low latitude), so flip rows
-    float heightRange = maxHeight_ + seaMaxDepth_;
-    float invMaxPixel = heightRange / 255.0f;
-
-    heightData_.resize(imgH, std::vector<float>(imgW));
-    for (int r = 0; r < imgH; r++) {
-        int srcRow = imgH - 1 - r; // flip: image top (north) -> high Z in world
-        for (int c = 0; c < imgW; c++) {
-            float pixelValue = static_cast<float>(pixels[srcRow * imgW + c]);
-            heightData_[r][c] = pixelValue * invMaxPixel;
+    if (config.usesRGB) {
+        // RGB-encoded heightmap: Height = R*256 + G + B/256 - 32768 (absolute meters)
+        unsigned char* pixels = stbi_load(path.c_str(), &imgW, &imgH, &imgChannels, 3);
+        if (!pixels) {
+            std::cerr << "WickedTerrainNode: Failed to load heightmap image: " << path
+                      << " (" << stbi_failure_reason() << ")" << std::endl;
+            return false;
         }
+
+        // Heights are absolute meters (sea level = 0), so position terrain at Y=0
+        position_.y = 0.0f;
+
+        heightData_.resize(imgH, std::vector<float>(imgW));
+        for (int r = 0; r < imgH; r++) {
+            int srcRow = imgH - 1 - r; // flip: image top (north) -> high Z in world
+            for (int c = 0; c < imgW; c++) {
+                int idx = (srcRow * imgW + c) * 3;
+                float R = static_cast<float>(pixels[idx + 0]);
+                float G = static_cast<float>(pixels[idx + 1]);
+                float B = static_cast<float>(pixels[idx + 2]);
+                heightData_[r][c] = R * 256.0f + G + B / 256.0f - 32768.0f;
+            }
+        }
+
+        stbi_image_free(pixels);
+        std::cout << "WickedTerrainNode: Loaded RGB heightmap (" << imgW << "x" << imgH
+                  << ") from " << path << " (absolute meters)" << std::endl;
+    } else {
+        // Legacy grayscale heightmap: pixel 0..255 maps to 0..(maxHeight+seaMaxDepth)
+        // Terrain positioned at Y = -seaMaxDepth
+        unsigned char* pixels = stbi_load(path.c_str(), &imgW, &imgH, &imgChannels, 1);
+        if (!pixels) {
+            std::cerr << "WickedTerrainNode: Failed to load heightmap image: " << path
+                      << " (" << stbi_failure_reason() << ")" << std::endl;
+            return false;
+        }
+
+        float heightRange = maxHeight_ + seaMaxDepth_;
+        float invMaxPixel = heightRange / 255.0f;
+
+        heightData_.resize(imgH, std::vector<float>(imgW));
+        for (int r = 0; r < imgH; r++) {
+            int srcRow = imgH - 1 - r;
+            for (int c = 0; c < imgW; c++) {
+                float pixelValue = static_cast<float>(pixels[srcRow * imgW + c]);
+                heightData_[r][c] = pixelValue * invMaxPixel;
+            }
+        }
+
+        stbi_image_free(pixels);
+        std::cout << "WickedTerrainNode: Loaded heightmap (" << imgW << "x" << imgH
+                  << ", " << imgChannels << "ch) from " << path
+                  << " heightRange=" << heightRange << "m" << std::endl;
     }
 
-    stbi_image_free(pixels);
-
-    std::cout << "WickedTerrainNode: Loaded heightmap (" << imgW << "x" << imgH
-              << ", " << imgChannels << "ch) from " << path
-              << " heightRange=" << heightRange << "m" << std::endl;
     return true;
 }
 
@@ -182,8 +209,20 @@ bool WickedTerrainNode::createTerrainMesh(const std::string& texturePath) {
     if (material) {
         material->roughness = 0.95f;   // terrain is rough earth/grass, not shiny
         material->metalness = 0.0f;    // non-metallic
+        material->SetDoubleSided(true);  // visible from both sides
         if (!texturePath.empty()) {
-            material->textures[MaterialComponent::BASECOLORMAP].name = texturePath;
+            // Normalize path separators for WE
+            std::string normalizedPath = texturePath;
+            std::replace(normalizedPath.begin(), normalizedPath.end(), '\\', '/');
+            material->textures[MaterialComponent::BASECOLORMAP].name = normalizedPath;
+            // Explicitly pre-load texture (matching how ship textures are loaded)
+            if (wi::helper::FileExists(normalizedPath)) {
+                material->textures[MaterialComponent::BASECOLORMAP].resource =
+                    wi::resourcemanager::Load(normalizedPath);
+                std::cout << "WickedTerrainNode: texture loaded: " << normalizedPath << std::endl;
+            } else {
+                std::cerr << "WickedTerrainNode: texture NOT found: " << normalizedPath << std::endl;
+            }
         }
         material->CreateRenderData();
     }
@@ -241,7 +280,7 @@ bool WickedTerrainNode::createTerrainMesh(const std::string& texturePath) {
             uint32_t bl = (r + 1) * meshCols + c;
             uint32_t br = bl + 1;
 
-            // Two triangles per quad (clockwise winding for DirectX/WE front-facing)
+            // Two triangles per quad -- DX left-handed, CW = front face from above
             mesh->indices.push_back(tl);
             mesh->indices.push_back(tr);
             mesh->indices.push_back(bl);

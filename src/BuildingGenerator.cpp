@@ -39,30 +39,32 @@ std::string BuildingMesh::toOBJ(const std::string& mtlName) const {
     oss << "mtllib " << mtlName << ".mtl\n";
     oss << "usemtl " << mtlName << "\n\n";
 
+    // OBJ is right-handed; BC world coords are left-handed Y-up.
+    // Negate Z so the importer's standard Z-flip restores correct positions.
     size_t nv = vertexCount();
     for (size_t i = 0; i < nv; i++) {
         oss << "v " << positions[i * 3] << " " << positions[i * 3 + 1]
-            << " " << positions[i * 3 + 2] << "\n";
+            << " " << -positions[i * 3 + 2] << "\n";
     }
     oss << "\n";
     for (size_t i = 0; i < nv; i++) {
         oss << "vn " << normals[i * 3] << " " << normals[i * 3 + 1]
-            << " " << normals[i * 3 + 2] << "\n";
+            << " " << -normals[i * 3 + 2] << "\n";
     }
     oss << "\n";
     for (size_t i = 0; i < nv; i++) {
         oss << "vt " << uvs[i * 2] << " " << uvs[i * 2 + 1] << "\n";
     }
     oss << "\n";
+    // Swap face winding (b<->c) to compensate for the Z negation
     size_t nt = triangleCount();
     for (size_t i = 0; i < nt; i++) {
-        // OBJ is 1-indexed
         uint32_t a = indices[i * 3] + 1;
         uint32_t b = indices[i * 3 + 1] + 1;
         uint32_t c = indices[i * 3 + 2] + 1;
         oss << "f " << a << "/" << a << "/" << a
-            << " " << b << "/" << b << "/" << b
-            << " " << c << "/" << c << "/" << c << "\n";
+            << " " << c << "/" << c << "/" << c
+            << " " << b << "/" << b << "/" << b << "\n";
     }
     return oss.str();
 }
