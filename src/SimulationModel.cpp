@@ -394,6 +394,10 @@ SimulationModel::~SimulationModel()
         return scenarioTime;
     }
 
+    uint32_t SimulationModel::getLightLevel() const {
+        return light.getLightLevel();
+    }
+
     uint32_t SimulationModel::getNumberOfOtherShips() const {
         return otherShips.getNumber();
     }

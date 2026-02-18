@@ -14,6 +14,7 @@ struct BuildingMesh {
     std::vector<float> normals;   // nx,ny,nz interleaved
     std::vector<float> uvs;       // u,v interleaved
     std::vector<uint32_t> indices; // triangle indices
+    size_t wallIndexCount = 0;    // indices [0..wallIndexCount) = walls, rest = roofs
 
     bool empty() const { return positions.empty(); }
     size_t vertexCount() const { return positions.size() / 3; }
@@ -22,8 +23,11 @@ struct BuildingMesh {
     // Append another mesh (for batching)
     void append(const BuildingMesh& other);
 
-    // Write as Wavefront .obj (returns file contents as string)
-    std::string toOBJ(const std::string& mtlName = "building") const;
+    // Write as Wavefront .obj with separate wall/roof materials
+    // mtlFile is the .mtl filename, wallMtl/roofMtl are the material names within it
+    std::string toOBJ(const std::string& mtlFile = "building",
+                      const std::string& wallMtl = "building_wall",
+                      const std::string& roofMtl = "building_roof") const;
 };
 
 class BuildingGenerator {

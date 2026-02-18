@@ -451,24 +451,29 @@ static wi::ecs::Entity loadModelOrPlaceholder(wi::scene::Scene& scene,
 }
 
 // Create a WE mesh entity from a BuildingMesh (procedural geometry, no model file)
+// facadeTexturePath: if non-empty, applies this texture to the building material
 static wi::ecs::Entity createBuildingMeshEntity(wi::scene::Scene& scene,
                                                   const BuildingMesh& bm,
-                                                  const std::string& name) {
+                                                  const std::string& name,
+                                                  const std::string& facadeTexturePath = "") {
     if (bm.empty()) return wi::ecs::INVALID_ENTITY;
 
     wi::ecs::Entity meshEntity = scene.Entity_CreateMesh(name + "_mesh");
     auto* mesh = scene.meshes.GetComponent(meshEntity);
     if (!mesh) return wi::ecs::INVALID_ENTITY;
 
-    // Material: basic building facade (warm grey concrete, fully opaque)
+    // Material: building facade with optional texture
     wi::ecs::Entity matEntity = scene.Entity_CreateMaterial(name + "_mat");
     auto* material = scene.materials.GetComponent(matEntity);
     if (material) {
-        material->baseColor = DirectX::XMFLOAT4(0.78f, 0.75f, 0.70f, 1.0f);
-        material->roughness = 0.65f;
+        material->baseColor = DirectX::XMFLOAT4(0.9f, 0.9f, 0.9f, 1.0f);
+        material->roughness = 0.75f;
         material->metalness = 0.0f;
-        material->SetDoubleSided(true); // visible from both sides
+        material->SetDoubleSided(true);
         material->SetCastShadow(true);
+        if (!facadeTexturePath.empty()) {
+            material->textures[wi::scene::MaterialComponent::BASECOLORMAP].name = facadeTexturePath;
+        }
         material->CreateRenderData();
     }
 
@@ -549,6 +554,23 @@ static std::string resolveModelPath(const std::string& basePath,
     if (!worldPath.empty() && Utilities::pathExists(worldPath + "/" + basePath))
         return worldPath + "/" + basePath;
     return basePath;
+}
+
+static LONG WINAPI weCrashHandler(EXCEPTION_POINTERS* ep) {
+    if (g_weLog.is_open()) {
+        DWORD code = ep->ExceptionRecord->ExceptionCode;
+        void* addr = ep->ExceptionRecord->ExceptionAddress;
+        g_weLog << "CRASH: exception 0x" << std::hex << code
+                << " at address 0x" << addr << std::dec << std::endl;
+        if (code == EXCEPTION_ACCESS_VIOLATION && ep->ExceptionRecord->NumberParameters >= 2) {
+            ULONG_PTR rw = ep->ExceptionRecord->ExceptionInformation[0];
+            ULONG_PTR target = ep->ExceptionRecord->ExceptionInformation[1];
+            g_weLog << "  Access violation: " << (rw == 0 ? "read" : "write")
+                    << " at 0x" << std::hex << target << std::dec << std::endl;
+        }
+        g_weLog.flush();
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
 }
 
 int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioData,
@@ -727,6 +749,20 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
         float scaleFactor;
     };
     std::vector<BuoyState> buoyStates;
+
+    // Navigation light on another ship (WE emissive point)
+    struct WENavLight {
+        wi::ecs::Entity entity = wi::ecs::INVALID_ENTITY;
+        int shipIndex;           // index into otherShipStates
+        float localX, localY, localZ; // position relative to ship model origin
+        float r, g, b;          // color (0-1)
+        float startAngle, endAngle; // directional arc (degrees)
+        float range;             // visibility range (metres)
+        std::string sequence;    // flash pattern ('D' = dark)
+        float charTime;          // seconds per sequence character
+        float timeOffset;        // random phase offset
+    };
+    std::vector<WENavLight> navLights;
 
     try { // Wrap scene setup in try-catch to diagnose crashes
 
@@ -960,6 +996,49 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
 
         weLog("  Other ship " + std::to_string(s) + ": " + shipName +
               " speed=" + std::to_string(speed) + "kn heading=" + std::to_string(heading));
+
+        // Load navigation lights from boat.ini
+        uint32_t numLights = IniFile::iniFileTou32(boatIni, "NumberOfLights");
+        for (uint32_t nl = 1; nl <= numLights; nl++) {
+            WENavLight nlt;
+            nlt.shipIndex = (int)s;
+            nlt.localX = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("LightX", nl));
+            nlt.localY = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("LightY", nl));
+            nlt.localZ = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("LightZ", nl));
+
+            float lightR = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("LightRed", nl)) / 255.0f;
+            float lightG = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("LightGreen", nl)) / 255.0f;
+            float lightB = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("LightBlue", nl)) / 255.0f;
+            nlt.r = lightR; nlt.g = lightG; nlt.b = lightB;
+
+            nlt.startAngle = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("LightStartAngle", nl));
+            nlt.endAngle = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("LightEndAngle", nl));
+            // Fix negative start angles (same as NavLight.cpp)
+            while (nlt.startAngle < 0) { nlt.startAngle += 360; nlt.endAngle += 360; }
+
+            nlt.range = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("LightRange", nl));
+            nlt.range *= (float)M_IN_NM; // Nm -> metres
+
+            nlt.sequence = IniFile::iniFileToString(boatIni, IniFile::enumerate1("Sequence", nl));
+            uint32_t phaseStart = IniFile::iniFileTou32(boatIni, IniFile::enumerate1("PhaseStart", nl));
+            nlt.charTime = 0.25f;
+            nlt.timeOffset = (phaseStart == 0) ? (60.0f * ((float)rand() / RAND_MAX)) : ((phaseStart - 1) * nlt.charTime);
+
+            std::string lightName = "NavLight_" + std::to_string(s) + "_" + std::to_string(nl);
+            nlt.entity = scene.Entity_CreateLight(lightName);
+            auto* lightComp = scene.lights.GetComponent(nlt.entity);
+            if (lightComp) {
+                lightComp->SetType(wi::scene::LightComponent::POINT);
+                lightComp->color = DirectX::XMFLOAT3(lightR, lightG, lightB);
+                lightComp->intensity = 5.0f;
+                lightComp->range = 50.0f; // visual glow radius in WE units
+                lightComp->SetCastShadow(false);
+            }
+
+            navLights.push_back(nlt);
+        }
+        if (numLights > 0)
+            weLog("    " + std::to_string(numLights) + " nav lights");
     }
 
     // ===== BUOYS =====
@@ -1143,6 +1222,21 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             static const size_t VERTS_PER_TILE = 50000; // split into multiple mesh entities
 
             float terrainPosY = (terrainNode) ? terrainNode->getPosition().y : 0.0f;
+
+            // Check for facade texture in world directory
+            std::string facadeTexPath;
+            {
+                std::string candidate = worldPath + "building_wall.png";
+                std::ifstream test(candidate);
+                if (test.good()) facadeTexPath = candidate;
+                else {
+                    // Fall back to old name for compatibility
+                    candidate = worldPath + "building_facade.png";
+                    std::ifstream test2(candidate);
+                    if (test2.good()) facadeTexPath = candidate;
+                }
+            }
+
             BuildingMesh batch;
             int totalBuildings = 0, skippedWater = 0, tileIdx = 0;
             size_t totalVerts = 0;
@@ -1178,7 +1272,8 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 // Flush tile when it gets large enough
                 if (batch.vertexCount() >= VERTS_PER_TILE || totalVerts >= MAX_VERTICES) {
                     wi::ecs::Entity e = createBuildingMeshEntity(
-                        scene, batch, "OSM_Buildings_" + std::to_string(tileIdx));
+                        scene, batch, "OSM_Buildings_" + std::to_string(tileIdx),
+                        facadeTexPath);
                     if (e != wi::ecs::INVALID_ENTITY) {
                         setEntityTransform(scene, e, 0, 0, 0);
                     }
@@ -1191,7 +1286,8 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             // Flush remaining
             if (!batch.empty()) {
                 wi::ecs::Entity e = createBuildingMeshEntity(
-                    scene, batch, "OSM_Buildings_" + std::to_string(tileIdx));
+                    scene, batch, "OSM_Buildings_" + std::to_string(tileIdx),
+                    facadeTexPath);
                 if (e != wi::ecs::INVALID_ENTITY) {
                     setEntityTransform(scene, e, 0, 0, 0);
                 }
@@ -1276,12 +1372,17 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     static constexpr float KNOTS_TO_MPS = 0.514444f; // 1 knot = 0.514444 m/s
     static constexpr float NM_TO_M = 1852.0f;        // 1 nautical mile = 1852 m
 
+    // Flush Irrlicht timer so first physics frame has a small dt
+    // (timer has been running during entire scene setup above)
+    SimBridge::syncTimer();
+
     MSG msg = {};
     while (msg.message != WM_QUIT) {
         if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
             TranslateMessage(&msg);
             DispatchMessage(&msg);
         } else {
+
             // Frame timing
             auto now = std::chrono::high_resolution_clock::now();
             float dt = std::chrono::duration<float>(now - lastFrameTime).count();
@@ -1331,7 +1432,8 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             // Advance physics, AI, buoys, tide, wind, etc.
             SimBridge::update();
 
-            // Periodic diagnostic log (every ~3 seconds)
+#ifdef _DEBUG
+            // Periodic diagnostic log (every ~3 seconds) -- debug builds only
             static float diagTimer = 0;
             diagTimer += dt;
             if (diagTimer > 3.0f) {
@@ -1351,6 +1453,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                       " weH=" + std::to_string(weTerrainH) +
                       " wePosY=" + std::to_string(weTerrainPosY));
             }
+#endif
 
             // Read own ship state back from SimulationModel
             ownShipX = SimBridge::getPosX();
@@ -1414,6 +1517,74 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                     float bz = SimBridge::getBuoyPosZ(b);
                     setEntityTransform(scene, bs.entity, bx, bs.heightCorr, bz,
                                        0, bs.scaleFactor);
+                }
+            }
+
+            // ===== NAVIGATION LIGHTS (on other ships) =====
+            {
+                float scenarioTime = SimBridge::getTimeDelta();
+                uint32_t lightLevel = SimBridge::getLightLevel();
+                float lightAlpha = (255.0f - (float)lightLevel) / 255.0f; // 0=invisible(day), 1=bright(night)
+
+                for (auto& nlt : navLights) {
+                    if (nlt.entity == wi::ecs::INVALID_ENTITY) continue;
+                    if (nlt.shipIndex < 0 || nlt.shipIndex >= (int)otherShipStates.size()) continue;
+
+                    const auto& ship = otherShipStates[nlt.shipIndex];
+                    float sf = ship.scaleFactor;
+                    float headRad = ship.heading * (float)M_PI / 180.0f;
+                    float cosH = std::cos(headRad), sinH = std::sin(headRad);
+
+                    // Transform local light position to world space
+                    float wx = ship.x + (nlt.localX * cosH + nlt.localZ * sinH) * sf;
+                    float wy = ship.heightCorr + nlt.localY * sf;
+                    float wz = ship.z + (-nlt.localX * sinH + nlt.localZ * cosH) * sf;
+
+                    // Check visibility: range
+                    float dx = wx - camPosX, dz = wz - camPosZ, dy = wy - camPosY;
+                    float dist = std::sqrt(dx*dx + dy*dy + dz*dz);
+                    bool visible = (dist <= nlt.range) && (lightAlpha > 0.05f);
+
+                    // Check visibility: directional arc
+                    if (visible) {
+                        // Angle from light to camera in world coords
+                        float angleToCamera = std::atan2(dx, dz) * 180.0f / (float)M_PI; // degrees
+                        // Convert to angle relative to ship heading
+                        float localAngle = angleToCamera - ship.heading;
+                        // Normalize to 0-360
+                        while (localAngle < 0) localAngle += 360;
+                        while (localAngle >= 360) localAngle -= 360;
+                        // Check if within arc
+                        float sa = nlt.startAngle, ea = nlt.endAngle;
+                        while (sa < 0) { sa += 360; ea += 360; }
+                        while (sa >= 360) { sa -= 360; ea -= 360; }
+                        if (ea <= 360) {
+                            visible = (localAngle >= sa && localAngle <= ea);
+                        } else {
+                            float normEnd = ea;
+                            while (normEnd >= 360) normEnd -= 360;
+                            visible = (localAngle >= sa || localAngle <= normEnd);
+                        }
+                    }
+
+                    // Check visibility: flash sequence
+                    if (visible && !nlt.sequence.empty()) {
+                        size_t seqLen = nlt.sequence.length();
+                        float timeInSeq = std::fmod((scenarioTime + nlt.timeOffset) / nlt.charTime, (float)seqLen);
+                        size_t pos = (size_t)timeInSeq;
+                        if (pos >= seqLen) pos = seqLen - 1;
+                        if (nlt.sequence[pos] == 'D' || nlt.sequence[pos] == 'd')
+                            visible = false;
+                    }
+
+                    // Position the point light
+                    setEntityTransform(scene, nlt.entity, wx, wy, wz);
+
+                    // Control intensity: bright at night, off during day
+                    auto* lightComp = scene.lights.GetComponent(nlt.entity);
+                    if (lightComp) {
+                        lightComp->intensity = visible ? (lightAlpha * 8.0f) : 0.0f;
+                    }
                 }
             }
 

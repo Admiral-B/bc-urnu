@@ -147,6 +147,11 @@ set(BC_SOURCES
 # Wicked Engine backend sources (compiled only when WE is available)
 if(WITH_WICKED_ENGINE)
     list(APPEND BC_SOURCES
+        WickedMain.cpp
+        SimulationBridge.cpp
+        BuildingGenerator.cpp
+        IrrlichtModelConverter.cpp
+        editor/OSMBuildingReader.cpp
         graphics/wicked/WickedRenderer.cpp
         graphics/wicked/WickedModelImporter.cpp
         graphics/wicked/WickedImGui.cpp
@@ -233,10 +238,11 @@ endif (APPLE)
 
 # Wicked Engine link libraries and includes
 if(WITH_WICKED_ENGINE)
-    # WE include path
+    # WE include path + earcut (used by BuildingGenerator)
     target_include_directories(bridgecommand-bc PRIVATE
         "${WICKED_ENGINE_DIR}/WickedEngine"
         "${WICKED_ENGINE_DIR}/WickedEngine/Utility"
+        "${CMAKE_SOURCE_DIR}/libs/earcut"
     )
 
     # WE static library (user must build via Xcode on macOS, CMake on Linux/Windows)

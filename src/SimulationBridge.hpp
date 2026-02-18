@@ -9,16 +9,17 @@
 #include <string>
 
 // Forward declarations (no Irrlicht headers)
-class ScenarioData;
+struct ScenarioData;
 class ISound;
 
 namespace SimBridge {
 
 // Lifecycle
 void init(ISound* sound, const ScenarioData& scenarioData);
-void start();   // unpause physics timer -- call once before game loop
-void update();   // advance physics one frame (call device->run + model.update)
-void shutdown(); // destroy SimulationModel + headless Irrlicht device
+void start();      // unpause physics timer -- call once before game loop
+void syncTimer();  // flush Irrlicht timer -- call just before entering game loop
+void update();     // advance physics one frame (call device->run + model.update)
+void shutdown();   // destroy SimulationModel + headless Irrlicht device
 
 // Controls (WickedMain -> SimulationModel)
 void setPortEngine(float val);   // -1..+1
@@ -60,5 +61,9 @@ float getOtherShipSpeed(int i);  // m/s
 int getNumberOfBuoys();
 float getBuoyPosX(int i);
 float getBuoyPosZ(int i);
+
+// Time & lighting
+float getTimeDelta();      // scenario time in seconds since midnight day 1
+uint32_t getLightLevel();  // ambient light 0-255 (0=dark, 255=bright day)
 
 } // namespace SimBridge

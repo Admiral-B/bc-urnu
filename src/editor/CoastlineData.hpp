@@ -24,9 +24,15 @@ public:
     bool isLoaded() const { return !polygons.empty(); }
     const std::vector<Polygon>& getPolygons() const { return polygons; }
 
+    // Pre-filter polygons to an area of interest. Call before bulk isLand() queries.
+    // Only polygons overlapping this bbox will be checked by isLand().
+    void prefilter(double minLon, double maxLon, double minLat, double maxLat);
+
     // Point-in-polygon test: returns true if (lon, lat) is inside any land polygon.
     bool isLand(double lon, double lat) const;
 
 private:
     std::vector<Polygon> polygons;
+    std::vector<size_t> filteredIndices_; // indices into polygons (set by prefilter)
+    bool useFiltered_ = false;
 };

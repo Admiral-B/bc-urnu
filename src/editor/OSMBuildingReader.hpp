@@ -31,14 +31,15 @@ public:
     bool saveCache(const std::string& path) const;
     bool loadCache(const std::string& path);
 
+    // HTTP POST utility (reusable for other Overpass queries)
+    static std::vector<uint8_t> httpPost(const std::string& url,
+                                          const std::string& body,
+                                          const std::string& userAgent);
+
 private:
     std::vector<BuildingFootprint> buildings;
     bool queryDone = false;
     std::string errorMsg;
-
-    static std::vector<uint8_t> httpPost(const std::string& url,
-                                          const std::string& body,
-                                          const std::string& userAgent);
     bool parseResponse(const std::string& jsonStr);
 
     static float estimateHeight(const std::string& heightStr,

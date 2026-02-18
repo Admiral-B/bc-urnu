@@ -28,6 +28,11 @@ void init(ISound* sound, const ScenarioData& scenarioData) {
     params.WindowSize = irr::core::dimension2d<irr::u32>(800, 600);
     params.Stencilbuffer = false;
     params.AntiAlias = 0;
+    // Set a dummy WindowId so Irrlicht treats this as an "external window" device.
+    // This prevents handleSystemMessages() from stealing WE's window messages
+    // via PeekMessage(NULL) -- it will only process messages for HWnd (which is
+    // this dummy value, so no real messages match).
+    params.WindowId = reinterpret_cast<void*>(static_cast<uintptr_t>(1));
 
     g_device = irr::createDeviceEx(params);
     if (!g_device) {
@@ -117,7 +122,7 @@ void init(ISound* sound, const ScenarioData& scenarioData) {
 void start() {
     if (g_device) {
         g_device->getTimer()->setSpeed(1.0f);
-        g_device->run(); // kick timer
+        g_device->run(); // kick timer (safe: ExternalWindow mode filters messages)
     }
     // Run one update so depth/position have meaningful values
     if (g_model && g_device) {
@@ -130,10 +135,20 @@ void start() {
     }
 }
 
+void syncTimer() {
+    // Flush accumulated time on the Irrlicht timer.
+    // Call just before the game loop to prevent a huge deltaTime
+    // on the first physics frame (timer runs during scene setup).
+    if (g_device) {
+        g_device->run();
+        g_device->run();
+    }
+}
+
 void update() {
     if (!g_model || !g_device) return;
-    g_device->run();    // advance Irrlicht timer
-    g_model->update();  // physics + AI + buoys + tide + ...
+    g_device->run();        // advance Irrlicht timer (ExternalWindow mode = no message stealing)
+    g_model->update();      // physics + AI + buoys + tide + ...
 }
 
 void shutdown() {
@@ -191,5 +206,9 @@ int getNumberOfBuoys() {
 }
 float getBuoyPosX(int i) { return g_model ? g_model->getBuoyPosX(i) : 0; }
 float getBuoyPosZ(int i) { return g_model ? g_model->getBuoyPosZ(i) : 0; }
+
+// Time & lighting
+float getTimeDelta()      { return g_model ? g_model->getTimeDelta() : 0; }
+uint32_t getLightLevel()  { return g_model ? g_model->getLightLevel() : 200; }
 
 } // namespace SimBridge

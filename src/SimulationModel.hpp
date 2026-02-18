@@ -96,10 +96,6 @@ public:
     void setHeading(float hdg); //Sets the own ship's heading
 
     float getRateOfTurn() const;
-    void setRateofTurn(float rudder); //Set the rate of turn (-ve is port, +ve is stbd)
-
-
-
     void setRateOfTurn(float rateOfTurn);
     void setPos(float positionX, float positionZ);
     void setRudder(float rudder); //Set the rudder (-ve is port, +ve is stbd)
@@ -185,6 +181,7 @@ public:
     uint64_t getTimeOffset() const; //The timestamp at the start of the first day of the scenario
     float getTimeDelta() const; //The change in time (s) since the start of the start day of the scenario
     void     setTimeDelta(float scenarioTime);
+    uint32_t getLightLevel() const; //Ambient light level 0-255
 
     uint32_t getNumberOfOtherShips() const;
     uint32_t getNumberOfBuoys() const;
