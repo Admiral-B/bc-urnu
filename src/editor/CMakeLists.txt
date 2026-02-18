@@ -28,6 +28,7 @@ add_executable(bridgecommand-ed
     MeasureTool.cpp
     SatelliteTexture.cpp
     OSMBuildingReader.cpp
+    OSMWaterReader.cpp
     ../ChartReader.cpp
     ../HeightmapGenerator.cpp
     ../WorldGenerator.cpp

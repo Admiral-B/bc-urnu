@@ -191,6 +191,7 @@
     <ClCompile Include="..\editor\SatelliteTexture.cpp" />
     <ClCompile Include="..\editor\OpenSeaMapSource.cpp" />
     <ClCompile Include="..\editor\OSMBuildingReader.cpp" />
+    <ClCompile Include="..\editor\OSMWaterReader.cpp" />
     <ClCompile Include="..\ChartReader.cpp" />
     <ClCompile Include="..\HeightmapGenerator.cpp" />
     <ClCompile Include="..\WorldGenerator.cpp" />
@@ -238,6 +239,7 @@
     <ClInclude Include="..\editor\SatelliteTexture.hpp" />
     <ClInclude Include="..\editor\OpenSeaMapSource.hpp" />
     <ClInclude Include="..\editor\OSMBuildingReader.hpp" />
+    <ClInclude Include="..\editor\OSMWaterReader.hpp" />
     <ClInclude Include="..\ChartReader.hpp" />
     <ClInclude Include="..\HeightmapGenerator.hpp" />
     <ClInclude Include="..\WorldGenerator.hpp" />

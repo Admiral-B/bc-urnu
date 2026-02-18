@@ -152,6 +152,7 @@ if(WITH_WICKED_ENGINE)
         BuildingGenerator.cpp
         IrrlichtModelConverter.cpp
         editor/OSMBuildingReader.cpp
+        editor/OSMWaterReader.cpp
         graphics/wicked/WickedRenderer.cpp
         graphics/wicked/WickedModelImporter.cpp
         graphics/wicked/WickedImGui.cpp

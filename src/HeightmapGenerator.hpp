@@ -23,6 +23,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <utility>
 
 struct HeightmapBounds {
     double minLon, maxLon;
@@ -45,6 +46,12 @@ public:
     void setDepthAreas(const std::vector<DepthArea>& areas);
     void setSoundings(const std::vector<Sounding>& soundings);
     void setCoastlines(const std::vector<CoastlineSegment>& coastlines);
+
+    // Set water holes (LNDARE inner rings) -- enclosed water within land masses
+    void setWaterHoles(const std::vector<WaterHole>& holes);
+
+    // Set OSM water polygons (lat/lon pairs) -- authoritative for inland water bodies
+    void setOSMWaterPolygons(const std::vector<std::vector<std::pair<double,double>>>& polys);
 
     // Load DEM GeoTIFF files for land elevation (e.g. Copernicus DEM tiles)
     // Multiple tiles are merged to cover the full area. Requires GDAL.
@@ -88,6 +95,9 @@ private:
     std::vector<DepthArea> depthAreas;
     std::vector<Sounding> soundings;
     std::vector<CoastlineSegment> coastlines;
+    std::vector<WaterHole> waterHoles;
+    // OSM water polygons stored as lat/lon rings
+    std::vector<std::vector<std::pair<double,double>>> osmWaterPolygons;
     HeightmapBounds bounds;
     bool boundsSet = false;
 

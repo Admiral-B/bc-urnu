@@ -915,4 +915,206 @@ std::string ChartReader::generateLightIni(const std::vector<ChartBuoy>& buoys,
     return oss.str();
 }
 
+// ── Water holes: inner rings of LNDARE polygons ────────────────────────────
+
+std::vector<WaterHole> ChartReader::extractWaterHoles() {
+    std::vector<WaterHole> holes;
+    if (!dataset) return holes;
+
+    OGRLayer* layer = dataset->GetLayerByName("LNDARE");
+    if (!layer) return holes;
+
+    auto extractInnerRings = [&](const OGRPolygon* poly) {
+        int numInner = poly->getNumInteriorRings();
+        for (int r = 0; r < numInner; r++) {
+            const OGRLinearRing* ring = poly->getInteriorRing(r);
+            if (!ring || ring->getNumPoints() < 3) continue;
+            WaterHole hole;
+            for (int i = 0; i < ring->getNumPoints(); i++) {
+                hole.boundary.push_back({ring->getX(i), ring->getY(i)});
+            }
+            if (!hole.boundary.empty()) holes.push_back(std::move(hole));
+        }
+    };
+
+    layer->ResetReading();
+    OGRFeature* feature;
+    while ((feature = layer->GetNextFeature()) != nullptr) {
+        OGRGeometry* geom = feature->GetGeometryRef();
+        if (!geom) { OGRFeature::DestroyFeature(feature); continue; }
+
+        OGRwkbGeometryType gtype = wkbFlatten(geom->getGeometryType());
+        if (gtype == wkbPolygon) {
+            extractInnerRings(static_cast<const OGRPolygon*>(geom));
+        } else if (gtype == wkbMultiPolygon) {
+            const OGRMultiPolygon* mp = static_cast<const OGRMultiPolygon*>(geom);
+            for (int i = 0; i < mp->getNumGeometries(); i++) {
+                extractInnerRings(static_cast<const OGRPolygon*>(mp->getGeometryRef(i)));
+            }
+        }
+        OGRFeature::DestroyFeature(feature);
+    }
+
+    return holes;
+}
+
+// ── Shoreline constructions (barrages, causeways, dykes) ───────────────────
+
+std::vector<CoastlineSegment> ChartReader::extractShorelineConstructions() {
+    std::vector<CoastlineSegment> segments;
+    if (!dataset) return segments;
+
+    // SLCONS = Shoreline construction (piers, wharves, barrages, seawalls)
+    // CAUSWY = Causeway
+    // DYKCON = Dyke/levee
+    const char* layers[] = {"SLCONS", "CAUSWY", "DYKCON", nullptr};
+
+    for (int li = 0; layers[li] != nullptr; li++) {
+        OGRLayer* layer = dataset->GetLayerByName(layers[li]);
+        if (!layer) continue;
+
+        layer->ResetReading();
+        OGRFeature* feature;
+        while ((feature = layer->GetNextFeature()) != nullptr) {
+            OGRGeometry* geom = feature->GetGeometryRef();
+            if (!geom) { OGRFeature::DestroyFeature(feature); continue; }
+
+            OGRwkbGeometryType gtype = wkbFlatten(geom->getGeometryType());
+
+            auto extractLS = [](const OGRLineString* ls, CoastlineSegment& seg) {
+                for (int i = 0; i < ls->getNumPoints(); i++) {
+                    seg.points.push_back({ls->getX(i), ls->getY(i)});
+                }
+            };
+
+            if (gtype == wkbLineString) {
+                CoastlineSegment seg;
+                extractLS(static_cast<const OGRLineString*>(geom), seg);
+                if (!seg.points.empty()) segments.push_back(seg);
+            } else if (gtype == wkbMultiLineString) {
+                const OGRMultiLineString* mls = static_cast<const OGRMultiLineString*>(geom);
+                for (int i = 0; i < mls->getNumGeometries(); i++) {
+                    CoastlineSegment seg;
+                    extractLS(static_cast<const OGRLineString*>(mls->getGeometryRef(i)), seg);
+                    if (!seg.points.empty()) segments.push_back(seg);
+                }
+            } else if (gtype == wkbPolygon) {
+                const OGRPolygon* poly = static_cast<const OGRPolygon*>(geom);
+                const OGRLinearRing* ring = poly->getExteriorRing();
+                if (ring) {
+                    CoastlineSegment seg;
+                    for (int i = 0; i < ring->getNumPoints(); i++) {
+                        seg.points.push_back({ring->getX(i), ring->getY(i)});
+                    }
+                    if (!seg.points.empty()) segments.push_back(seg);
+                }
+            }
+
+            OGRFeature::DestroyFeature(feature);
+        }
+    }
+
+    return segments;
+}
+
+// ── Wrecks ─────────────────────────────────────────────────────────────────
+
+std::vector<ChartWreck> ChartReader::extractWrecks() {
+    std::vector<ChartWreck> wrecks;
+    if (!dataset) return wrecks;
+
+    OGRLayer* layer = dataset->GetLayerByName("WRECKS");
+    if (!layer) return wrecks;
+
+    layer->ResetReading();
+    OGRFeature* feature;
+    while ((feature = layer->GetNextFeature()) != nullptr) {
+        OGRGeometry* geom = feature->GetGeometryRef();
+        if (!geom) { OGRFeature::DestroyFeature(feature); continue; }
+
+        double lon = 0, lat = 0;
+        OGRwkbGeometryType gtype = wkbFlatten(geom->getGeometryType());
+        if (gtype == wkbPoint) {
+            OGRPoint* pt = static_cast<OGRPoint*>(geom);
+            lon = pt->getX(); lat = pt->getY();
+        } else {
+            OGRPoint centroid;
+            if (geom->Centroid(&centroid) == OGRERR_NONE) {
+                lon = centroid.getX(); lat = centroid.getY();
+            } else {
+                OGRFeature::DestroyFeature(feature); continue;
+            }
+        }
+
+        ChartWreck w;
+        w.longitude = lon;
+        w.latitude = lat;
+
+        int idx;
+        idx = feature->GetFieldIndex("CATWRK");
+        w.category = (idx >= 0) ? feature->GetFieldAsInteger(idx) : 0;
+
+        idx = feature->GetFieldIndex("VALSOU");
+        w.depth = (idx >= 0) ? feature->GetFieldAsDouble(idx) : 0.0;
+
+        idx = feature->GetFieldIndex("OBJNAM");
+        w.name = (idx >= 0) ? feature->GetFieldAsString(idx) : "";
+
+        wrecks.push_back(w);
+        OGRFeature::DestroyFeature(feature);
+    }
+
+    return wrecks;
+}
+
+// ── Obstructions ───────────────────────────────────────────────────────────
+
+std::vector<ChartObstruction> ChartReader::extractObstructions() {
+    std::vector<ChartObstruction> obstructions;
+    if (!dataset) return obstructions;
+
+    OGRLayer* layer = dataset->GetLayerByName("OBSTRN");
+    if (!layer) return obstructions;
+
+    layer->ResetReading();
+    OGRFeature* feature;
+    while ((feature = layer->GetNextFeature()) != nullptr) {
+        OGRGeometry* geom = feature->GetGeometryRef();
+        if (!geom) { OGRFeature::DestroyFeature(feature); continue; }
+
+        double lon = 0, lat = 0;
+        OGRwkbGeometryType gtype = wkbFlatten(geom->getGeometryType());
+        if (gtype == wkbPoint) {
+            OGRPoint* pt = static_cast<OGRPoint*>(geom);
+            lon = pt->getX(); lat = pt->getY();
+        } else {
+            OGRPoint centroid;
+            if (geom->Centroid(&centroid) == OGRERR_NONE) {
+                lon = centroid.getX(); lat = centroid.getY();
+            } else {
+                OGRFeature::DestroyFeature(feature); continue;
+            }
+        }
+
+        ChartObstruction o;
+        o.longitude = lon;
+        o.latitude = lat;
+
+        int idx;
+        idx = feature->GetFieldIndex("CATOBS");
+        o.category = (idx >= 0) ? feature->GetFieldAsInteger(idx) : 0;
+
+        idx = feature->GetFieldIndex("VALSOU");
+        o.depth = (idx >= 0) ? feature->GetFieldAsDouble(idx) : 0.0;
+
+        idx = feature->GetFieldIndex("OBJNAM");
+        o.name = (idx >= 0) ? feature->GetFieldAsString(idx) : "";
+
+        obstructions.push_back(o);
+        OGRFeature::DestroyFeature(feature);
+    }
+
+    return obstructions;
+}
+
 #endif // WITH_GDAL

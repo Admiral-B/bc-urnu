@@ -9,7 +9,7 @@
 #include <string>
 
 // Forward declarations (no Irrlicht headers)
-struct ScenarioData;
+class ScenarioData;
 class ISound;
 
 namespace SimBridge {

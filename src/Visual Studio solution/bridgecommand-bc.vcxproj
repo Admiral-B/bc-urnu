@@ -238,6 +238,7 @@
     <ClCompile Include="..\SimulationBridge.cpp" />
     <ClCompile Include="..\BuildingGenerator.cpp" />
     <ClCompile Include="..\editor\OSMBuildingReader.cpp" />
+    <ClCompile Include="..\editor\OSMWaterReader.cpp" />
     <ClCompile Include="..\graphics\wicked\WickedRenderer.cpp" />
     <ClCompile Include="..\graphics\wicked\WickedWater.cpp" />
     <ClCompile Include="..\graphics\wicked\WickedTerrainNode.cpp" />
@@ -326,6 +327,7 @@
     <ClInclude Include="..\SimulationBridge.hpp" />
     <ClInclude Include="..\BuildingGenerator.hpp" />
     <ClInclude Include="..\editor\OSMBuildingReader.hpp" />
+    <ClInclude Include="..\editor\OSMWaterReader.hpp" />
     <ClInclude Include="..\graphics\IRenderer.hpp" />
     <ClInclude Include="..\graphics\ISceneManager.hpp" />
     <ClInclude Include="..\graphics\ISceneNode.hpp" />

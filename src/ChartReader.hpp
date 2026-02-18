@@ -90,6 +90,29 @@ struct TSSArea {
     std::vector<ChartPoint> boundary;  // Polygon boundary
 };
 
+// Water holes: inner rings of LNDARE polygons (enclosed water within land)
+struct WaterHole {
+    std::vector<ChartPoint> boundary;  // Inner ring of LNDARE polygon
+};
+
+// Wrecks from WRECKS layer
+struct ChartWreck {
+    double longitude;
+    double latitude;
+    int category;       // CATWRK: 1=non-dangerous, 2=dangerous, 3=distributed remains, 4=wreck showing, 5=wreck not showing
+    double depth;       // VALSOU: depth in metres (0 if unknown)
+    std::string name;   // OBJNAM
+};
+
+// Obstructions from OBSTRN layer
+struct ChartObstruction {
+    double longitude;
+    double latitude;
+    int category;       // CATOBS
+    double depth;       // VALSOU
+    std::string name;
+};
+
 class ChartReader {
 public:
     ChartReader();
@@ -107,6 +130,14 @@ public:
     std::vector<ChartLandmark> extractLandmarks();
     std::vector<UrbanArea> extractUrbanAreas();
     std::vector<TSSArea> extractTSSAreas();
+    std::vector<WaterHole> extractWaterHoles();      // Inner rings of LNDARE
+    std::vector<ChartWreck> extractWrecks();
+    std::vector<ChartObstruction> extractObstructions();
+
+    // Extract man-made shoreline structures (SLCONS, CAUSWY, DYKCON) as land polygons.
+    // These are structures like barrages, causeways, dykes that are land but may not
+    // appear in LNDARE.
+    std::vector<CoastlineSegment> extractShorelineConstructions();
 
     // Map S-57 buoy data to Bridge Command buoy model name
     static std::string mapBuoyType(const ChartBuoy& buoy);

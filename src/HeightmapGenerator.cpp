@@ -43,6 +43,14 @@ void HeightmapGenerator::setCoastlines(const std::vector<CoastlineSegment>& c) {
     coastlines = c;
 }
 
+void HeightmapGenerator::setWaterHoles(const std::vector<WaterHole>& holes) {
+    waterHoles = holes;
+}
+
+void HeightmapGenerator::setOSMWaterPolygons(const std::vector<std::vector<std::pair<double,double>>>& polys) {
+    osmWaterPolygons = polys;
+}
+
 // ── GeoTIFF loading (shared by DEM and bathymetry) ─────────────────────────
 
 bool HeightmapGenerator::loadGeoTIFF(const std::string& tifPath, DEMTile& tile) {
@@ -300,17 +308,41 @@ float HeightmapGenerator::interpolateSoundings(double lon, double lat,
 }
 
 bool HeightmapGenerator::isLand(double lon, double lat) const {
-    // Check if point is inside any land polygon (from LNDARE via coastlines)
-    // Coastlines from LNDARE are closed polygons representing land
+    // Step 1: Check OSM water polygons first (highest authority for inland water).
+    // If the point is inside an OSM water polygon, it is definitively water.
+    for (const auto& poly : osmWaterPolygons) {
+        if (poly.size() < 3) continue;
+        // OSM polygons are stored as (lat, lon) pairs; convert for ray-cast
+        bool inside = false;
+        size_t n = poly.size();
+        for (size_t i = 0, j = n - 1; i < n; j = i++) {
+            double xi = poly[i].second, yi = poly[i].first;  // lon, lat
+            double xj = poly[j].second, yj = poly[j].first;
+            if (((yi > lat) != (yj > lat)) &&
+                (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi)) {
+                inside = !inside;
+            }
+        }
+        if (inside) return false; // Inside a water polygon -> not land
+    }
+
+    // Step 2: Check LNDARE inner rings (water holes within land).
+    // If the point is inside a water hole, it is water even if the outer
+    // LNDARE polygon says land.
+    for (const auto& hole : waterHoles) {
+        if (hole.boundary.size() >= 3 && pointInPolygon(lon, lat, hole.boundary)) {
+            return false; // Inside a water hole -> not land
+        }
+    }
+
+    // Step 3: Check LNDARE/COALNE closed polygons (chart authority for land).
     for (const auto& seg : coastlines) {
         if (seg.points.size() >= 3) {
-            // Check if the first and last points are the same (closed polygon = land area)
             const auto& first = seg.points.front();
             const auto& last = seg.points.back();
             double closeDist = fabs(first.longitude - last.longitude) +
                                fabs(first.latitude - last.latitude);
             if (closeDist < 0.0001) {
-                // Closed polygon - treat as land area
                 if (pointInPolygon(lon, lat, seg.points)) {
                     return true;
                 }

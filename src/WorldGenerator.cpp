@@ -19,6 +19,7 @@
 #include "WorldGenerator.hpp"
 #include "BuildingGenerator.hpp"
 #include "editor/OSMBuildingReader.hpp"
+#include "editor/OSMWaterReader.hpp"
 
 #include <sstream>
 #include <fstream>
@@ -221,7 +222,7 @@ WorldGeneratorResult WorldGenerator::generateWorld(const std::string& chartPath,
         return result;
     }
 
-    // Extract all features
+    // Extract all features from S-57 chart
     auto buoys = reader.extractBuoys();
     auto lights = reader.extractLights();
     auto landmarks = reader.extractLandmarks();
@@ -229,6 +230,13 @@ WorldGeneratorResult WorldGenerator::generateWorld(const std::string& chartPath,
     auto soundings = reader.extractSoundings();
     auto coastlines = reader.extractCoastlines();
     auto urbanAreas = reader.extractUrbanAreas();
+    auto waterHoles = reader.extractWaterHoles();
+    auto shoreConstructions = reader.extractShorelineConstructions();
+    auto wrecks = reader.extractWrecks();
+
+    // Append shoreline constructions (barrages, causeways, dykes) to coastlines
+    // so they are treated as land in the heightmap
+    coastlines.insert(coastlines.end(), shoreConstructions.begin(), shoreConstructions.end());
 
     result.buoyCount = static_cast<int>(buoys.size());
     result.lightCount = static_cast<int>(lights.size());
@@ -237,14 +245,43 @@ WorldGeneratorResult WorldGenerator::generateWorld(const std::string& chartPath,
     result.soundingCount = static_cast<int>(soundings.size());
     result.coastlineCount = static_cast<int>(coastlines.size());
 
+    std::cout << "WorldGenerator: Extracted " << waterHoles.size() << " water holes, "
+              << shoreConstructions.size() << " shoreline constructions, "
+              << wrecks.size() << " wrecks" << std::endl;
+
     // Generate heightmap
     HeightmapGenerator hmGen;
     hmGen.setDepthAreas(depthAreas);
     hmGen.setSoundings(soundings);
     hmGen.setCoastlines(coastlines);
+    hmGen.setWaterHoles(waterHoles);
 
     HeightmapBounds bounds = hmGen.computeBoundsFromData();
     hmGen.setBounds(bounds);
+
+    // Query OSM for water polygons (lakes, rivers, docks, bays)
+    // These override chart data for inland water body detection
+    OSMWaterReader waterReader;
+    std::cout << "WorldGenerator: Querying OSM for water areas..." << std::endl;
+    if (waterReader.query(bounds.minLat, bounds.maxLat, bounds.minLon, bounds.maxLon,
+                          [](const std::string& msg) {
+                              std::cout << "WorldGenerator: " << msg << std::endl;
+                          })) {
+        const auto& waterAreas = waterReader.getWaterAreas();
+        if (!waterAreas.empty()) {
+            std::vector<std::vector<std::pair<double,double>>> osmPolys;
+            osmPolys.reserve(waterAreas.size());
+            for (const auto& wp : waterAreas) {
+                osmPolys.push_back(wp.outline);
+            }
+            hmGen.setOSMWaterPolygons(osmPolys);
+            std::cout << "WorldGenerator: Using " << osmPolys.size()
+                      << " OSM water polygons for land/water refinement" << std::endl;
+        }
+    } else {
+        std::cout << "WorldGenerator: OSM water query failed: "
+                  << waterReader.getError() << " (continuing with chart data only)" << std::endl;
+    }
 
     // Load DEM tiles for land elevation (if directory provided)
     if (!demDir.empty()) {
@@ -403,14 +440,45 @@ WorldGeneratorResult WorldGenerator::generateWorld(const std::string& chartPath,
                     return {x, z};
                 };
 
+                // Helper: sample the heightmap at a lat/lon to get ground elevation
+                int hmRes = static_cast<int>(heightGrid.size());
+                double lonStep = (bounds.maxLon - bounds.minLon) / (hmRes - 1);
+                double latStep = (bounds.maxLat - bounds.minLat) / (hmRes - 1);
+                auto sampleHeight = [&](double lat, double lon) -> float {
+                    int col = static_cast<int>((lon - bounds.minLon) / lonStep);
+                    int row = static_cast<int>((bounds.maxLat - lat) / latStep);
+                    col = (std::max)(0, (std::min)(col, hmRes - 1));
+                    row = (std::max)(0, (std::min)(row, hmRes - 1));
+                    return heightGrid[row][col];
+                };
+
                 // Cap buildings to avoid overwhelming the GPU at runtime
                 static const size_t MAX_BUILDINGS = 5000;
                 static const size_t MAX_VERTICES = 200000;
 
                 size_t buildCount = (std::min)(footprints.size(), MAX_BUILDINGS);
+                size_t skippedWater = 0;
                 BuildingMesh batch;
                 for (size_t i = 0; i < buildCount; i++) {
-                    BuildingMesh single = BuildingGenerator::generate(footprints[i], coordFunc, 0.0f);
+                    // Compute centroid of building footprint
+                    double cLat = 0, cLon = 0;
+                    for (const auto& [lat, lon] : footprints[i].outline) {
+                        cLat += lat; cLon += lon;
+                    }
+                    cLat /= footprints[i].outline.size();
+                    cLon /= footprints[i].outline.size();
+
+                    // Skip buildings whose centroid is on water
+                    float groundH = sampleHeight(cLat, cLon);
+                    if (groundH < -0.5f) {
+                        skippedWater++;
+                        continue;
+                    }
+
+                    // Use actual terrain height as building ground level
+                    float groundY = (std::max)(0.0f, groundH);
+
+                    BuildingMesh single = BuildingGenerator::generate(footprints[i], coordFunc, groundY);
                     if (single.empty()) continue;
                     batch.append(single);
                     if (batch.vertexCount() >= MAX_VERTICES) break;
@@ -423,14 +491,66 @@ WorldGeneratorResult WorldGenerator::generateWorld(const std::string& chartPath,
                         std::cout << "WorldGenerator: Wrote buildings.obj ("
                                   << batch.vertexCount() << " vertices, "
                                   << batch.triangleCount() << " triangles from "
-                                  << buildCount << "/" << footprints.size()
-                                  << " buildings)" << std::endl;
+                                  << (buildCount - skippedWater) << "/" << footprints.size()
+                                  << " buildings, " << skippedWater << " skipped on water)"
+                                  << std::endl;
                     }
                 }
             }
         } else {
             std::cout << "WorldGenerator: OSM building query failed: "
                       << bldgReader.getError() << std::endl;
+        }
+    }
+
+    // Write wreck positions as landobjects (append to existing)
+    if (!wrecks.empty()) {
+        // Read existing landobject.ini to get current count
+        std::string existingContent;
+        {
+            std::ifstream fin(outputDir + "/landobject.ini");
+            if (fin.is_open()) {
+                std::ostringstream ss;
+                ss << fin.rdbuf();
+                existingContent = ss.str();
+            }
+        }
+
+        // Parse existing Number= line
+        int existingCount = 0;
+        auto numPos = existingContent.find("Number=");
+        if (numPos != std::string::npos) {
+            existingCount = std::atoi(existingContent.c_str() + numPos + 7);
+        }
+
+        // Append wrecks
+        std::ofstream f(outputDir + "/landobject.ini");
+        if (f.is_open()) {
+            // Rewrite with updated count
+            int totalCount = existingCount + static_cast<int>(wrecks.size());
+
+            // Replace Number= line
+            if (numPos != std::string::npos) {
+                auto lineEnd = existingContent.find('\n', numPos);
+                f << "Number=" << totalCount << "\n";
+                if (lineEnd != std::string::npos)
+                    f << existingContent.substr(lineEnd + 1);
+            } else {
+                f << "Number=" << totalCount << "\n\n" << existingContent;
+            }
+
+            f << std::fixed;
+            for (size_t i = 0; i < wrecks.size(); i++) {
+                int idx = existingCount + static_cast<int>(i) + 1;
+                // Use "Wreck" model if available, else generic
+                f << "Type(" << idx << ")=Wreck\n";
+                f.precision(7);
+                f << "Long(" << idx << ")=" << wrecks[i].longitude << "\n";
+                f << "Lat(" << idx << ")=" << wrecks[i].latitude << "\n";
+                f << "Rotation(" << idx << ")=0\n\n";
+            }
+            std::cout << "WorldGenerator: Added " << wrecks.size()
+                      << " wrecks to landobject.ini" << std::endl;
         }
     }
 
