@@ -179,8 +179,17 @@ bool OpenSeaMapSource::query(double minLat, double maxLat,
     ql << "[out:json][timeout:60];"
        << "(node[\"seamark:type\"]("
        << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "node[\"man_made\"~\"tower|chimney|lighthouse|mast\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "node[\"building\"~\"church|cathedral|chapel\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "way[\"building\"~\"church|cathedral|chapel\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
        << "););"
-       << "out body;";
+       << "out body center;";
 
     std::string postBody = "data=" + ql.str();
 
@@ -298,22 +307,38 @@ bool OpenSeaMapSource::parseResponse(const std::string& jsonStr) {
     }
 
     for (const auto& elem : root["elements"]) {
-        if (!elem.contains("type") || elem["type"] != "node")
-            continue;
+        if (!elem.contains("type")) continue;
+        std::string elemType = elem["type"].get<std::string>();
+        if (elemType != "node" && elemType != "way") continue;
         if (!elem.contains("tags") || !elem["tags"].is_object())
             continue;
-        if (!elem.contains("lat") || !elem.contains("lon"))
-            continue;
 
-        double lat = elem["lat"].get<double>();
-        double lon = elem["lon"].get<double>();
+        // Extract lat/lon: nodes have top-level, ways use center sub-object
+        double lat = 0, lon = 0;
+        if (elem.contains("lat") && elem.contains("lon")) {
+            lat = elem["lat"].get<double>();
+            lon = elem["lon"].get<double>();
+        } else if (elem.contains("center")) {
+            const auto& center = elem["center"];
+            if (center.contains("lat") && center.contains("lon")) {
+                lat = center["lat"].get<double>();
+                lon = center["lon"].get<double>();
+            } else {
+                continue;
+            }
+        } else {
+            continue;
+        }
+
         const auto& tags = elem["tags"];
 
         std::string seamarkType;
         if (tags.contains("seamark:type"))
             seamarkType = tags["seamark:type"].get<std::string>();
 
-        // ---- Buoys ----
+        // ---- Buoys and lights (nodes only, not ways) ----
+        if (elemType == "node") {
+
         if (seamarkType == "buoy_lateral" || seamarkType == "beacon_lateral") {
             OsmBuoy buoy;
             buoy.latitude = lat;
@@ -455,7 +480,9 @@ bool OpenSeaMapSource::parseResponse(const std::string& jsonStr) {
             }
         }
 
-        // ---- Landmarks ----
+        } // end if (elemType == "node") -- buoys/lights
+
+        // ---- Landmarks (both nodes and ways) ----
         if (seamarkType == "landmark") {
             OsmLandmark lm;
             lm.latitude = lat;
@@ -475,6 +502,38 @@ bool OpenSeaMapSource::parseResponse(const std::string& jsonStr) {
                 lm.name = tags["name"].get<std::string>();
 
             landmarks.push_back(lm);
+        }
+
+        // ---- Non-seamark navigational landmarks (towers, churches, chimneys, masts) ----
+        if (seamarkType.empty()) {
+            std::string manMade, building;
+            if (tags.contains("man_made"))
+                manMade = tags["man_made"].get<std::string>();
+            if (tags.contains("building"))
+                building = tags["building"].get<std::string>();
+
+            int cat = 0;
+            if (manMade == "tower") cat = 17;
+            else if (manMade == "chimney") cat = 3;
+            else if (manMade == "lighthouse") cat = 17;
+            else if (manMade == "mast") cat = 18;
+            else if (building == "church" || building == "cathedral" || building == "chapel") cat = 20;
+
+            if (cat > 0) {
+                OsmLandmark lm;
+                lm.latitude = lat;
+                lm.longitude = lon;
+                lm.category = cat;
+
+                if (tags.contains("height")) {
+                    try { lm.height = std::stod(tags["height"].get<std::string>()); }
+                    catch (...) {}
+                }
+                if (tags.contains("name"))
+                    lm.name = tags["name"].get<std::string>();
+
+                landmarks.push_back(lm);
+            }
         }
     }
 
@@ -676,19 +735,12 @@ std::string OpenSeaMapSource::generateBuoyIni() const {
 }
 
 std::string OpenSeaMapSource::generateLightIni() const {
-    // Only include lights that are attached to a buoy
-    std::vector<size_t> includedIndices;
-    for (size_t i = 0; i < lights.size(); i++) {
-        if (lights[i].buoyIndex >= 0) {
-            includedIndices.push_back(i);
-        }
-    }
-
+    // Include ALL lights: buoy-attached (Buoy=N) and standalone (Buoy=0 with lat/lon)
     std::ostringstream oss;
-    oss << "Number=" << includedIndices.size() << "\n\n";
+    oss << "Number=" << lights.size() << "\n\n";
 
-    for (size_t n = 0; n < includedIndices.size(); n++) {
-        const OsmLight& light = lights[includedIndices[n]];
+    for (size_t n = 0; n < lights.size(); n++) {
+        const OsmLight& light = lights[n];
         int idx = static_cast<int>(n) + 1;
 
         std::string seq = lightSequence(light.characteristic, light.period, light.group);
@@ -696,9 +748,17 @@ std::string OpenSeaMapSource::generateLightIni() const {
         int r, g, b;
         colourToRGB(light.colour, r, g, b);
 
-        int buoyRef = light.buoyIndex + 1; // 1-indexed
-
-        oss << "Buoy(" << idx << ")=" << buoyRef << "\n";
+        if (light.buoyIndex >= 0) {
+            // Buoy-attached light
+            oss << "Buoy(" << idx << ")=" << (light.buoyIndex + 1) << "\n";
+        } else {
+            // Standalone light (lighthouse, shore light, etc.)
+            oss << "Buoy(" << idx << ")=0\n";
+            oss << std::fixed;
+            oss.precision(7);
+            oss << "Long(" << idx << ")=" << light.longitude << "\n";
+            oss << "Lat(" << idx << ")=" << light.latitude << "\n";
+        }
         oss << "Sequence(" << idx << ")=" << seq << "\n";
         oss.precision(1);
         oss << std::fixed;

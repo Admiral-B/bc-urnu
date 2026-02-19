@@ -11,6 +11,7 @@ struct BuildingFootprint {
     float height = 9.0f;      // metres (default ~3 storeys)
     std::string type;          // residential/commercial/industrial/church/...
     std::string name;
+    bool isStructure = false;  // true for harbour structures (pier, breakwater, dam, etc.)
 };
 
 class OSMBuildingReader {

@@ -167,6 +167,13 @@ float OSMBuildingReader::estimateHeight(const std::string& heightStr,
     if (type == "garage" || type == "shed") return 3.0f;
     if (type == "commercial" || type == "office") return 12.0f;
 
+    // Harbour structures
+    if (type == "dam") return 4.0f;
+    if (type == "breakwater") return 4.0f;
+    if (type == "pier") return 3.0f;
+    if (type == "jetty") return 2.0f;
+    if (type == "groyne") return 1.5f;
+
     return 9.0f; // ~3 storeys
 }
 
@@ -198,21 +205,30 @@ bool OSMBuildingReader::query(double minLat, double maxLat,
     queryDone = false;
     errorMsg.clear();
 
-    if (progress) progress("Building Overpass query for buildings...");
+    if (progress) progress("Building Overpass query for buildings and structures...");
 
-    // Query building ways with full geometry in bbox
+    // Query building ways AND harbour structures with full geometry in bbox
     std::ostringstream ql;
     ql << std::fixed;
     ql.precision(6);
     ql << "[out:json][timeout:90];"
        << "(way[\"building\"]("
        << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "way[\"man_made\"~\"pier|jetty|groyne\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "way[\"man_made\"=\"breakwater\"][\"name\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "way[\"waterway\"=\"dam\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
        << "););"
        << "out geom;";
 
     std::string postBody = "data=" + ql.str();
 
-    if (progress) progress("Querying Overpass API for buildings...");
+    if (progress) progress("Querying Overpass API for buildings and structures...");
 
     auto response = httpPost(OVERPASS_URL, postBody, USER_AGENT);
     if (response.empty()) {
@@ -220,7 +236,7 @@ bool OSMBuildingReader::query(double minLat, double maxLat,
         return false;
     }
 
-    if (progress) progress("Parsing building footprints...");
+    if (progress) progress("Parsing building and structure footprints...");
 
     std::string jsonStr(response.begin(), response.end());
     if (!parseResponse(jsonStr)) {
@@ -229,8 +245,13 @@ bool OSMBuildingReader::query(double minLat, double maxLat,
 
     queryDone = true;
     if (progress) {
+        int structCount = 0;
+        for (const auto& b : buildings) {
+            if (b.isStructure) structCount++;
+        }
         std::ostringstream msg;
-        msg << "Found " << buildings.size() << " buildings";
+        msg << "Found " << buildings.size() << " buildings/structures";
+        if (structCount > 0) msg << " (" << structCount << " harbour structures)";
         progress(msg.str());
     }
 
@@ -274,17 +295,36 @@ bool OSMBuildingReader::parseResponse(const std::string& jsonStr) {
             }
         }
 
-        if (fp.outline.size() < 3) continue;
+        if (fp.outline.size() < 2) continue;
 
         // Extract tags
         std::string heightStr, levelsStr, buildingType = "yes";
         std::string name;
+        bool isStructure = false;
+        std::string structureType;
 
         if (elem.contains("tags") && elem["tags"].is_object()) {
             const auto& tags = elem["tags"];
 
             if (tags.contains("building"))
                 buildingType = tags["building"].get<std::string>();
+
+            // Harbour structures: man_made=breakwater|pier|jetty|groyne, waterway=dam
+            if (tags.contains("man_made")) {
+                structureType = tags["man_made"].get<std::string>();
+                if (structureType == "pier" ||
+                    structureType == "jetty" || structureType == "groyne" ||
+                    structureType == "breakwater") {
+                    isStructure = true;
+                }
+            }
+            if (tags.contains("waterway")) {
+                std::string ww = tags["waterway"].get<std::string>();
+                if (ww == "dam") {
+                    isStructure = true;
+                    structureType = "dam";
+                }
+            }
 
             if (tags.contains("building:height"))
                 heightStr = tags["building:height"].get<std::string>();
@@ -298,9 +338,56 @@ bool OSMBuildingReader::parseResponse(const std::string& jsonStr) {
                 name = tags["name"].get<std::string>();
         }
 
-        fp.type = classifyType(buildingType);
-        fp.height = estimateHeight(heightStr, levelsStr, fp.type);
+        if (isStructure) {
+            fp.type = structureType;
+            fp.isStructure = true;
+            fp.height = estimateHeight(heightStr, levelsStr, structureType);
+        } else {
+            fp.type = classifyType(buildingType);
+            fp.height = estimateHeight(heightStr, levelsStr, fp.type);
+        }
         fp.name = name;
+
+        // Check if the way is a closed polygon (first == last point)
+        bool isClosed = (fp.outline.size() >= 3 &&
+                         std::abs(fp.outline.front().first - fp.outline.back().first) < 1e-7 &&
+                         std::abs(fp.outline.front().second - fp.outline.back().second) < 1e-7);
+
+        if (!isClosed && fp.isStructure) {
+            if (fp.outline.size() >= 2) {
+                // Buffer open-way structures (piers/jetties/groynes) into thin polygons
+                double widthM = (structureType == "dam" || structureType == "breakwater") ? 6.0 : 3.0;
+                double widthDeg = widthM / 111320.0;
+
+                std::vector<std::pair<double,double>> left, right;
+                for (size_t i = 0; i < fp.outline.size(); i++) {
+                    double dx = 0, dy = 0;
+                    if (i == 0) {
+                        dy = fp.outline[1].first - fp.outline[0].first;
+                        dx = fp.outline[1].second - fp.outline[0].second;
+                    } else if (i == fp.outline.size() - 1) {
+                        dy = fp.outline[i].first - fp.outline[i-1].first;
+                        dx = fp.outline[i].second - fp.outline[i-1].second;
+                    } else {
+                        dy = fp.outline[i+1].first - fp.outline[i-1].first;
+                        dx = fp.outline[i+1].second - fp.outline[i-1].second;
+                    }
+                    double len = std::sqrt(dx*dx + dy*dy);
+                    if (len < 1e-12) len = 1e-12;
+                    double px = -dy / len * widthDeg * 0.5;
+                    double py =  dx / len * widthDeg * 0.5;
+
+                    left.emplace_back(fp.outline[i].first + py, fp.outline[i].second + px);
+                    right.emplace_back(fp.outline[i].first - py, fp.outline[i].second - px);
+                }
+                fp.outline.clear();
+                fp.outline.insert(fp.outline.end(), left.begin(), left.end());
+                fp.outline.insert(fp.outline.end(), right.rbegin(), right.rend());
+                fp.outline.push_back(fp.outline.front());
+            }
+        }
+
+        if (!isClosed && !fp.isStructure && fp.outline.size() < 3) continue;
 
         buildings.push_back(std::move(fp));
     }
@@ -317,7 +404,7 @@ bool OSMBuildingReader::saveCache(const std::string& path) const {
     f << std::fixed << std::setprecision(8);
     f << buildings.size() << "\n";
     for (const auto& b : buildings) {
-        f << b.outline.size() << " " << b.height << " " << b.type << " " << b.name << "\n";
+        f << b.outline.size() << " " << b.height << " " << (b.isStructure ? 1 : 0) << " " << b.type << " " << b.name << "\n";
         for (const auto& [lat, lon] : b.outline) {
             f << lat << " " << lon << "\n";
         }
@@ -339,7 +426,9 @@ bool OSMBuildingReader::loadCache(const std::string& path) {
     for (size_t i = 0; i < count; i++) {
         BuildingFootprint fp;
         size_t npts = 0;
-        if (!(f >> npts >> fp.height)) return false;
+        int isStruct = 0;
+        if (!(f >> npts >> fp.height >> isStruct)) return false;
+        fp.isStructure = (isStruct != 0);
 
         // Read type (single word)
         if (!(f >> fp.type)) return false;

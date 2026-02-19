@@ -468,14 +468,16 @@ WorldGeneratorResult WorldGenerator::generateWorld(const std::string& chartPath,
                     cLat /= footprints[i].outline.size();
                     cLon /= footprints[i].outline.size();
 
-                    // Skip buildings whose centroid is on water
+                    // Skip regular buildings whose centroid is on water
+                    // (harbour structures like piers/breakwaters are allowed on water)
                     float groundH = sampleHeight(cLat, cLon);
-                    if (groundH < -0.5f) {
+                    if (groundH < -0.5f && !footprints[i].isStructure) {
                         skippedWater++;
                         continue;
                     }
 
                     // Use actual terrain height as building ground level
+                    // (harbour structures on water get clamped to sea level = 0)
                     float groundY = (std::max)(0.0f, groundH);
 
                     BuildingMesh single = BuildingGenerator::generate(footprints[i], coordFunc, groundY);

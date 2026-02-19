@@ -291,6 +291,47 @@ bool WickedTerrainNode::createTerrainMesh(const std::string& texturePath) {
         }
     }
 
+    // Add terrain edge skirt to prevent abrupt cutoff at boundaries.
+    // Skirt vertices mirror edge positions but drop well below the ocean floor.
+    {
+        float skirtLocalY = -(seaMaxDepth_ + 20.0f) - position_.y;
+
+        // Add a vertical skirt strip along a sequence of edge vertex indices
+        auto addSkirtStrip = [&](const std::vector<uint32_t>& edgeIndices) {
+            uint32_t skirtBase = static_cast<uint32_t>(mesh->vertex_positions.size());
+
+            for (uint32_t ei : edgeIndices) {
+                auto pos = mesh->vertex_positions[ei];
+                pos.y = skirtLocalY;
+                mesh->vertex_positions.push_back(pos);
+                mesh->vertex_normals.push_back({0, 1, 0});
+                mesh->vertex_uvset_0.push_back(mesh->vertex_uvset_0[ei]);
+            }
+
+            for (size_t i = 0; i + 1 < edgeIndices.size(); i++) {
+                uint32_t e0 = edgeIndices[i];
+                uint32_t e1 = edgeIndices[i + 1];
+                uint32_t s0 = skirtBase + static_cast<uint32_t>(i);
+                uint32_t s1 = skirtBase + static_cast<uint32_t>(i + 1);
+                mesh->indices.push_back(e0);
+                mesh->indices.push_back(e1);
+                mesh->indices.push_back(s0);
+                mesh->indices.push_back(e1);
+                mesh->indices.push_back(s1);
+                mesh->indices.push_back(s0);
+            }
+        };
+
+        // South edge (r=0): left to right
+        { std::vector<uint32_t> e; for (int c = 0; c < meshCols; c++) e.push_back(c); addSkirtStrip(e); }
+        // North edge (r=meshRows-1): right to left
+        { std::vector<uint32_t> e; for (int c = meshCols-1; c >= 0; c--) e.push_back((meshRows-1)*meshCols+c); addSkirtStrip(e); }
+        // West edge (c=0): top to bottom
+        { std::vector<uint32_t> e; for (int r = meshRows-1; r >= 0; r--) e.push_back(r*meshCols); addSkirtStrip(e); }
+        // East edge (c=meshCols-1): bottom to top
+        { std::vector<uint32_t> e; for (int r = 0; r < meshRows; r++) e.push_back(r*meshCols+meshCols-1); addSkirtStrip(e); }
+    }
+
     mesh->subsets.back().indexCount = static_cast<uint32_t>(mesh->indices.size());
     mesh->CreateRenderData();
 

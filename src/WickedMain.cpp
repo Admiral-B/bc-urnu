@@ -53,6 +53,28 @@ static void weLogErr(const std::string& msg) {
 #define M_PI 3.14159265358979323846
 #endif
 
+// Pump Win32 messages to keep the window responsive during long operations
+static void pumpMessages() {
+    MSG msg = {};
+    while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+}
+
+// SEH wrapper: runs application.Run() with structured exception handling
+// Must be in a separate function since __try cannot coexist with C++ try/catch
+static DWORD g_lastSEHCode = 0;
+static bool runAppWithSEH(wi::Application& app) {
+    __try {
+        app.Run();
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        g_lastSEHCode = GetExceptionCode();
+        return false;
+    }
+    return true;
+}
+
 // Wicked Engine application instance (must be global for WndProc access)
 static wi::Application* g_weApp = nullptr;
 
@@ -451,37 +473,91 @@ static wi::ecs::Entity loadModelOrPlaceholder(wi::scene::Scene& scene,
 }
 
 // Create a WE mesh entity from a BuildingMesh (procedural geometry, no model file)
-// facadeTexturePath: if non-empty, applies this texture to the building material
+// Supports separate wall/roof materials via wallIndexCount split.
+// isStructure: if true, uses concrete material instead of facade textures.
 static wi::ecs::Entity createBuildingMeshEntity(wi::scene::Scene& scene,
                                                   const BuildingMesh& bm,
                                                   const std::string& name,
-                                                  const std::string& facadeTexturePath = "") {
+                                                  const std::string& wallTexturePath = "",
+                                                  const std::string& roofTexturePath = "",
+                                                  bool isStructure = false) {
     if (bm.empty()) return wi::ecs::INVALID_ENTITY;
 
     wi::ecs::Entity meshEntity = scene.Entity_CreateMesh(name + "_mesh");
     auto* mesh = scene.meshes.GetComponent(meshEntity);
     if (!mesh) return wi::ecs::INVALID_ENTITY;
 
-    // Material: building facade with optional texture
-    wi::ecs::Entity matEntity = scene.Entity_CreateMaterial(name + "_mat");
-    auto* material = scene.materials.GetComponent(matEntity);
-    if (material) {
-        material->baseColor = DirectX::XMFLOAT4(0.9f, 0.9f, 0.9f, 1.0f);
-        material->roughness = 0.75f;
-        material->metalness = 0.0f;
-        material->SetDoubleSided(true);
-        material->SetCastShadow(true);
-        if (!facadeTexturePath.empty()) {
-            material->textures[wi::scene::MaterialComponent::BASECOLORMAP].name = facadeTexturePath;
-        }
-        material->CreateRenderData();
-    }
+    uint32_t wallIdxCount = static_cast<uint32_t>(std::min(bm.wallIndexCount, bm.indices.size()));
+    uint32_t roofIdxCount = static_cast<uint32_t>(bm.indices.size()) - wallIdxCount;
 
-    mesh->subsets.push_back(wi::scene::MeshComponent::MeshSubset());
-    auto& subset = mesh->subsets.back();
-    subset.materialID = matEntity;
-    subset.indexOffset = 0;
-    subset.indexCount = static_cast<uint32_t>(bm.indices.size());
+    if (isStructure) {
+        // Harbour structures: concrete material (grey, rough, no texture)
+        wi::ecs::Entity matEntity = scene.Entity_CreateMaterial(name + "_concrete");
+        auto* material = scene.materials.GetComponent(matEntity);
+        if (material) {
+            material->baseColor = DirectX::XMFLOAT4(0.7f, 0.7f, 0.68f, 1.0f); // Warm grey concrete
+            material->roughness = 0.85f;
+            material->metalness = 0.0f;
+            material->SetDoubleSided(true);
+            material->SetCastShadow(true);
+            material->CreateRenderData();
+        }
+
+        mesh->subsets.push_back(wi::scene::MeshComponent::MeshSubset());
+        auto& subset = mesh->subsets.back();
+        subset.materialID = matEntity;
+        subset.indexOffset = 0;
+        subset.indexCount = static_cast<uint32_t>(bm.indices.size());
+    } else {
+        // Buildings: separate wall and roof materials
+        // Wall material
+        wi::ecs::Entity wallMatEntity = scene.Entity_CreateMaterial(name + "_wall");
+        auto* wallMat = scene.materials.GetComponent(wallMatEntity);
+        if (wallMat) {
+            wallMat->baseColor = DirectX::XMFLOAT4(0.9f, 0.9f, 0.9f, 1.0f);
+            wallMat->roughness = 0.75f;
+            wallMat->metalness = 0.0f;
+            wallMat->SetDoubleSided(true);
+            wallMat->SetCastShadow(true);
+            if (!wallTexturePath.empty()) {
+                wallMat->textures[wi::scene::MaterialComponent::BASECOLORMAP].name = wallTexturePath;
+            }
+            wallMat->CreateRenderData();
+        }
+
+        // Roof material (darker, rougher)
+        wi::ecs::Entity roofMatEntity = scene.Entity_CreateMaterial(name + "_roof");
+        auto* roofMat = scene.materials.GetComponent(roofMatEntity);
+        if (roofMat) {
+            roofMat->baseColor = DirectX::XMFLOAT4(0.6f, 0.6f, 0.6f, 1.0f);
+            roofMat->roughness = 0.85f;
+            roofMat->metalness = 0.0f;
+            roofMat->SetDoubleSided(true);
+            roofMat->SetCastShadow(true);
+            if (!roofTexturePath.empty()) {
+                roofMat->textures[wi::scene::MaterialComponent::BASECOLORMAP].name = roofTexturePath;
+            }
+            roofMat->CreateRenderData();
+        }
+
+        // Wall subset
+        if (wallIdxCount > 0) {
+            mesh->subsets.push_back(wi::scene::MeshComponent::MeshSubset());
+            auto& wallSubset = mesh->subsets.back();
+            wallSubset.materialID = wallMatEntity;
+            wallSubset.indexOffset = 0;
+            wallSubset.indexCount = wallIdxCount;
+        }
+
+        // Roof subset
+        if (roofIdxCount > 0) {
+            mesh->subsets.push_back(wi::scene::MeshComponent::MeshSubset());
+            auto& roofSubset = mesh->subsets.back();
+            roofSubset.materialID = roofMatEntity;
+            roofSubset.indexOffset = wallIdxCount;
+            roofSubset.indexCount = roofIdxCount;
+        }
+    }
 
     size_t nv = bm.vertexCount();
     for (size_t i = 0; i < nv; i++) {
@@ -556,12 +632,15 @@ static std::string resolveModelPath(const std::string& basePath,
     return basePath;
 }
 
+static int g_frameCountForCrash = 0; // accessible from crash handler
+
 static LONG WINAPI weCrashHandler(EXCEPTION_POINTERS* ep) {
     if (g_weLog.is_open()) {
         DWORD code = ep->ExceptionRecord->ExceptionCode;
         void* addr = ep->ExceptionRecord->ExceptionAddress;
         g_weLog << "CRASH: exception 0x" << std::hex << code
-                << " at address 0x" << addr << std::dec << std::endl;
+                << " at address 0x" << addr << std::dec
+                << " (frame " << g_frameCountForCrash << ")" << std::endl;
         if (code == EXCEPTION_ACCESS_VIOLATION && ep->ExceptionRecord->NumberParameters >= 2) {
             ULONG_PTR rw = ep->ExceptionRecord->ExceptionInformation[0];
             ULONG_PTR target = ep->ExceptionRecord->ExceptionInformation[1];
@@ -573,8 +652,16 @@ static LONG WINAPI weCrashHandler(EXCEPTION_POINTERS* ep) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
+// SEH wrapper for full frame body (SimBridge::update, camera, Run, etc.)
+// Must be separate from C++ try/catch
+static DWORD g_frameSEHCode = 0;
+static void* g_frameSEHAddr = nullptr;
+
 int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioData,
                     int width, int height, bool fullscreen) {
+    // Install global crash handler FIRST (before any WE code runs)
+    SetUnhandledExceptionFilter(weCrashHandler);
+
     // Open crash diagnostic log
     g_weLog.open("wicked_engine.log", std::ios::out | std::ios::trunc);
 
@@ -632,7 +719,12 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
         return EXIT_FAILURE;
     }
     weLog("  Win32 window created.");
-    ShowWindow(hWnd, SW_SHOWDEFAULT);
+    ShowWindow(hWnd, SW_SHOW);
+    // Force window to front even if process lost foreground status
+    // (topmost-then-notopmost trick works on Windows 10/11)
+    SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+    SetWindowPos(hWnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+    SetForegroundWindow(hWnd);
     UpdateWindow(hWnd);
 
     // --- Initialize Wicked Engine ---
@@ -767,6 +859,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     try { // Wrap scene setup in try-catch to diagnose crashes
 
     // ===== SUN / LIGHTING =====
+    pumpMessages(); // Keep window responsive during setup
     weLog("  Setting up sun/lighting...");
     wi::ecs::Entity sunEntity = scene.Entity_CreateLight("Sun");
     wi::scene::LightComponent* sunLight = scene.lights.GetComponent(sunEntity);
@@ -879,12 +972,35 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 weLog("    usesRGB=" + std::to_string(config.usesRGB ? 1 : 0) +
                       " maxHeight=" + std::to_string(config.maxHeight) +
                       " seaMaxDepth=" + std::to_string(config.seaMaxDepth));
-                // Sample terrain heights at grid corners and center
+                // Sample terrain heights -- comprehensive scan to verify heightmap loaded correctly
                 float midX = coords.terrainXWidth / 2.0f;
                 float midZ = coords.terrainZWidth / 2.0f;
                 weLog("    heightAt(0,0)=" + std::to_string(terrainNode->getHeightAt(0, 0)) +
                       " heightAt(mid,mid)=" + std::to_string(terrainNode->getHeightAt(midX, midZ)) +
                       " heightAt(max,max)=" + std::to_string(terrainNode->getHeightAt(coords.terrainXWidth, coords.terrainZWidth)));
+
+                // Scan full heightmap for min/max/land statistics
+                {
+                    float hMin = 1e9f, hMax = -1e9f;
+                    int landPixels = 0, seaPixels = 0, totalPixels = 0;
+                    float step = coords.terrainXWidth / 50.0f; // ~50x50 sample grid
+                    float stepZ = coords.terrainZWidth / 50.0f;
+                    for (float sz = 0; sz <= coords.terrainZWidth; sz += stepZ) {
+                        for (float sx = 0; sx <= coords.terrainXWidth; sx += step) {
+                            float h = terrainNode->getHeightAt(sx, sz);
+                            if (h < hMin) hMin = h;
+                            if (h > hMax) hMax = h;
+                            if (h > 0.0f) landPixels++;
+                            else seaPixels++;
+                            totalPixels++;
+                        }
+                    }
+                    weLog("    heightmap stats: min=" + std::to_string(hMin) +
+                          " max=" + std::to_string(hMax) +
+                          " land=" + std::to_string(landPixels) +
+                          " sea=" + std::to_string(seaPixels) +
+                          " of " + std::to_string(totalPixels) + " samples");
+                }
             } else {
                 weLogErr("Failed to load terrain heightmap");
                 terrainNode.reset();
@@ -895,6 +1011,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     }
 
     // ===== OWN SHIP =====
+    pumpMessages();
     weLog("  Setting up own ship...");
     if (!scenarioData.ownShipData.ownShipName.empty()) {
         std::string shipName = scenarioData.ownShipData.ownShipName;
@@ -946,6 +1063,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     }
 
     // ===== OTHER SHIPS =====
+    pumpMessages();
     weLog("  Setting up " + std::to_string(scenarioData.otherShipsData.size()) + " other ships...");
     otherShipStates.resize(scenarioData.otherShipsData.size());
     for (size_t s = 0; s < scenarioData.otherShipsData.size(); s++) {
@@ -1042,6 +1160,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     }
 
     // ===== BUOYS =====
+    pumpMessages();
     weLog("  Setting up buoys...");
     std::string buoyIniFile = worldPath + "buoy.ini";
     if (Utilities::pathExists(buoyIniFile)) {
@@ -1078,6 +1197,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     }
 
     // ===== LAND OBJECTS =====
+    pumpMessages();
     weLog("  Setting up land objects...");
     std::string landObjIniFile = worldPath + "landobject.ini";
     if (Utilities::pathExists(landObjIniFile)) {
@@ -1121,6 +1241,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     }
 
     // ===== OSM BUILDINGS (procedural or pre-baked) =====
+    pumpMessages();
     bool hasPrebaked = false;
     {
         std::string prebakePath = worldPath + "buildings.obj";
@@ -1223,25 +1344,32 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
 
             float terrainPosY = (terrainNode) ? terrainNode->getPosition().y : 0.0f;
 
-            // Check for facade texture in world directory
-            std::string facadeTexPath;
+            // Check for wall and roof textures in world directory
+            std::string wallTexPath, roofTexPath;
             {
                 std::string candidate = worldPath + "building_wall.png";
                 std::ifstream test(candidate);
-                if (test.good()) facadeTexPath = candidate;
+                if (test.good()) wallTexPath = candidate;
                 else {
-                    // Fall back to old name for compatibility
                     candidate = worldPath + "building_facade.png";
                     std::ifstream test2(candidate);
-                    if (test2.good()) facadeTexPath = candidate;
+                    if (test2.good()) wallTexPath = candidate;
                 }
             }
+            {
+                std::string candidate = worldPath + "building_roof.png";
+                std::ifstream test(candidate);
+                if (test.good()) roofTexPath = candidate;
+            }
+            if (!wallTexPath.empty()) weLog("  Wall texture: " + wallTexPath);
+            if (!roofTexPath.empty()) weLog("  Roof texture: " + roofTexPath);
 
-            BuildingMesh batch;
-            int totalBuildings = 0, skippedWater = 0, tileIdx = 0;
+            BuildingMesh buildingBatch, structureBatch;
+            int totalBuildings = 0, totalStructures = 0, skippedWater = 0;
+            int bldgTileIdx = 0, structTileIdx = 0;
             size_t totalVerts = 0;
 
-            for (size_t si = 0; si < scored.size() && totalBuildings < (int)MAX_BUILDINGS; si++) {
+            for (size_t si = 0; si < scored.size() && (totalBuildings + totalStructures) < (int)MAX_BUILDINGS; si++) {
                 const auto& fp = *scored[si].fp;
 
                 // Compute centroid for terrain height
@@ -1259,44 +1387,65 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                     groundY = terrainNode->getHeightAt(cx, cz) + terrainPosY;
                 }
 
-                if (groundY < -0.5f) { skippedWater++; continue; }
+                if (groundY < -0.5f && !fp.isStructure) { skippedWater++; continue; }
                 if (groundY < 0.0f) groundY = 0.0f;
 
                 BuildingMesh single = BuildingGenerator::generate(fp, coordFunc, groundY);
                 if (single.empty()) continue;
 
-                batch.append(single);
-                totalBuildings++;
                 totalVerts += single.vertexCount();
 
-                // Flush tile when it gets large enough
-                if (batch.vertexCount() >= VERTS_PER_TILE || totalVerts >= MAX_VERTICES) {
-                    wi::ecs::Entity e = createBuildingMeshEntity(
-                        scene, batch, "OSM_Buildings_" + std::to_string(tileIdx),
-                        facadeTexPath);
-                    if (e != wi::ecs::INVALID_ENTITY) {
-                        setEntityTransform(scene, e, 0, 0, 0);
+                if (fp.isStructure) {
+                    structureBatch.append(single);
+                    totalStructures++;
+                    if (structureBatch.vertexCount() >= VERTS_PER_TILE) {
+                        wi::ecs::Entity e = createBuildingMeshEntity(
+                            scene, structureBatch, "OSM_Structures_" + std::to_string(structTileIdx),
+                            "", "", true);
+                        if (e != wi::ecs::INVALID_ENTITY)
+                            setEntityTransform(scene, e, 0, 0, 0);
+                        structureBatch = BuildingMesh();
+                        structTileIdx++;
                     }
-                    batch = BuildingMesh(); // reset
-                    tileIdx++;
-                    if (totalVerts >= MAX_VERTICES) break;
+                } else {
+                    buildingBatch.append(single);
+                    totalBuildings++;
+                    if (buildingBatch.vertexCount() >= VERTS_PER_TILE || totalVerts >= MAX_VERTICES) {
+                        wi::ecs::Entity e = createBuildingMeshEntity(
+                            scene, buildingBatch, "OSM_Buildings_" + std::to_string(bldgTileIdx),
+                            wallTexPath, roofTexPath, false);
+                        if (e != wi::ecs::INVALID_ENTITY)
+                            setEntityTransform(scene, e, 0, 0, 0);
+                        buildingBatch = BuildingMesh();
+                        bldgTileIdx++;
+                        if (totalVerts >= MAX_VERTICES) break;
+                    }
                 }
             }
 
-            // Flush remaining
-            if (!batch.empty()) {
+            // Flush remaining building batch
+            if (!buildingBatch.empty()) {
                 wi::ecs::Entity e = createBuildingMeshEntity(
-                    scene, batch, "OSM_Buildings_" + std::to_string(tileIdx),
-                    facadeTexPath);
-                if (e != wi::ecs::INVALID_ENTITY) {
+                    scene, buildingBatch, "OSM_Buildings_" + std::to_string(bldgTileIdx),
+                    wallTexPath, roofTexPath, false);
+                if (e != wi::ecs::INVALID_ENTITY)
                     setEntityTransform(scene, e, 0, 0, 0);
-                }
-                tileIdx++;
+                bldgTileIdx++;
+            }
+            // Flush remaining structure batch
+            if (!structureBatch.empty()) {
+                wi::ecs::Entity e = createBuildingMeshEntity(
+                    scene, structureBatch, "OSM_Structures_" + std::to_string(structTileIdx),
+                    "", "", true);
+                if (e != wi::ecs::INVALID_ENTITY)
+                    setEntityTransform(scene, e, 0, 0, 0);
+                structTileIdx++;
             }
 
-            weLog("  Created " + std::to_string(totalBuildings) + "/" +
-                  std::to_string(allFootprints.size()) + " buildings in " +
-                  std::to_string(tileIdx) + " tiles (" +
+            int totalTiles = bldgTileIdx + structTileIdx;
+            weLog("  Created " + std::to_string(totalBuildings) + " buildings + " +
+                  std::to_string(totalStructures) + " structures in " +
+                  std::to_string(totalTiles) + " tiles (" +
                   std::to_string(totalVerts) + " verts)");
             if (skippedWater > 0)
                 weLog("  Skipped " + std::to_string(skippedWater) + " buildings in water");
@@ -1356,6 +1505,12 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     weLog("  SimulationBridge ready (initial engine: " +
           std::to_string(ownShipPortEngine) + "/" + std::to_string(ownShipStbdEngine) + ")");
 
+    // Re-focus window after long scene setup (may have lost foreground during loading)
+    SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+    SetWindowPos(hWnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+    SetForegroundWindow(hWnd);
+    pumpMessages();
+
     weLog("Entering Wicked Engine render loop...");
     weLog("  Controls: Mouse-drag=look, WASD=move, O=orbit/bridge, Scroll=zoom(orbit)/FOV(bridge), ESC=quit");
 
@@ -1377,6 +1532,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     SimBridge::syncTimer();
 
     MSG msg = {};
+    int frameCount = 0;
     while (msg.message != WM_QUIT) {
         if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
             TranslateMessage(&msg);
@@ -1389,6 +1545,17 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             dt = std::min(dt, 0.1f); // clamp to prevent huge jumps
             lastFrameTime = now;
             totalSimTime += dt;
+
+            // Log first few frames to diagnose crash timing
+            frameCount++;
+            g_frameCountForCrash = frameCount;
+            if (frameCount <= 5) {
+                weLog("  Frame " + std::to_string(frameCount) +
+                      " dt=" + std::to_string(dt) +
+                      " cam=(" + std::to_string(camPosX) + "," +
+                      std::to_string(camPosY) + "," + std::to_string(camPosZ) + ")" +
+                      " active=" + std::to_string(application.is_window_active));
+            }
 
             // ESC = quit
             if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) {
@@ -1430,7 +1597,15 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             SimBridge::setBowThruster(ownShipBowThruster);
 
             // Advance physics, AI, buoys, tide, wind, etc.
-            SimBridge::update();
+            if (frameCount <= 3) weLog("  Frame " + std::to_string(frameCount) + " pre-SimBridge::update()");
+            try {
+                SimBridge::update();
+            } catch (const std::exception& e) {
+                weLogErr("SimBridge::update() exception: " + std::string(e.what()));
+            } catch (...) {
+                weLogErr("SimBridge::update() unknown exception");
+            }
+            if (frameCount <= 3) weLog("  Frame " + std::to_string(frameCount) + " post-SimBridge::update()");
 
 #ifdef _DEBUG
             // Periodic diagnostic log (every ~3 seconds) -- debug builds only
@@ -1466,10 +1641,19 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             // actual rudder angle (used for HUD display only).
             beaufortScale = SimBridge::getWeather();
 
+            // Guard against NaN/inf from SimulationModel (propagates to GPU and crashes DX12)
+            if (std::isnan(ownShipX) || std::isinf(ownShipX)) { weLogErr("NaN/inf ownShipX"); ownShipX = 0; }
+            if (std::isnan(ownShipZ) || std::isinf(ownShipZ)) { weLogErr("NaN/inf ownShipZ"); ownShipZ = 0; }
+            if (std::isnan(ownShipHeading) || std::isinf(ownShipHeading)) { weLogErr("NaN/inf heading"); ownShipHeading = 0; }
+
             float headRad = ownShipHeading * (float)M_PI / 180.0f;
             float ownShipY = SimBridge::getPosY();
             float rawPitch = SimBridge::getPitch();
             float rawRoll = SimBridge::getRoll();
+
+            if (std::isnan(ownShipY) || std::isinf(ownShipY)) { weLogErr("NaN/inf ownShipY"); ownShipY = 0; }
+            if (std::isnan(rawPitch) || std::isinf(rawPitch)) { rawPitch = 0; }
+            if (std::isnan(rawRoll) || std::isinf(rawRoll)) { rawRoll = 0; }
 
             // Clamp pitch/roll to reasonable values for visual comfort
             // (large vessels shouldn't pitch/roll more than ~5 degrees in normal seas)
@@ -1493,6 +1677,8 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 float dynamicY = ownShipY - ownShipHeightCorr; // tide + wave only
                 camPosY = ownShipHeightCorr + dynamicY * camYAttenuation + viewLocalY * ownShipScaleFactor;
                 camPosZ = ownShipZ - vxScaled * std::sin(headRad) + vzScaled * std::cos(headRad);
+                // Clamp camera above water surface to prevent underwater rendering issues
+                camPosY = std::max(camPosY, 2.0f);
             }
 
             // ===== OTHER SHIP POSITIONS (from SimulationModel AI) =====
@@ -1704,12 +1890,24 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             camera.zFarP = 50000.0f;
             camera.fov = fovRad;
 
+            // Guard camera values against NaN/inf
+            if (std::isnan(camX) || std::isinf(camX) || std::isnan(camY) || std::isinf(camY) ||
+                std::isnan(camZ) || std::isinf(camZ)) {
+                weLogErr("NaN/inf camera position, resetting to origin");
+                camX = 0; camY = 50; camZ = 0;
+                lookX = 0; lookY = 50; lookZ = 100;
+            }
+
+            if (frameCount <= 3) weLog("  Frame " + std::to_string(frameCount) + " pre-camera cam=(" +
+                std::to_string(camX) + "," + std::to_string(camY) + "," + std::to_string(camZ) + ") look=(" +
+                std::to_string(lookX) + "," + std::to_string(lookY) + "," + std::to_string(lookZ) + ")");
             DirectX::XMVECTOR vEye = DirectX::XMVectorSet(camX, camY, camZ, 1.0f);
             DirectX::XMVECTOR vAt = DirectX::XMVectorSet(lookX, lookY, lookZ, 1.0f);
             DirectX::XMVECTOR vUp = DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
             DirectX::XMMATRIX viewMat = DirectX::XMMatrixLookAtLH(vEye, vAt, vUp);
             DirectX::XMMATRIX invView = DirectX::XMMatrixInverse(nullptr, viewMat);
             camera.TransformCamera(invView);
+            if (frameCount <= 3) weLog("  Frame " + std::to_string(frameCount) + " post-camera");
 
             // ===== IMGUI HUD =====
             {
@@ -1775,7 +1973,36 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 SetWindowTextA(hWnd, buf);
             }
 
-            application.Run();
+            if (frameCount <= 5)
+                weLog("  Frame " + std::to_string(frameCount) + " pre-Run()");
+
+            if (!runAppWithSEH(application)) {
+                char crashBuf[256];
+                snprintf(crashBuf, sizeof(crashBuf),
+                    "CRASH in application.Run(): SEH exception 0x%08lX (frame=%d, cam Y=%.1f, ship Y=%.1f)",
+                    g_lastSEHCode, frameCount, camPosY, ownShipY);
+                weLogErr(crashBuf);
+                PostQuitMessage(1);
+            }
+
+            if (frameCount <= 5)
+                weLog("  Frame " + std::to_string(frameCount) + " post-Run() OK");
+
+            // Heartbeat log every 100 frames to pinpoint crash timing
+            if (frameCount % 100 == 0) {
+                weLog("  [HEARTBEAT] frame=" + std::to_string(frameCount) +
+                      " t=" + std::to_string(totalSimTime) + "s" +
+                      " dt=" + std::to_string(dt) +
+                      " ship=(" + std::to_string(ownShipX) + "," +
+                      std::to_string(ownShipY) + "," + std::to_string(ownShipZ) + ")" +
+                      " hdg=" + std::to_string(ownShipHeading) +
+                      " spd=" + std::to_string(ownShipSpeed));
+            }
+
+            // Flush log every 500 frames to ensure we capture data before a crash
+            if (frameCount % 500 == 0 && g_weLog.is_open()) {
+                g_weLog.flush();
+            }
         }
     }
 

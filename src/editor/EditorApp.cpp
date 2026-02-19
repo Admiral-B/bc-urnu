@@ -2651,86 +2651,9 @@ void EditorApp::generateWorldFromArea() {
                         buildCount++;
                         if (batch.vertexCount() >= MAX_VERTICES) break;
                     }
-                    // Generate 3D wall meshes from dams and breakwaters
-                    // Built into a separate mesh so append() correctly puts all
-                    // barrier indices into the wall material group (not roof).
-                    if (!osmBarriers.empty()) {
-                        BuildingMesh barrierMesh;
-                        double midLat2 = minLat + latExtent / 2.0;
-                        double cosLat2 = std::cos(midLat2 * 3.14159265358979323846 / 180.0);
-                        double mPerDegLon = 2.0 * 3.14159265358979323846 * 6371000.0 * cosLat2 / 360.0;
-                        double mPerDegLat = 2.0 * 3.14159265358979323846 * 6371000.0 / 360.0;
-
-                        for (const auto& barrier : osmBarriers) {
-                            for (size_t bi = 1; bi < barrier.size(); bi++) {
-                                float x0 = static_cast<float>((barrier[bi-1].second - minLon) * mPerDegLon);
-                                float z0 = static_cast<float>((barrier[bi-1].first - minLat) * mPerDegLat);
-                                float x1 = static_cast<float>((barrier[bi].second - minLon) * mPerDegLon);
-                                float z1 = static_cast<float>((barrier[bi].first - minLat) * mPerDegLat);
-
-                                float wallTop = 3.0f, wallBot = -2.0f;
-                                float edx = x1 - x0, edz = z1 - z0;
-                                float edLen = std::sqrt(edx * edx + edz * edz);
-                                if (edLen < 0.1f) continue;
-                                float nx = edz / edLen, nz = -edx / edLen;
-                                float hw = 2.5f;
-                                float uvScale = 1.0f / 3.0f;
-                                float uLen = edLen * uvScale;
-                                float vH = (wallTop - wallBot) * uvScale;
-
-                                auto addQuad = [&](float ax, float ay, float az,
-                                                   float bx, float by, float bz,
-                                                   float cx, float cy, float cz,
-                                                   float dx, float dy, float dz,
-                                                   float fnx, float fny, float fnz,
-                                                   float u0, float v0, float u1, float v1) {
-                                    uint32_t base = static_cast<uint32_t>(barrierMesh.vertexCount());
-                                    barrierMesh.positions.insert(barrierMesh.positions.end(), {ax,ay,az});
-                                    barrierMesh.normals.insert(barrierMesh.normals.end(), {fnx,fny,fnz});
-                                    barrierMesh.uvs.insert(barrierMesh.uvs.end(), {u0, v0});
-                                    barrierMesh.positions.insert(barrierMesh.positions.end(), {bx,by,bz});
-                                    barrierMesh.normals.insert(barrierMesh.normals.end(), {fnx,fny,fnz});
-                                    barrierMesh.uvs.insert(barrierMesh.uvs.end(), {u1, v0});
-                                    barrierMesh.positions.insert(barrierMesh.positions.end(), {cx,cy,cz});
-                                    barrierMesh.normals.insert(barrierMesh.normals.end(), {fnx,fny,fnz});
-                                    barrierMesh.uvs.insert(barrierMesh.uvs.end(), {u1, v1});
-                                    barrierMesh.positions.insert(barrierMesh.positions.end(), {dx,dy,dz});
-                                    barrierMesh.normals.insert(barrierMesh.normals.end(), {fnx,fny,fnz});
-                                    barrierMesh.uvs.insert(barrierMesh.uvs.end(), {u0, v1});
-                                    barrierMesh.indices.insert(barrierMesh.indices.end(),
-                                        {base, base+1, base+2, base, base+2, base+3});
-                                };
-                                // Front face
-                                addQuad(x0+nx*hw, wallBot, z0+nz*hw,
-                                        x1+nx*hw, wallBot, z1+nz*hw,
-                                        x1+nx*hw, wallTop, z1+nz*hw,
-                                        x0+nx*hw, wallTop, z0+nz*hw,
-                                        nx, 0, nz, 0, 0, uLen, vH);
-                                // Back face
-                                addQuad(x1-nx*hw, wallBot, z1-nz*hw,
-                                        x0-nx*hw, wallBot, z0-nz*hw,
-                                        x0-nx*hw, wallTop, z0-nz*hw,
-                                        x1-nx*hw, wallTop, z1-nz*hw,
-                                        -nx, 0, -nz, 0, 0, uLen, vH);
-                                // Top face
-                                addQuad(x0-nx*hw, wallTop, z0-nz*hw,
-                                        x1-nx*hw, wallTop, z1-nz*hw,
-                                        x1+nx*hw, wallTop, z1+nz*hw,
-                                        x0+nx*hw, wallTop, z0+nz*hw,
-                                        0, 1, 0, 0, 0, uLen, vH);
-                                // Bottom face
-                                addQuad(x0+nx*hw, wallBot, z0+nz*hw,
-                                        x1+nx*hw, wallBot, z1+nz*hw,
-                                        x1-nx*hw, wallBot, z1-nz*hw,
-                                        x0-nx*hw, wallBot, z0-nz*hw,
-                                        0, -1, 0, 0, 0, uLen, vH);
-                            }
-                        }
-                        // All barrier geometry is "wall" material
-                        barrierMesh.wallIndexCount = barrierMesh.indices.size();
-                        if (!barrierMesh.empty())
-                            batch.append(barrierMesh);
-                    }
+                    // Note: breakwater/dam barriers are used for heightmap flood fill only.
+                    // 3D harbour structures (piers, jetties, dams) come from OSMBuildingReader
+                    // via the isStructure flag and are handled by the runtime building path.
 
                     if (!batch.empty()) {
                         std::ofstream f(outputDir + "/buildings.obj");
