@@ -202,6 +202,8 @@ bool OSMBuildingReader::query(double minLat, double maxLat,
                                double minLon, double maxLon,
                                ProgressCallback progress) {
     buildings.clear();
+    barrierLines.clear();
+    islandPolygons.clear();
     queryDone = false;
     errorMsg.clear();
 
@@ -218,19 +220,33 @@ bool OSMBuildingReader::query(double minLat, double maxLat,
        << "way[\"man_made\"~\"pier|jetty|groyne\"]("
        << minLat << "," << minLon << "," << maxLat << "," << maxLon
        << ");"
-       << "way[\"man_made\"=\"breakwater\"][\"name\"]("
+       << "way[\"man_made\"=\"breakwater\"]("
        << minLat << "," << minLon << "," << maxLat << "," << maxLon
        << ");"
        << "way[\"waterway\"=\"dam\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "way[\"waterway\"=\"weir\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "way[\"place\"~\"island|islet\"]("
        << minLat << "," << minLon << "," << maxLat << "," << maxLon
        << "););"
        << "out geom;";
 
     std::string postBody = "data=" + ql.str();
 
-    if (progress) progress("Querying Overpass API for buildings and structures...");
+    const char* overpassServers[] = {
+        OVERPASS_URL,
+        "https://overpass.kumi.systems/api/interpreter"
+    };
 
-    auto response = httpPost(OVERPASS_URL, postBody, USER_AGENT);
+    std::vector<uint8_t> response;
+    for (int attempt = 0; attempt < 2 && response.empty(); attempt++) {
+        if (attempt > 0 && progress) progress("Retrying with fallback Overpass server...");
+        else if (progress) progress("Querying Overpass API for buildings and structures...");
+        response = httpPost(overpassServers[attempt], postBody, USER_AGENT);
+    }
     if (response.empty()) {
         errorMsg = "Overpass API returned empty response";
         return false;
@@ -306,6 +322,15 @@ bool OSMBuildingReader::parseResponse(const std::string& jsonStr) {
         if (elem.contains("tags") && elem["tags"].is_object()) {
             const auto& tags = elem["tags"];
 
+            // Island/islet polygons: store outline and skip building processing
+            if (tags.contains("place")) {
+                std::string place = tags["place"].get<std::string>();
+                if ((place == "island" || place == "islet") && fp.outline.size() >= 3) {
+                    islandPolygons.push_back(fp.outline);
+                    continue; // not a building
+                }
+            }
+
             if (tags.contains("building"))
                 buildingType = tags["building"].get<std::string>();
 
@@ -320,7 +345,7 @@ bool OSMBuildingReader::parseResponse(const std::string& jsonStr) {
             }
             if (tags.contains("waterway")) {
                 std::string ww = tags["waterway"].get<std::string>();
-                if (ww == "dam") {
+                if (ww == "dam" || ww == "weir") {
                     isStructure = true;
                     structureType = "dam";
                 }
@@ -352,6 +377,12 @@ bool OSMBuildingReader::parseResponse(const std::string& jsonStr) {
         bool isClosed = (fp.outline.size() >= 3 &&
                          std::abs(fp.outline.front().first - fp.outline.back().first) < 1e-7 &&
                          std::abs(fp.outline.front().second - fp.outline.back().second) < 1e-7);
+
+        // Save original centerline for dams/breakwaters before polygon buffering
+        if (isStructure && (structureType == "dam" || structureType == "breakwater") &&
+            fp.outline.size() >= 2) {
+            barrierLines.push_back(fp.outline);
+        }
 
         if (!isClosed && fp.isStructure) {
             if (fp.outline.size() >= 2) {
@@ -409,6 +440,24 @@ bool OSMBuildingReader::saveCache(const std::string& path) const {
             f << lat << " " << lon << "\n";
         }
     }
+
+    // Barrier lines section (appended after buildings for backwards compatibility)
+    f << "BARRIERS " << barrierLines.size() << "\n";
+    for (const auto& line : barrierLines) {
+        f << line.size() << "\n";
+        for (const auto& [lat, lon] : line) {
+            f << lat << " " << lon << "\n";
+        }
+    }
+
+    // Island polygons section
+    f << "ISLANDS " << islandPolygons.size() << "\n";
+    for (const auto& poly : islandPolygons) {
+        f << poly.size() << "\n";
+        for (const auto& [lat, lon] : poly) {
+            f << lat << " " << lon << "\n";
+        }
+    }
     return true;
 }
 
@@ -417,6 +466,8 @@ bool OSMBuildingReader::loadCache(const std::string& path) {
     if (!f.is_open()) return false;
 
     buildings.clear();
+    barrierLines.clear();
+    islandPolygons.clear();
     queryDone = false;
 
     size_t count = 0;
@@ -445,6 +496,41 @@ bool OSMBuildingReader::loadCache(const std::string& path) {
                 return false;
         }
         buildings.push_back(std::move(fp));
+    }
+
+    // Try to read extended sections (may not exist in older cache files)
+    std::string marker;
+    size_t sectionCount = 0;
+    while (f >> marker >> sectionCount) {
+        if (marker == "BARRIERS") {
+            barrierLines.reserve(sectionCount);
+            for (size_t i = 0; i < sectionCount; i++) {
+                size_t npts = 0;
+                if (!(f >> npts)) break;
+                std::vector<std::pair<double, double>> line(npts);
+                for (size_t j = 0; j < npts; j++) {
+                    if (!(f >> line[j].first >> line[j].second)) break;
+                }
+                if (line.size() == npts) {
+                    barrierLines.push_back(std::move(line));
+                }
+            }
+        } else if (marker == "ISLANDS") {
+            islandPolygons.reserve(sectionCount);
+            for (size_t i = 0; i < sectionCount; i++) {
+                size_t npts = 0;
+                if (!(f >> npts)) break;
+                std::vector<std::pair<double, double>> poly(npts);
+                for (size_t j = 0; j < npts; j++) {
+                    if (!(f >> poly[j].first >> poly[j].second)) break;
+                }
+                if (poly.size() == npts) {
+                    islandPolygons.push_back(std::move(poly));
+                }
+            }
+        } else {
+            break; // unknown section
+        }
     }
 
     queryDone = true;

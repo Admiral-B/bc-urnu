@@ -28,15 +28,18 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 #include <filesystem>
 #include <fstream>
 #include <thread>
-#include <queue>
+#include <chrono>
 #include "../miniz/miniz.h"
 #include "SatelliteTexture.hpp"
+#include "TerrainTextureBlender.hpp"
 #include "OpenSeaMapSource.hpp"
 #include "OSMBuildingReader.hpp"
 #include "../BuildingGenerator.hpp"
 #include "CoastlineData.hpp"
+#include "OSMLandPolygons.hpp"
+#include "ElevationTile.hpp"
 #include "TileMath.hpp"
-#include "../libs/nlohmann/json.hpp"
+#include "../BarrierFloodFill.hpp"
 #include "../libs/stb/stb_image.h"
 
 #ifndef GL_CLAMP_TO_EDGE
@@ -2222,11 +2225,33 @@ void EditorApp::generateWorldFromArea() {
     generateStatus = wantOpenSeaMap ? "Querying OpenSeaMap..." : "Generating world...";
     std::string cacheDir = userDir + "tilecache";
 
-    // Resolve coastline data path (absolute) before thread starts
+    // Resolve data paths (absolute) before thread starts
     std::string coastlinePath;
+    std::string osmLandPath;
     {
         namespace fs = std::filesystem;
-        const char* candidates[] = {
+
+        // OSM land polygons shapefile (highest quality, replaces Natural Earth)
+        const char* osmLandCandidates[] = {
+            "Data/land_polygons/land_polygons.shp",
+            "bin/Data/land_polygons/land_polygons.shp",
+            "../bin/Data/land_polygons/land_polygons.shp",
+            "Data/land-polygons-split-4326/land_polygons.shp",
+            "bin/Data/land-polygons-split-4326/land_polygons.shp",
+            "../bin/Data/land-polygons-split-4326/land_polygons.shp",
+            "Data/land-polygons-complete-4326/land_polygons.shp",
+            "bin/Data/land-polygons-complete-4326/land_polygons.shp",
+            "../bin/Data/land-polygons-complete-4326/land_polygons.shp",
+        };
+        for (auto& p : osmLandCandidates) {
+            if (fs::exists(p)) {
+                osmLandPath = fs::absolute(p).string();
+                break;
+            }
+        }
+
+        // Natural Earth coastlines (fallback when OSM land polygons not available)
+        const char* neCandidates[] = {
             "Data/Coastlines/coastlines_10m.bin",
             "bin/Data/Coastlines/coastlines_10m.bin",
             "../bin/Data/Coastlines/coastlines_10m.bin",
@@ -2234,7 +2259,7 @@ void EditorApp::generateWorldFromArea() {
             "bin/Data/Coastlines/coastlines_50m.bin",
             "../bin/Data/Coastlines/coastlines_50m.bin",
         };
-        for (auto& p : candidates) {
+        for (auto& p : neCandidates) {
             if (fs::exists(p)) {
                 coastlinePath = fs::absolute(p).string();
                 break;
@@ -2244,7 +2269,7 @@ void EditorApp::generateWorldFromArea() {
 
     std::thread([this, minLat, maxLat, minLon, maxLon, resolution,
                  cacheDir, outputDir, wantSatellite, wantOpenSeaMap,
-                 coastlinePath]() {
+                 coastlinePath, osmLandPath]() {
         std::string resultMsg;
         int buoyCount = 0, lightCount = 0, landmarkCount = 0;
 
@@ -2304,210 +2329,235 @@ void EditorApp::generateWorldFromArea() {
             if (f3.is_open()) f3 << "Number=0\n";
         }
 
-        // Generate heightmap: Natural Earth base + OSM barrier enclosed-area detection.
+        // Query OSM for buildings AND barrier structures (dams, breakwaters) in one request.
+        // Barrier data is extracted from the same Overpass response and used for
+        // heightmap flood-fill, avoiding a separate (often rate-limited) query.
+        generateStatus = "Querying OSM for buildings and structures...";
+        OSMBuildingReader bldgReader;
+        bldgReader.query(minLat, maxLat, minLon, maxLon,
+                          [this](const std::string& msg) { generateStatus = msg; });
+        const auto& osmBarriers = bldgReader.getBarrierLines();
+        if (!osmBarriers.empty()) {
+            generateStatus = "Found " + std::to_string(osmBarriers.size()) + " barrier(s) from building query";
+        }
+
+        // Generate heightmap: land classification + real elevation + barrier detection.
         // Strategy:
-        //   1. Natural Earth per-pixel classification (reliable land/sea for most areas)
-        //   2. Query OSM for barriers (dams, breakwaters) - NOT coastlines
-        //   3. Rasterize barriers as boundary lines
-        //   4. Flood "open sea" from grid edges through NE-water pixels, blocked by barriers
-        //   5. NE-water pixels NOT reached by open-sea flood = enclosed by barriers = land
-        // This correctly handles Cardiff Bay (barrage blocks flood) while keeping
-        // Natural Earth's reliable land classification everywhere else.
+        //   1. Land/water classification from best available source
+        //   2. Download real elevation data (AWS Terrain Tiles)
+        //   3. Merge: land mask determines boundary, elevation provides heights
+        //   4. Barrier flood-fill to reclaim enclosed areas (dams, breakwaters)
         generateStatus = "Generating heightmap...";
         std::vector<float> heightGrid(resolution * resolution, -20.0f);
-        std::vector<std::vector<std::pair<double,double>>> osmBarriers;
+        float actualMaxHeight = 2.0f;
+        float actualMaxDepth = 20.0f;
         {
-            // Step 1: Natural Earth per-pixel classification
-            for (int py = 0; py < resolution; py++) {
-                double lat = maxLat - (maxLat - minLat) * py / (resolution - 1);
-                for (int px = 0; px < resolution; px++) {
-                    double lon = minLon + (maxLon - minLon) * px / (resolution - 1);
-                    if (hasCoastlines && coastlines.isLand(lon, lat)) {
-                        heightGrid[py * resolution + px] = 2.0f;
+            // Step 1: Land/water classification (binary mask)
+            std::vector<bool> landMask(resolution * resolution, false);
+            bool landClassified = false;
+
+            // Try OSM land polygons first (highest quality)
+            if (!osmLandPath.empty()) {
+                generateStatus = "Loading OSM land polygons...";
+                OSMLandPolygons osmLand;
+                if (osmLand.load(osmLandPath)) {
+                    generateStatus = "Rasterizing land polygons...";
+                    // Rasterize into heightGrid temporarily (sets land pixels to 2.0f)
+                    int landPixels = osmLand.rasterize(
+                        heightGrid.data(), resolution,
+                        minLon, maxLon, minLat, maxLat, 2.0f);
+                    // Extract land mask from rasterized result
+                    for (int i = 0; i < resolution * resolution; i++) {
+                        landMask[i] = (heightGrid[i] > 0.0f);
                     }
+                    landClassified = true;
+                    generateStatus = "Land classification: " +
+                        std::to_string(landPixels) + " land pixels (OSM land polygons)";
+                } else {
+                    generateStatus = "OSM land polygons failed to load, falling back to Natural Earth";
                 }
             }
 
-            // Step 2: Query OSM for barriers only (dams, breakwaters)
-            generateStatus = "Querying OSM for barriers (dams, breakwaters)...";
-            {
-                using njson = nlohmann::json;
-                std::ostringstream ql;
-                ql << std::fixed;
-                ql.precision(6);
-                ql << "[out:json][timeout:60];"
-                   << "(way[\"waterway\"=\"dam\"]("
-                   << minLat << "," << minLon << "," << maxLat << "," << maxLon
-                   << ");"
-                   << "way[\"man_made\"=\"breakwater\"]("
-                   << minLat << "," << minLon << "," << maxLat << "," << maxLon
-                   << "););"
-                   << "out geom;";
+            // Fallback: Natural Earth per-pixel classification
+            if (!landClassified && hasCoastlines) {
+                generateStatus = "Classifying land (Natural Earth)...";
+                for (int py = 0; py < resolution; py++) {
+                    double lat = maxLat - (maxLat - minLat) * py / (resolution - 1);
+                    for (int px = 0; px < resolution; px++) {
+                        double lon = minLon + (maxLon - minLon) * px / (resolution - 1);
+                        if (coastlines.isLand(lon, lat)) {
+                            landMask[py * resolution + px] = true;
+                            heightGrid[py * resolution + px] = 2.0f;
+                        }
+                    }
+                }
 
-                std::string postBody = "data=" + ql.str();
-                auto response = OSMBuildingReader::httpPost(
-                    "https://overpass-api.de/api/interpreter", postBody,
-                    "BridgeCommand/6.0 (world-generator)");
-
-                if (!response.empty()) {
-                    try {
-                        auto root = njson::parse(response.begin(), response.end());
-                        if (root.contains("elements") && root["elements"].is_array()) {
-                            for (const auto& elem : root["elements"]) {
-                                if (!elem.contains("geometry") || !elem["geometry"].is_array())
-                                    continue;
-                                std::vector<std::pair<double,double>> polyline;
-                                for (const auto& pt : elem["geometry"]) {
-                                    if (pt.contains("lat") && pt.contains("lon")) {
-                                        polyline.emplace_back(
-                                            pt["lat"].get<double>(),
-                                            pt["lon"].get<double>());
-                                    }
+                // Supplement NE with island polygons from Overpass
+                const auto& islands = bldgReader.getIslandPolygons();
+                if (!islands.empty()) {
+                    generateStatus = "Adding " + std::to_string(islands.size()) + " island(s) from OSM...";
+                    double lonRange = maxLon - minLon;
+                    double latRange = maxLat - minLat;
+                    for (const auto& poly : islands) {
+                        if (poly.size() < 3) continue;
+                        for (int py = 0; py < resolution; py++) {
+                            double lat = maxLat - latRange * py / (resolution - 1);
+                            std::vector<double> crossings;
+                            for (size_t i = 0, j = poly.size() - 1; i < poly.size(); j = i++) {
+                                double yi = poly[i].first, yj = poly[j].first;
+                                if ((yi > lat) != (yj > lat)) {
+                                    double xi = poly[i].second, xj = poly[j].second;
+                                    crossings.push_back(xj + (lat - yj) / (yi - yj) * (xi - xj));
                                 }
-                                if (polyline.size() >= 2)
-                                    osmBarriers.push_back(std::move(polyline));
+                            }
+                            std::sort(crossings.begin(), crossings.end());
+                            for (size_t c = 0; c + 1 < crossings.size(); c += 2) {
+                                int px0 = std::max(0, static_cast<int>((crossings[c] - minLon) / lonRange * (resolution - 1)));
+                                int px1 = std::min(resolution - 1, static_cast<int>((crossings[c + 1] - minLon) / lonRange * (resolution - 1)));
+                                for (int px = px0; px <= px1; px++) {
+                                    landMask[py * resolution + px] = true;
+                                    heightGrid[py * resolution + px] = 2.0f;
+                                }
                             }
                         }
-                    } catch (...) {}
+                    }
                 }
             }
 
-            // Step 3-5: If barriers found, reclaim enclosed water areas as land
-            if (!osmBarriers.empty()) {
-                generateStatus = "Detecting barrier-enclosed areas...";
+            // Step 2: Download real elevation data (AWS Terrain Tiles)
+            bool hasElevation = false;
+            {
+                generateStatus = "Downloading elevation tiles...";
+                int elevZoom = ElevationTile::suggestZoom(
+                    minLat, maxLat, minLon, maxLon, resolution);
 
-                auto lonToPixel = [&](double lon) -> int {
-                    return std::max(0, std::min(resolution - 1,
-                        (int)((lon - minLon) / (maxLon - minLon) * (resolution - 1))));
-                };
-                auto latToPixel = [&](double lat) -> int {
-                    return std::max(0, std::min(resolution - 1,
-                        (int)((maxLat - lat) / (maxLat - minLat) * (resolution - 1))));
+                auto elevProgress = [&](int ready, int total) -> bool {
+                    generateStatus = "Downloading elevation tiles... " +
+                        std::to_string(ready) + "/" + std::to_string(total);
+                    generateTilesReady = ready;
+                    generateTilesTotal = total;
+                    return true;
                 };
 
-                // Rasterize barrier ways as boundary pixels (Bresenham)
-                std::vector<bool> isBoundary(resolution * resolution, false);
-                auto rasterizeLine = [&](int x0, int y0, int x1, int y1) {
-                    int ddx = std::abs(x1 - x0), ddy = std::abs(y1 - y0);
-                    int sx = (x0 < x1) ? 1 : -1;
-                    int sy = (y0 < y1) ? 1 : -1;
-                    int err = ddx - ddy;
-                    while (true) {
-                        if (x0 >= 0 && x0 < resolution && y0 >= 0 && y0 < resolution)
-                            isBoundary[y0 * resolution + x0] = true;
-                        if (x0 == x1 && y0 == y1) break;
-                        int e2 = 2 * err;
-                        if (e2 > -ddy) { err -= ddy; x0 += sx; }
-                        if (e2 < ddx) { err += ddx; y0 += sy; }
+                auto elevData = ElevationTile::generate(
+                    minLat, maxLat, minLon, maxLon,
+                    elevZoom, resolution, cacheDir, elevProgress);
+
+                if (!elevData.empty()) {
+                    hasElevation = true;
+                    generateStatus = "Applying elevation data...";
+
+                    // Step 3: Merge elevation with land mask.
+                    // Land mask (from OSM polygons) determines the coastline boundary.
+                    // Elevation tiles provide the actual heights and depths.
+                    for (int i = 0; i < resolution * resolution; i++) {
+                        float elev = elevData[i];
+                        if (std::isnan(elev)) {
+                            // No elevation data -- keep classification defaults
+                            continue;
+                        }
+
+                        if (landMask[i]) {
+                            // Land: use real elevation, minimum 0.5m above sea level
+                            heightGrid[i] = std::max(0.5f, elev);
+                        } else {
+                            // Water: use real bathymetry, maximum -0.5m below sea level
+                            heightGrid[i] = std::min(-0.5f, elev);
+                        }
                     }
-                };
 
-                for (const auto& barrier : osmBarriers) {
-                    for (size_t i = 1; i < barrier.size(); i++) {
-                        rasterizeLine(
-                            lonToPixel(barrier[i-1].second), latToPixel(barrier[i-1].first),
-                            lonToPixel(barrier[i].second),   latToPixel(barrier[i].first));
+                    // Track actual height range for terrain.ini
+                    for (int i = 0; i < resolution * resolution; i++) {
+                        float h = heightGrid[i];
+                        if (h > 0.0f && h > actualMaxHeight) actualMaxHeight = h;
+                        if (h < 0.0f && -h > actualMaxDepth) actualMaxDepth = -h;
                     }
+
+                    // Light 2-pass 3x3 smoothing to reduce elevation tile
+                    // quantization noise (DEM pixels are ~75-150m, output is ~10m).
+                    // Preserves land/water boundary via mask re-clamping.
+                    generateStatus = "Smoothing elevation data...";
+                    {
+                        std::vector<float> temp(resolution * resolution);
+                        for (int pass = 0; pass < 2; pass++) {
+                            for (int py = 0; py < resolution; py++) {
+                                for (int px = 0; px < resolution; px++) {
+                                    float sum = 0;
+                                    int count = 0;
+                                    for (int dy = -1; dy <= 1; dy++) {
+                                        for (int dx = -1; dx <= 1; dx++) {
+                                            int ny = py + dy, nx = px + dx;
+                                            if (ny >= 0 && ny < resolution && nx >= 0 && nx < resolution) {
+                                                sum += heightGrid[ny * resolution + nx];
+                                                count++;
+                                            }
+                                        }
+                                    }
+                                    temp[py * resolution + px] = sum / count;
+                                }
+                            }
+                            heightGrid = temp;
+                        }
+                        // Re-clamp land/water boundary after smoothing
+                        for (int i = 0; i < resolution * resolution; i++) {
+                            if (landMask[i] && heightGrid[i] < 0.5f) heightGrid[i] = 0.5f;
+                            if (!landMask[i] && heightGrid[i] > -0.5f) heightGrid[i] = -0.5f;
+                        }
+                    }
+
+                    // Recompute height range after smoothing
+                    actualMaxHeight = 2.0f;
+                    actualMaxDepth = 20.0f;
+                    for (int i = 0; i < resolution * resolution; i++) {
+                        float h = heightGrid[i];
+                        if (h > 0.0f && h > actualMaxHeight) actualMaxHeight = h;
+                        if (h < 0.0f && -h > actualMaxDepth) actualMaxDepth = -h;
+                    }
+
+                    generateStatus = "Elevation applied (max height: " +
+                        std::to_string(static_cast<int>(actualMaxHeight)) + "m, max depth: " +
+                        std::to_string(static_cast<int>(actualMaxDepth)) + "m)";
+                } else {
+                    generateStatus = "Elevation download failed, using flat terrain with blur";
                 }
+            }
 
-                // Dilate boundary by 1 pixel to close diagonal gaps
-                {
-                    const int d4x[] = {-1, 1, 0, 0};
-                    const int d4y[] = {0, 0, -1, 1};
-                    std::vector<bool> dilated = isBoundary;
+            // Fallback: if no elevation data, apply blur to smooth the flat
+            // 2.0m/-20.0m boundary (the old approach).
+            if (!hasElevation) {
+                std::vector<float> temp(resolution * resolution);
+                for (int pass = 0; pass < 8; pass++) {
                     for (int py = 0; py < resolution; py++) {
                         for (int px = 0; px < resolution; px++) {
-                            if (isBoundary[py * resolution + px]) {
-                                for (int d = 0; d < 4; d++) {
-                                    int nx = px + d4x[d], ny = py + d4y[d];
-                                    if (nx >= 0 && nx < resolution && ny >= 0 && ny < resolution)
-                                        dilated[ny * resolution + nx] = true;
+                            float sum = 0;
+                            int count = 0;
+                            for (int dy = -2; dy <= 2; dy++) {
+                                for (int dx = -2; dx <= 2; dx++) {
+                                    int ny = py + dy, nx = px + dx;
+                                    if (ny >= 0 && ny < resolution && nx >= 0 && nx < resolution) {
+                                        sum += heightGrid[ny * resolution + nx];
+                                        count++;
+                                    }
                                 }
                             }
+                            temp[py * resolution + px] = sum / count;
                         }
                     }
-                    isBoundary = std::move(dilated);
+                    heightGrid = temp;
                 }
-
-                // Flood "open sea" from grid edges through water pixels, blocked by barriers.
-                // Water pixels NOT reached = enclosed by barriers = should be land.
-                std::vector<bool> openSea(resolution * resolution, false);
-                std::queue<int> fillQueue;
-
-                // Seed: edge pixels that are water and not on a barrier
-                for (int px = 0; px < resolution; px++) {
-                    for (int py : {0, resolution - 1}) {
-                        int idx = py * resolution + px;
-                        if (heightGrid[idx] < 0.0f && !isBoundary[idx]) {
-                            openSea[idx] = true;
-                            fillQueue.push(idx);
-                        }
-                    }
-                }
-                for (int py = 1; py < resolution - 1; py++) {
-                    for (int px : {0, resolution - 1}) {
-                        int idx = py * resolution + px;
-                        if (heightGrid[idx] < 0.0f && !isBoundary[idx]) {
-                            openSea[idx] = true;
-                            fillQueue.push(idx);
-                        }
-                    }
-                }
-
-                // BFS: flood through water pixels, blocked by barriers and land
-                const int d4x[] = {-1, 1, 0, 0};
-                const int d4y[] = {0, 0, -1, 1};
-                while (!fillQueue.empty()) {
-                    int idx = fillQueue.front();
-                    fillQueue.pop();
-                    int px = idx % resolution, py = idx / resolution;
-                    for (int d = 0; d < 4; d++) {
-                        int nx = px + d4x[d], ny = py + d4y[d];
-                        if (nx < 0 || nx >= resolution || ny < 0 || ny >= resolution) continue;
-                        int nidx = ny * resolution + nx;
-                        if (!openSea[nidx] && !isBoundary[nidx] && heightGrid[nidx] < 0.0f) {
-                            openSea[nidx] = true;
-                            fillQueue.push(nidx);
-                        }
-                    }
-                }
-
-                // Convert enclosed water (not reached by open-sea flood) to land
-                int reclaimedCount = 0;
+                // Clamp confirmed land pixels after blur
                 for (int i = 0; i < resolution * resolution; i++) {
-                    if (heightGrid[i] < 0.0f && !openSea[i]) {
-                        heightGrid[i] = 1.0f; // slightly lower than NE land (2.0f)
-                        reclaimedCount++;
-                    }
-                    // Also mark barrier pixels as land
-                    if (isBoundary[i] && heightGrid[i] < 0.0f) {
-                        heightGrid[i] = 2.0f;
+                    if (landMask[i] && heightGrid[i] < 1.0f) {
+                        heightGrid[i] = 1.0f;
                     }
                 }
             }
 
-            // Smooth the coastline transition with multi-pass box blur.
-            // Uses a 5x5 kernel for 8 passes to create a natural gradual slope
-            // from sea to shore, eliminating sawtooth/staircase artifacts.
-            std::vector<float> temp(resolution * resolution);
-            for (int pass = 0; pass < 8; pass++) {
-                for (int py = 0; py < resolution; py++) {
-                    for (int px = 0; px < resolution; px++) {
-                        float sum = 0;
-                        int count = 0;
-                        for (int dy = -2; dy <= 2; dy++) {
-                            for (int dx = -2; dx <= 2; dx++) {
-                                int ny = py + dy, nx = px + dx;
-                                if (ny >= 0 && ny < resolution && nx >= 0 && nx < resolution) {
-                                    sum += heightGrid[ny * resolution + nx];
-                                    count++;
-                                }
-                            }
-                        }
-                        temp[py * resolution + px] = sum / count;
-                    }
-                }
-                heightGrid = temp;
+            // Step 4: Barrier flood-fill to reclaim enclosed water areas.
+            if (!osmBarriers.empty()) {
+                generateStatus = "Detecting barrier-enclosed areas...";
+                BarrierFloodFill::Bounds bffBounds{minLon, maxLon, minLat, maxLat};
+                BarrierFloodFill::apply(heightGrid.data(), resolution, bffBounds, osmBarriers);
             }
 
             // Encode to RGB
@@ -2515,17 +2565,43 @@ void EditorApp::generateWorldFromArea() {
             for (int py = 0; py < resolution; py++) {
                 for (int px = 0; px < resolution; px++) {
                     float elevation = heightGrid[py * resolution + px];
-                    float encoded = elevation + 32768.0f;
+                    double encoded = static_cast<double>(elevation) + 32768.0;
+                    encoded = std::max(0.0, std::min(65535.996, encoded));
                     int intPart = static_cast<int>(encoded);
-                    intPart = std::max(0, std::min(65535, intPart));
+                    double frac = encoded - intPart;
 
                     int idx = (py * resolution + px) * 3;
                     heightRGB[idx + 0] = static_cast<uint8_t>(intPart / 256);
                     heightRGB[idx + 1] = static_cast<uint8_t>(intPart % 256);
-                    heightRGB[idx + 2] = 0;
+                    heightRGB[idx + 2] = static_cast<uint8_t>(frac * 256.0);
                 }
             }
             SatelliteTexture::writePNG(outputDir + "/height.png", heightRGB, resolution, resolution);
+        }
+
+        // Rewrite terrain.ini with actual max height/depth from elevation data.
+        // The initial write (before the thread) uses hardcoded values.
+        {
+            std::ofstream f(outputDir + "/terrain.ini");
+            if (f.is_open()) {
+                f << std::fixed;
+                f.precision(14);
+                f << "Number=1\n";
+                f << "MapImage=map.png\n";
+                f << "HeightMap(1)=height.png\n";
+                f << "Texture(1)=texture.png\n";
+                f << "TerrainLong(1)=" << minLon << "\n";
+                f << "TerrainLat(1)=" << minLat << "\n";
+                f << "TerrainLongExtent(1)=" << (maxLon - minLon) << "\n";
+                f << "TerrainLatExtent(1)=" << (maxLat - minLat) << "\n";
+                f << "TerrainHeightMapRows(1)=" << resolution << "\n";
+                f << "TerrainHeightMapColumns(1)=" << resolution << "\n";
+                f.precision(5);
+                // Add 10% margin to avoid clipping peaks/troughs
+                f << "TerrainMaxHeight(1)=" << (actualMaxHeight * 1.1f) << "\n";
+                f << "SeaMaxDepth(1)=" << (actualMaxDepth * 1.1f) << "\n";
+                f << "UsesRGB(1)=1\n";
+            }
         }
 
         // Post-process buoy.ini: raise buoys near barrier structures so they sit
@@ -2589,12 +2665,9 @@ void EditorApp::generateWorldFromArea() {
             }
         }
 
-        // Query OSM for building footprints and generate building mesh
+        // Generate building mesh from already-queried building data
         {
-            generateStatus = "Querying OSM for buildings...";
-            OSMBuildingReader bldgReader;
-            if (bldgReader.query(minLat, maxLat, minLon, maxLon,
-                                  [this](const std::string& msg) { generateStatus = msg; })) {
+            if (bldgReader.hasData()) {
                 const auto& footprints = bldgReader.getBuildings();
                 if (!footprints.empty()) {
                     double lonExtent = maxLon - minLon;
@@ -2608,6 +2681,40 @@ void EditorApp::generateWorldFromArea() {
                         float x = (lonExtent > 0) ? static_cast<float>(((lon - minLon) * xWidth) / lonExtent) : 0.0f;
                         float z = (latExtent > 0) ? static_cast<float>(((lat - minLat) * zWidth) / latExtent) : 0.0f;
                         return {x, z};
+                    };
+
+                    // Build a terrain-matching height sampler.  The WickedEngine terrain
+                    // mesh flips the image (row 0 = south) and bilinearly interpolates
+                    // between vertices.  We must use the same interpolation so building
+                    // base heights match the visual terrain surface exactly.
+                    // heightGrid is row-major, row 0 = north (image top).
+                    // The terrain mesh maps: meshRow 0 → image bottom (south), last → top (north).
+                    auto sampleTerrainHeight = [&](double lat, double lon) -> float {
+                        float gx = (lonExtent > 0) ? static_cast<float>((lon - minLon) / lonExtent) : 0.5f;
+                        float gz = (latExtent > 0) ? static_cast<float>((lat - minLat) / latExtent) : 0.5f;
+                        // Terrain mesh row 0 = south (gz=0), row N-1 = north (gz=1)
+                        // heightGrid row 0 = north, row N-1 = south
+                        // So meshRow r maps to heightGrid row (resolution-1-r)
+                        // We compute in terrain-mesh space then sample heightGrid
+                        float gridX = gx * (resolution - 1);
+                        float gridZ = gz * (resolution - 1); // 0=south, N-1=north in mesh space
+                        gridX = std::max(0.0f, std::min(gridX, (float)(resolution - 2)));
+                        gridZ = std::max(0.0f, std::min(gridZ, (float)(resolution - 2)));
+                        int ix = (int)gridX;
+                        int iz = (int)gridZ;
+                        float fx = gridX - ix;
+                        float fz = gridZ - iz;
+                        // Convert mesh rows to heightGrid rows (flip)
+                        int hRow0 = resolution - 1 - iz;
+                        int hRow1 = resolution - 1 - (iz + 1);
+                        float h00 = heightGrid[hRow0 * resolution + ix];
+                        float h10 = heightGrid[hRow0 * resolution + ix + 1];
+                        float h01 = heightGrid[hRow1 * resolution + ix];
+                        float h11 = heightGrid[hRow1 * resolution + ix + 1];
+                        return h00 * (1 - fx) * (1 - fz) +
+                               h10 * fx * (1 - fz) +
+                               h01 * (1 - fx) * fz +
+                               h11 * fx * fz;
                     };
 
                     static const size_t MAX_BUILDINGS = 5000;
@@ -2628,24 +2735,28 @@ void EditorApp::generateWorldFromArea() {
                         centLat /= fp.outline.size();
                         centLon /= fp.outline.size();
 
-                        // Sample heightmap for ground Y and land/sea filtering.
-                        // Uses the OSM-enhanced heightmap (not Natural Earth) so that
-                        // buildings behind man-made features (e.g. Cardiff Bay Barrage)
-                        // are correctly classified as on-land.
-                        float gx = (lonExtent > 0) ? static_cast<float>((centLon - minLon) / lonExtent) : 0.5f;
-                        float gz = (latExtent > 0) ? static_cast<float>((centLat - minLat) / latExtent) : 0.5f;
-                        int hpx = std::max(0, std::min(resolution - 1, static_cast<int>(gx * (resolution - 1))));
-                        int hpy = std::max(0, std::min(resolution - 1, static_cast<int>((1.0f - gz) * (resolution - 1))));
-                        float groundY = heightGrid[hpy * resolution + hpx];
+                        // Sample heightmap using bilinear interpolation matching the
+                        // terrain mesh surface (prevents buildings floating above terrain
+                        // due to heightmap subsampling differences).
+                        float groundY = sampleTerrainHeight(centLat, centLon);
 
-                        // Skip buildings in water (heightGrid < -5m after smoothing)
-                        if (groundY < -5.0f) {
+                        // Skip regular buildings in water but NEVER skip structures
+                        // (dams, breakwaters, piers, jetties) -- they sit over water by design.
+                        if (groundY < -5.0f && !fp.isStructure) {
                             skippedWater++;
                             continue;
                         }
                         if (groundY < 0.0f) groundY = 0.0f;
 
-                        BuildingMesh single = BuildingGenerator::generate(fp, coordFunc, groundY);
+                        // Deterministic material variation from building position
+                        uint32_t posHash = (uint32_t)((int)(centLat * 1e5) * 374761393 +
+                                                       (int)(centLon * 1e5) * 668265263);
+                        posHash = (posHash ^ (posHash >> 13)) * 1274126177;
+                        posHash ^= (posHash >> 16);
+                        int wallType = (int)(posHash % 4);
+                        int roofType = (int)((posHash >> 8) % 4);
+
+                        BuildingMesh single = BuildingGenerator::generate(fp, coordFunc, groundY, wallType, roofType);
                         if (single.empty()) continue;
                         batch.append(single);
                         buildCount++;
@@ -2659,23 +2770,42 @@ void EditorApp::generateWorldFromArea() {
                         std::ofstream f(outputDir + "/buildings.obj");
                         if (f.is_open()) f << batch.toOBJ("buildings", "building_wall", "building_roof");
 
-                        // Simple hash for deterministic pseudo-random per-pixel variation
+                        // Deterministic hash for pseudo-random per-pixel variation
                         auto hash = [](int x, int y) -> uint32_t {
                             uint32_t h = (uint32_t)(x * 374761393 + y * 668265263);
                             h = (h ^ (h >> 13)) * 1274126177;
                             return h ^ (h >> 16);
                         };
+                        // Smooth noise (value noise with linear interpolation)
+                        auto vnoise = [&](float x, float y, int seed) -> float {
+                            int ix = (int)std::floor(x), iy = (int)std::floor(y);
+                            float fx = x - ix, fy = y - iy;
+                            auto h = [&](int a, int b) -> float { return (float)(hash(a + seed, b) % 1000) / 1000.0f; };
+                            float v00 = h(ix, iy), v10 = h(ix+1, iy), v01 = h(ix, iy+1), v11 = h(ix+1, iy+1);
+                            float a = v00 + (v10 - v00) * fx;
+                            float b2 = v01 + (v11 - v01) * fx;
+                            return a + (b2 - a) * fy;
+                        };
 
-                        // --- Wall texture (512x512): brick with windows ---
-                        const int texW = 512, texH = 512;
-                        std::vector<uint8_t> wallTex(texW * texH * 3);
-                        {
-                            const int brickH = 38, brickW = 17, mortarW = 2;
+                        // --- Wall texture atlas (1024x1024): 2x2 grid of 512x512 wall types ---
+                        // Type 0 (top-left):  Red/brown brick
+                        // Type 1 (top-right): Concrete/render (smooth grey)
+                        // Type 2 (bot-left):  Stone masonry (irregular blocks)
+                        // Type 3 (bot-right): Stucco/render (cream/white smooth)
+                        // Each sub-texture has windows, weathering gradient, and noise variation.
+                        const int cellW = 512, cellH = 512;
+                        const int atlasW = cellW * 2, atlasH = cellH * 2;
+                        std::vector<uint8_t> wallTex(atlasW * atlasH * 3);
+
+                        for (int wallType = 0; wallType < 4; wallType++) {
+                            int cellX0 = (wallType % 2) * cellW;
+                            int cellY0 = (wallType / 2) * cellH;
+
+                            // Windows (same layout per cell)
                             const int winW = 150, winH = 220;
-                            const int winMarginX = (texW - 2 * winW) / 3;
-                            const int winY0 = (texH - winH) / 2;
-                            int win1X = winMarginX;
-                            int win2X = winMarginX * 2 + winW;
+                            const int winMarginX = (cellW - 2 * winW) / 3;
+                            const int winY0 = (cellH - winH) / 2;
+                            int win1X = winMarginX, win2X = winMarginX * 2 + winW;
 
                             auto isWindow = [&](int px, int py) -> bool {
                                 return (px >= win1X && px < win1X + winW && py >= winY0 && py < winY0 + winH) ||
@@ -2692,70 +2822,138 @@ void EditorApp::generateWorldFromArea() {
                                 return false;
                             };
 
-                            for (int py = 0; py < texH; py++) {
-                                for (int px = 0; px < texW; px++) {
-                                    int idx = (py * texW + px) * 3;
+                            for (int cy = 0; cy < cellH; cy++) {
+                                for (int cx = 0; cx < cellW; cx++) {
+                                    int idx = ((cellY0 + cy) * atlasW + (cellX0 + cx)) * 3;
                                     uint8_t r, g, b;
-                                    if (isWindow(px, py)) {
-                                        int v = 35 + (int)(hash(px/30, py/30) % 15);
+
+                                    if (isWindow(cx, cy)) {
+                                        int v = 35 + (int)(hash(cx/30, cy/30) % 15);
                                         r = (uint8_t)v; g = (uint8_t)(v+8); b = (uint8_t)(v+20);
-                                    } else if (isWindowFrame(px, py)) {
-                                        r = g = b = (uint8_t)(185 + hash(px, py) % 10);
-                                    } else {
-                                        int row = py / brickH;
+                                    } else if (isWindowFrame(cx, cy)) {
+                                        r = g = b = (uint8_t)(185 + hash(cx, cy) % 10);
+                                    } else if (wallType == 0) {
+                                        // Brick
+                                        const int brickH = 38, brickW = 17, mortarW = 2;
+                                        int row = cy / brickH;
                                         int offX = (row % 2) ? brickW/2 : 0;
-                                        int bx = (px + offX) % brickW, by = py % brickH;
+                                        int bx = (cx + offX) % brickW, by = cy % brickH;
                                         if (bx < mortarW || by < mortarW) {
-                                            int mv = 175 + (int)(hash(px/3, py/3) % 12);
+                                            int mv = 175 + (int)(hash(cx/3, cy/3) % 12);
                                             r = (uint8_t)mv; g = (uint8_t)(mv-5); b = (uint8_t)(mv-10);
                                         } else {
-                                            int brickId = row*100 + (px+offX)/brickW;
+                                            int brickId = row*100 + (cx+offX)/brickW;
                                             int base = (int)(hash(brickId, 0) % 30);
                                             r = (uint8_t)(155+base); g = (uint8_t)(115+base*3/4); b = (uint8_t)(85+base/2);
-                                            int noise = (int)(hash(px, py) % 8) - 4;
+                                            int noise = (int)(hash(cx, cy) % 8) - 4;
                                             r = (uint8_t)std::max(0, std::min(255, (int)r+noise));
                                             g = (uint8_t)std::max(0, std::min(255, (int)g+noise));
                                             b = (uint8_t)std::max(0, std::min(255, (int)b+noise));
                                         }
+                                    } else if (wallType == 1) {
+                                        // Concrete: flat grey with stain noise and form lines
+                                        int base = 165;
+                                        float stain = vnoise(cx * 0.02f, cy * 0.03f, 111) * 20.0f - 10.0f;
+                                        // Horizontal form lines every ~60px
+                                        bool formLine = (cy % 60) < 2;
+                                        int v = base + (int)stain + (formLine ? -12 : 0);
+                                        int noise = (int)(hash(cx, cy) % 6) - 3;
+                                        v = std::max(0, std::min(255, v + noise));
+                                        r = (uint8_t)v; g = (uint8_t)std::max(0, v-2); b = (uint8_t)std::max(0, v-1);
+                                    } else if (wallType == 2) {
+                                        // Stone masonry: irregular blocks with mortar
+                                        // Use hash-based block grid with random offsets
+                                        int blockH = 30 + (int)(hash(0, cy/35) % 15);
+                                        int blockW = 50 + (int)(hash(cy/35, 0) % 30);
+                                        int row = cy / blockH;
+                                        int offX = (row % 2) ? blockW/3 : 0;
+                                        int bx = (cx + offX) % blockW, by = cy % blockH;
+                                        if (bx < 3 || by < 3) {
+                                            // Mortar
+                                            int mv = 160 + (int)(hash(cx/3, cy/3) % 15);
+                                            r = (uint8_t)mv; g = (uint8_t)(mv-3); b = (uint8_t)(mv-6);
+                                        } else {
+                                            // Stone face
+                                            int blockId = row*50 + (cx+offX)/blockW;
+                                            int base = 135 + (int)(hash(blockId, 7) % 40);
+                                            int noise = (int)(hash(cx, cy) % 10) - 5;
+                                            r = (uint8_t)std::max(0, std::min(255, base + noise));
+                                            g = (uint8_t)std::max(0, std::min(255, base + noise - 5));
+                                            b = (uint8_t)std::max(0, std::min(255, base + noise - 8));
+                                        }
+                                    } else {
+                                        // Stucco/render: smooth cream/white with subtle vertical streaks
+                                        int base = 210;
+                                        float streak = vnoise(cx * 0.005f, cy * 0.08f, 222) * 15.0f - 7.0f;
+                                        int noise = (int)(hash(cx, cy) % 6) - 3;
+                                        int v = base + (int)streak + noise;
+                                        v = std::max(0, std::min(255, v));
+                                        r = (uint8_t)std::min(255, v + 5);
+                                        g = (uint8_t)std::min(255, v + 2);
+                                        b = (uint8_t)v;
                                     }
+
+                                    // Weathering gradient: darken toward base (moisture wicking)
+                                    float weatherY = (float)cy / cellH; // 0=top, 1=bottom
+                                    float weatherDarken = weatherY * weatherY * 0.15f; // quadratic, stronger at base
+                                    float stainNoise = vnoise(cx * 0.01f, cy * 0.01f, wallType * 100) * 0.08f;
+                                    float factor = 1.0f - weatherDarken - stainNoise;
+                                    factor = std::max(0.5f, std::min(1.0f, factor));
+                                    r = (uint8_t)(r * factor);
+                                    g = (uint8_t)(g * factor);
+                                    b = (uint8_t)(b * factor);
+
                                     wallTex[idx] = r; wallTex[idx+1] = g; wallTex[idx+2] = b;
                                 }
                             }
                         }
-                        SatelliteTexture::writePNG(outputDir + "/building_wall.png", wallTex, texW, texH);
+                        SatelliteTexture::writePNG(outputDir + "/building_wall.png", wallTex, atlasW, atlasH);
 
-                        // --- Roof texture (256x256): dark slate/tile pattern ---
-                        const int roofW = 256, roofH = 256;
-                        std::vector<uint8_t> roofTex(roofW * roofH * 3);
-                        {
+                        // --- Roof texture atlas (1024x256): 4 roof colors in a 1x4 strip ---
+                        // Type 0: Dark slate grey
+                        // Type 1: Terracotta/red-brown
+                        // Type 2: Dark brown tile
+                        // Type 3: Light grey/zinc
+                        const int roofCellW = 256, roofCellH = 256;
+                        const int roofAtlasW = roofCellW * 4, roofAtlasH = roofCellH;
+                        std::vector<uint8_t> roofTex(roofAtlasW * roofAtlasH * 3);
+
+                        // Base colors per roof type: {R, G, B}
+                        const int roofBase[4][3] = {
+                            {75, 78, 82},    // Dark slate
+                            {155, 85, 55},   // Terracotta
+                            {75, 60, 48},    // Dark brown
+                            {175, 178, 180}  // Light grey/zinc
+                        };
+
+                        for (int roofType = 0; roofType < 4; roofType++) {
+                            int rx0 = roofType * roofCellW;
                             const int tileH = 20, tileW = 40;
-                            for (int py = 0; py < roofH; py++) {
-                                for (int px = 0; px < roofW; px++) {
-                                    int idx = (py * roofW + px) * 3;
+                            for (int py = 0; py < roofCellH; py++) {
+                                for (int px = 0; px < roofCellW; px++) {
+                                    int idx = (py * roofAtlasW + (rx0 + px)) * 3;
                                     int row = py / tileH;
                                     int offX = (row % 2) ? tileW/2 : 0;
                                     int tx = (px + offX) % tileW;
                                     int ty = py % tileH;
                                     bool isEdge = (tx == 0 || ty == 0);
 
-                                    // Slate grey base with per-tile variation
                                     int tileId = row * 50 + (px + offX) / tileW;
-                                    int base = 75 + (int)(hash(tileId, 42) % 25);
-                                    int noise = (int)(hash(px + 7777, py + 3333) % 6) - 3;
+                                    int tileVar = (int)(hash(tileId, 42 + roofType) % 25);
+                                    int noise = (int)(hash(px + 7777, py + 3333 + roofType * 1111) % 6) - 3;
 
-                                    uint8_t r, g, b;
-                                    if (isEdge) {
-                                        r = g = b = (uint8_t)(base - 15);
-                                    } else {
-                                        r = (uint8_t)std::max(0, std::min(255, base + noise));
-                                        g = (uint8_t)std::max(0, std::min(255, base + noise - 3));
-                                        b = (uint8_t)std::max(0, std::min(255, base + noise + 2));
-                                    }
-                                    roofTex[idx] = r; roofTex[idx+1] = g; roofTex[idx+2] = b;
+                                    int rv = roofBase[roofType][0] + tileVar + noise;
+                                    int gv = roofBase[roofType][1] + tileVar + noise;
+                                    int bv = roofBase[roofType][2] + tileVar + noise;
+                                    if (isEdge) { rv -= 15; gv -= 15; bv -= 15; }
+
+                                    roofTex[idx]   = (uint8_t)std::max(0, std::min(255, rv));
+                                    roofTex[idx+1] = (uint8_t)std::max(0, std::min(255, gv));
+                                    roofTex[idx+2] = (uint8_t)std::max(0, std::min(255, bv));
                                 }
                             }
                         }
-                        SatelliteTexture::writePNG(outputDir + "/building_roof.png", roofTex, roofW, roofH);
+                        SatelliteTexture::writePNG(outputDir + "/building_roof.png", roofTex, roofAtlasW, roofAtlasH);
 
                         // Write MTL with two materials
                         std::ofstream mtl(outputDir + "/buildings.mtl");
@@ -2809,6 +3007,9 @@ void EditorApp::generateWorldFromArea() {
                 zoom, resolution, cacheDir, outW, outH, progressCb);
 
             if (!texData.empty()) {
+                // Blend terrain detail textures into satellite imagery
+                generateStatus = "Blending terrain detail textures...";
+                TerrainTextureBlender::blend(texData.data(), outW, outH, heightGrid.data(), resolution);
                 SatelliteTexture::writePNG(outputDir + "/texture.png", texData, outW, outH);
                 int mapW = 0, mapH = 0;
                 auto mapData = SatelliteTexture::generate(
@@ -2835,6 +3036,8 @@ void EditorApp::generateWorldFromArea() {
                 textureRGB[i * 3 + 1] = 80;
                 textureRGB[i * 3 + 2] = 140;
             }
+            // Apply terrain detail even without satellite (replaces flat blue with terrain colors)
+            TerrainTextureBlender::blend(textureRGB.data(), resolution, resolution, heightGrid.data(), resolution);
             SatelliteTexture::writePNG(outputDir + "/texture.png", textureRGB, resolution, resolution);
             SatelliteTexture::writePNG(outputDir + "/map.png", textureRGB, resolution, resolution);
         }

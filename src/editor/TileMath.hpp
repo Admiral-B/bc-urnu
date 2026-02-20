@@ -34,9 +34,10 @@ namespace TileMath {
     // Convert latitude to tile Y coordinate at given zoom level
     inline int latToTileY(double lat, int zoom) {
         double latRad = clampLat(lat) * M_PI / 180.0;
-        return static_cast<int>(std::floor(
+        int result = static_cast<int>(std::floor(
             (1.0 - std::log(std::tan(latRad) + 1.0 / std::cos(latRad)) / M_PI)
             / 2.0 * (1 << zoom)));
+        return std::max(0, std::min((1 << zoom) - 1, result));
     }
 
     // Convert tile X back to longitude (left edge of tile)

@@ -1,3 +1,15 @@
+# Support standalone and subdirectory builds
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    cmake_minimum_required(VERSION 3.14)
+    project(bc-tests CXX)
+    set(CMAKE_CXX_STANDARD 17)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+    set(BC_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/..")
+    find_package(GDAL)
+else()
+    set(BC_SRC_DIR "${CMAKE_SOURCE_DIR}")
+endif()
+
 include(FetchContent)
 FetchContent_Declare(Catch2
     GIT_REPOSITORY https://github.com/catchorg/Catch2.git
@@ -9,14 +21,20 @@ FetchContent_MakeAvailable(Catch2)
 # These only need Irrlicht headers (for type aliases like irr::f32),
 # not the full Irrlicht runtime library.
 set(BC_TESTABLE_SOURCES
-    ${CMAKE_SOURCE_DIR}/Angles.cpp
-    ${CMAKE_SOURCE_DIR}/Utilities.cpp
-    ${CMAKE_SOURCE_DIR}/IniFile.cpp
-    ${CMAKE_SOURCE_DIR}/ScenarioDataStructure.cpp
-    ${CMAKE_SOURCE_DIR}/MMGPhysicsModel.cpp
-    ${CMAKE_SOURCE_DIR}/LegacyPhysicsModel.cpp
-    ${CMAKE_SOURCE_DIR}/BuildingGenerator.cpp
-    ${CMAKE_SOURCE_DIR}/multiplayerHub/ShipPositions.cpp
+    ${BC_SRC_DIR}/Angles.cpp
+    ${BC_SRC_DIR}/Utilities.cpp
+    ${BC_SRC_DIR}/IniFile.cpp
+    ${BC_SRC_DIR}/ScenarioDataStructure.cpp
+    ${BC_SRC_DIR}/MMGPhysicsModel.cpp
+    ${BC_SRC_DIR}/LegacyPhysicsModel.cpp
+    ${BC_SRC_DIR}/BarrierFloodFill.cpp
+    ${BC_SRC_DIR}/BuildingGenerator.cpp
+    ${BC_SRC_DIR}/multiplayerHub/ShipPositions.cpp
+    ${BC_SRC_DIR}/editor/OSMWaterReader.cpp
+    ${BC_SRC_DIR}/editor/OSMBuildingReader.cpp
+    ${BC_SRC_DIR}/editor/OSMLandPolygons.cpp
+    ${BC_SRC_DIR}/editor/ElevationTile.cpp
+    ${BC_SRC_DIR}/editor/TerrainTextureBlender.cpp
     test_stubs.cpp
 )
 
@@ -28,15 +46,17 @@ set(BC_TEST_SOURCES
     test_tile_math.cpp
     test_global_data.cpp
     test_multiplayer.cpp
+    test_barrier_flood_fill.cpp
     test_building_generator.cpp
+    test_osm_water_reader.cpp
 )
 
 # Conditionally add chart/world generation if GDAL is available
 if(GDAL_FOUND)
     list(APPEND BC_TESTABLE_SOURCES
-        ${CMAKE_SOURCE_DIR}/ChartReader.cpp
-        ${CMAKE_SOURCE_DIR}/HeightmapGenerator.cpp
-        ${CMAKE_SOURCE_DIR}/WorldGenerator.cpp
+        ${BC_SRC_DIR}/ChartReader.cpp
+        ${BC_SRC_DIR}/HeightmapGenerator.cpp
+        ${BC_SRC_DIR}/WorldGenerator.cpp
     )
     list(APPEND BC_TEST_SOURCES
         test_chart_reader.cpp
@@ -47,13 +67,17 @@ endif()
 
 add_library(bc-testable STATIC ${BC_TESTABLE_SOURCES})
 target_include_directories(bc-testable PUBLIC
-    ${CMAKE_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/libs/Irrlicht/irrlicht-svn/include
-    ${CMAKE_SOURCE_DIR}/libs/earcut
+    ${BC_SRC_DIR}
+    ${BC_SRC_DIR}/libs/Irrlicht/irrlicht-svn/include
+    ${BC_SRC_DIR}/libs/earcut
+    ${BC_SRC_DIR}/libs
 )
 target_compile_definitions(bc-testable PRIVATE _CRT_SECURE_NO_WARNINGS)
 if (APPLE)
     target_link_libraries(bc-testable PRIVATE "-framework CoreServices")
+endif()
+if(WIN32)
+    target_link_libraries(bc-testable PRIVATE winhttp)
 endif()
 if(GDAL_FOUND)
     target_compile_definitions(bc-testable PUBLIC WITH_GDAL)
@@ -63,8 +87,8 @@ endif()
 
 add_executable(bc-tests ${BC_TEST_SOURCES})
 target_include_directories(bc-tests PRIVATE
-    ${CMAKE_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/libs/Irrlicht/irrlicht-svn/include
+    ${BC_SRC_DIR}
+    ${BC_SRC_DIR}/libs/Irrlicht/irrlicht-svn/include
 )
 target_link_libraries(bc-tests PRIVATE
     Catch2::Catch2WithMain

@@ -165,7 +165,8 @@ TEST_CASE("toOBJ produces valid wavefront format", "[building]") {
     std::string obj = mesh.toOBJ("test_mtl");
 
     REQUIRE(obj.find("mtllib test_mtl.mtl") != std::string::npos);
-    REQUIRE(obj.find("usemtl test_mtl") != std::string::npos);
+    // toOBJ uses separate wall/roof material names (defaults: building_wall, building_roof)
+    REQUIRE(obj.find("usemtl building_wall") != std::string::npos);
     REQUIRE(obj.find("v ") != std::string::npos);
     REQUIRE(obj.find("vn ") != std::string::npos);
     REQUIRE(obj.find("vt ") != std::string::npos);

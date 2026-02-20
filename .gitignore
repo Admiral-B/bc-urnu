@@ -15,6 +15,7 @@
 *.ipdb
 *~
 build/
+src/tests/build*/
 
 # OS files
 .DS_Store

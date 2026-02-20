@@ -17,6 +17,7 @@
 #ifdef WITH_GDAL
 
 #include "HeightmapGenerator.hpp"
+#include "BarrierFloodFill.hpp"
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "libs/stb/stb_image_write.h"
@@ -49,6 +50,10 @@ void HeightmapGenerator::setWaterHoles(const std::vector<WaterHole>& holes) {
 
 void HeightmapGenerator::setOSMWaterPolygons(const std::vector<std::vector<std::pair<double,double>>>& polys) {
     osmWaterPolygons = polys;
+}
+
+void HeightmapGenerator::setBarriers(const std::vector<std::vector<std::pair<double,double>>>& barriers) {
+    barrierLines = barriers;
 }
 
 // ── GeoTIFF loading (shared by DEM and bathymetry) ─────────────────────────
@@ -457,7 +462,38 @@ std::vector<std::vector<float>> HeightmapGenerator::generate(
         }
     }
 
+    // Pass 4: Barrier flood-fill (barrages, dams, breakwaters)
+    if (!barrierLines.empty()) {
+        applyBarrierFloodFill(grid, b);
+    }
+
     return grid;
+}
+
+void HeightmapGenerator::applyBarrierFloodFill(
+    std::vector<std::vector<float>>& grid,
+    const HeightmapBounds& b) const {
+
+    int res = static_cast<int>(grid.size());
+    if (res == 0) return;
+
+    // Flatten 2D grid to flat row-major for the standalone algorithm
+    std::vector<float> flat(res * res);
+    for (int py = 0; py < res; py++) {
+        for (int px = 0; px < res; px++) {
+            flat[py * res + px] = grid[py][px];
+        }
+    }
+
+    BarrierFloodFill::Bounds bff{b.minLon, b.maxLon, b.minLat, b.maxLat};
+    BarrierFloodFill::apply(flat.data(), res, bff, barrierLines);
+
+    // Copy results back to 2D grid
+    for (int py = 0; py < res; py++) {
+        for (int px = 0; px < res; px++) {
+            grid[py][px] = flat[py * res + px];
+        }
+    }
 }
 
 std::vector<uint8_t> HeightmapGenerator::encodeRGB(

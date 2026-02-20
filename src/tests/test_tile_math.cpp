@@ -124,8 +124,9 @@ TEST_CASE("Tile coordinates at max zoom", "[tiles]") {
 
     REQUIRE(lonToTileX(-180.0, z) == 0);
     REQUIRE(lonToTileX(179.99999, z) == maxTile);
-    REQUIRE(latToTileY(85.05, z) == 0);
-    REQUIRE(latToTileY(-85.05, z) == maxTile);
+    // Values beyond Mercator limit (85.0511) get clamped to tile 0 / maxTile
+    REQUIRE(latToTileY(90.0, z) == 0);
+    REQUIRE(latToTileY(-90.0, z) == maxTile);
 }
 
 TEST_CASE("tileXToLon boundary values", "[tiles]") {

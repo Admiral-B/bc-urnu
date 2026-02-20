@@ -283,6 +283,47 @@ WorldGeneratorResult WorldGenerator::generateWorld(const std::string& chartPath,
                   << waterReader.getError() << " (continuing with chart data only)" << std::endl;
     }
 
+    // Collect barrier geometries from OSM (dams, breakwaters) and S-57 shore constructions.
+    // These are used by HeightmapGenerator's barrier flood-fill to detect enclosed areas
+    // (e.g. Cardiff Bay behind a barrage).
+    {
+        std::vector<std::vector<std::pair<double,double>>> allBarriers;
+
+        // OSM barriers (waterway=dam, man_made=breakwater)
+        const auto& osmBarriers = waterReader.getBarriers();
+        allBarriers.insert(allBarriers.end(), osmBarriers.begin(), osmBarriers.end());
+
+        // Convert S-57 shoreline constructions (open linestrings) to barrier format.
+        // These are SLCONS/CAUSWY/DYKCON features that were already appended to coastlines
+        // but get ignored by isLand() because they're not closed polygons.
+        for (const auto& sc : shoreConstructions) {
+            if (sc.points.size() >= 2) {
+                // Check if this is an open linestring (not closed polygon)
+                const auto& first = sc.points.front();
+                const auto& last = sc.points.back();
+                double closeDist = fabs(first.longitude - last.longitude) +
+                                   fabs(first.latitude - last.latitude);
+                if (closeDist >= 0.0001) {
+                    // Open linestring -- treat as barrier
+                    std::vector<std::pair<double,double>> barrierLine;
+                    barrierLine.reserve(sc.points.size());
+                    for (const auto& pt : sc.points) {
+                        barrierLine.emplace_back(pt.latitude, pt.longitude);
+                    }
+                    allBarriers.push_back(std::move(barrierLine));
+                }
+            }
+        }
+
+        if (!allBarriers.empty()) {
+            hmGen.setBarriers(allBarriers);
+            std::cout << "WorldGenerator: Using " << allBarriers.size()
+                      << " barriers (" << osmBarriers.size() << " from OSM, "
+                      << (allBarriers.size() - osmBarriers.size()) << " from S-57)"
+                      << " for enclosed-area detection" << std::endl;
+        }
+    }
+
     // Load DEM tiles for land elevation (if directory provided)
     if (!demDir.empty()) {
         // Find all .tif files in the DEM directory

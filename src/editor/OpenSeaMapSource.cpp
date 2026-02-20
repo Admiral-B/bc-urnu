@@ -193,9 +193,17 @@ bool OpenSeaMapSource::query(double minLat, double maxLat,
 
     std::string postBody = "data=" + ql.str();
 
-    if (progress) progress("Querying Overpass API...");
+    const char* overpassServers[] = {
+        OVERPASS_URL,
+        "https://overpass.kumi.systems/api/interpreter"
+    };
 
-    auto response = httpPost(OVERPASS_URL, postBody, USER_AGENT);
+    std::vector<uint8_t> response;
+    for (int attempt = 0; attempt < 2 && response.empty(); attempt++) {
+        if (attempt > 0 && progress) progress("Retrying with fallback Overpass server...");
+        else if (progress) progress("Querying Overpass API...");
+        response = httpPost(overpassServers[attempt], postBody, USER_AGENT);
+    }
     if (response.empty()) {
         errorMsg = "Overpass API returned empty response";
         return false;
@@ -533,6 +541,61 @@ bool OpenSeaMapSource::parseResponse(const std::string& jsonStr) {
                     lm.name = tags["name"].get<std::string>();
 
                 landmarks.push_back(lm);
+
+                // Lighthouses may also have seamark:light:* tags for their light
+                // properties. Extract these to create a proper light entry.
+                if (manMade == "lighthouse" &&
+                    (tags.contains("seamark:light:character") ||
+                     tags.contains("seamark:light:colour") ||
+                     tags.contains("seamark:light:1:character"))) {
+
+                    std::vector<std::string> lightPrefixes;
+                    if (tags.contains("seamark:light:character") || tags.contains("seamark:light:colour"))
+                        lightPrefixes.push_back("seamark:light:");
+                    for (int li = 1; li <= 8; li++) {
+                        std::string prefix = "seamark:light:" + std::to_string(li) + ":";
+                        if (tags.contains(prefix + "character") || tags.contains(prefix + "colour"))
+                            lightPrefixes.push_back(prefix);
+                    }
+
+                    for (const auto& prefix : lightPrefixes) {
+                        OsmLight light;
+                        light.latitude = lat;
+                        light.longitude = lon;
+
+                        if (tags.contains(prefix + "character"))
+                            light.characteristic = parseCharacteristic(tags[prefix + "character"].get<std::string>());
+                        if (tags.contains(prefix + "period")) {
+                            try { light.period = std::stod(tags[prefix + "period"].get<std::string>()); }
+                            catch (...) {}
+                        }
+                        if (tags.contains(prefix + "group"))
+                            light.group = tags[prefix + "group"].get<std::string>();
+                        if (tags.contains(prefix + "colour"))
+                            light.colour = parseColour(tags[prefix + "colour"].get<std::string>());
+                        if (tags.contains(prefix + "range")) {
+                            try { light.range = std::stod(tags[prefix + "range"].get<std::string>()); }
+                            catch (...) {}
+                        }
+                        if (tags.contains(prefix + "height")) {
+                            try { light.height = std::stod(tags[prefix + "height"].get<std::string>()); }
+                            catch (...) {}
+                        }
+                        if (tags.contains(prefix + "sector_start")) {
+                            try { light.sectorStart = std::stod(tags[prefix + "sector_start"].get<std::string>()); }
+                            catch (...) {}
+                        }
+                        if (tags.contains(prefix + "sector_end")) {
+                            try { light.sectorEnd = std::stod(tags[prefix + "sector_end"].get<std::string>()); }
+                            catch (...) {}
+                        }
+                        // Lighthouses typically have longer range
+                        if (light.range <= 5.0)
+                            light.range = 15.0;
+
+                        lights.push_back(light);
+                    }
+                }
             }
         }
     }

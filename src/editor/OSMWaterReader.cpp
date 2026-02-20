@@ -64,6 +64,7 @@ bool OSMWaterReader::query(double minLat, double maxLat,
                             double minLon, double maxLon,
                             ProgressCallback progress) {
     waterAreas.clear();
+    barriers.clear();
     queryDone = false;
     errorMsg.clear();
 
@@ -95,6 +96,10 @@ bool OSMWaterReader::query(double minLat, double maxLat,
        << "relation[\"waterway\"=\"riverbank\"]("
        << minLat << "," << minLon << "," << maxLat << "," << maxLon << ");"
        << "way[\"landuse\"=\"reservoir\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon << ");"
+       << "way[\"waterway\"=\"dam\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon << ");"
+       << "way[\"man_made\"=\"breakwater\"]("
        << minLat << "," << minLon << "," << maxLat << "," << maxLon << ");"
        << ");"
        << "out geom;";
@@ -164,10 +169,36 @@ bool OSMWaterReader::parseResponse(const std::string& jsonStr) {
 
         std::string wtype = classifyWaterType(natural, waterTag, waterway);
 
+        // Check if this element is a barrier (dam or breakwater)
+        bool isBarrier = false;
+        if (elem.contains("tags") && elem["tags"].is_object()) {
+            const auto& tags = elem["tags"];
+            if (tags.contains("waterway") && tags["waterway"].get<std::string>() == "dam")
+                isBarrier = true;
+            if (tags.contains("man_made") && tags["man_made"].get<std::string>() == "breakwater")
+                isBarrier = true;
+        }
+
         if (elemType == "way") {
-            // Simple closed way
             if (!elem.contains("geometry") || !elem["geometry"].is_array()) continue;
             const auto& geom = elem["geometry"];
+
+            if (isBarrier) {
+                // Barrier way: store as polyline (needs at least 2 points)
+                if (geom.size() < 2) continue;
+                std::vector<std::pair<double,double>> polyline;
+                for (const auto& pt : geom) {
+                    if (pt.contains("lat") && pt.contains("lon")) {
+                        polyline.emplace_back(pt["lat"].get<double>(),
+                                              pt["lon"].get<double>());
+                    }
+                }
+                if (polyline.size() >= 2)
+                    barriers.push_back(std::move(polyline));
+                continue;
+            }
+
+            // Simple closed water way
             if (geom.size() < 3) continue;
 
             WaterPolygon wp;

@@ -98,11 +98,26 @@ std::string BuildingMesh::toOBJ(const std::string& mtlFile,
 
 // ---- BuildingGenerator ----
 
+// Map a tiling UV coordinate into an atlas sub-region.
+// frac = x - floor(x) gives [0,1), then scale and offset into the cell.
+static float atlasUV(float uv, float cellSize, float cellOffset) {
+    float frac = uv - std::floor(uv);
+    return frac * cellSize + cellOffset;
+}
+
 BuildingMesh BuildingGenerator::generate(const BuildingFootprint& fp,
                                           CoordFunc coordFunc,
-                                          float groundY) {
+                                          float groundY,
+                                          int wallType,
+                                          int roofType) {
     BuildingMesh mesh;
     if (fp.outline.size() < 3) return mesh;
+
+    // Wall atlas: 2x2 grid (each cell 0.5 x 0.5 in UV space)
+    float wallCellU = (wallType % 2) * 0.5f;
+    float wallCellV = (wallType / 2) * 0.5f;
+    // Roof atlas: 4x1 strip (each cell 0.25 x 1.0 in UV space)
+    float roofCellU = roofType * 0.25f;
 
     float height = fp.height;
     float roofY = groundY + height;
@@ -142,33 +157,38 @@ BuildingMesh BuildingGenerator::generate(const BuildingFootprint& fp,
         float edgeLen = std::sqrt(dx * dx + dz * dz);
 
         // Outward normal (in XZ plane, Y=0)
-        // Edge direction: (dx, dz). Normal: (dz, -dx) normalized.
         float nx = dz, nz = -dx;
         float nLen = std::sqrt(nx * nx + nz * nz);
         if (nLen > 1e-6f) { nx /= nLen; nz /= nLen; }
 
-        float u0 = cumDist * uvScale;
-        float u1 = (cumDist + edgeLen) * uvScale;
+        // Raw tiling UVs, then remap into wall atlas cell
+        float rawU0 = cumDist * uvScale;
+        float rawU1 = (cumDist + edgeLen) * uvScale;
+        float rawVtop = height * uvScale;
+
+        float u0 = atlasUV(rawU0, 0.5f, wallCellU);
+        float u1 = atlasUV(rawU1, 0.5f, wallCellU);
+        float v0 = atlasUV(0.0f, 0.5f, wallCellV);
+        float v1 = atlasUV(rawVtop, 0.5f, wallCellV);
 
         uint32_t base = static_cast<uint32_t>(mesh.vertexCount());
 
         // 4 vertices: bottom-left, bottom-right, top-right, top-left
-        // BL
         mesh.positions.insert(mesh.positions.end(), {x0, groundY, z0});
         mesh.normals.insert(mesh.normals.end(), {nx, 0.0f, nz});
-        mesh.uvs.insert(mesh.uvs.end(), {u0, 0.0f});
-        // BR
+        mesh.uvs.insert(mesh.uvs.end(), {u0, v0});
+
         mesh.positions.insert(mesh.positions.end(), {x1, groundY, z1});
         mesh.normals.insert(mesh.normals.end(), {nx, 0.0f, nz});
-        mesh.uvs.insert(mesh.uvs.end(), {u1, 0.0f});
-        // TR
+        mesh.uvs.insert(mesh.uvs.end(), {u1, v0});
+
         mesh.positions.insert(mesh.positions.end(), {x1, roofY, z1});
         mesh.normals.insert(mesh.normals.end(), {nx, 0.0f, nz});
-        mesh.uvs.insert(mesh.uvs.end(), {u1, height * uvScale});
-        // TL
+        mesh.uvs.insert(mesh.uvs.end(), {u1, v1});
+
         mesh.positions.insert(mesh.positions.end(), {x0, roofY, z0});
         mesh.normals.insert(mesh.normals.end(), {nx, 0.0f, nz});
-        mesh.uvs.insert(mesh.uvs.end(), {u0, height * uvScale});
+        mesh.uvs.insert(mesh.uvs.end(), {u0, v1});
 
         // Two triangles (CCW winding when viewed from outside)
         mesh.indices.insert(mesh.indices.end(), {base, base + 1, base + 2});
@@ -196,8 +216,11 @@ BuildingMesh BuildingGenerator::generate(const BuildingFootprint& fp,
             float z = worldPoly[i].second;
             mesh.positions.insert(mesh.positions.end(), {x, roofY, z});
             mesh.normals.insert(mesh.normals.end(), {0.0f, 1.0f, 0.0f});
-            // Roof UV: project XZ to UV (scale so ~3m = 1 UV unit)
-            mesh.uvs.insert(mesh.uvs.end(), {x * uvScale, z * uvScale});
+            // Roof UV: project XZ, remap into roof atlas cell
+            mesh.uvs.insert(mesh.uvs.end(), {
+                atlasUV(x * uvScale, 0.25f, roofCellU),
+                atlasUV(z * uvScale, 1.0f, 0.0f)
+            });
         }
 
         for (uint32_t idx : floorIndices) {
@@ -212,11 +235,14 @@ BuildingMesh BuildingGenerator::generateBatch(const std::vector<BuildingFootprin
                                                CoordFunc coordFunc,
                                                float groundY) {
     BuildingMesh batch;
+    int idx = 0;
     for (const auto& fp : footprints) {
-        BuildingMesh single = generate(fp, coordFunc, groundY);
+        // Vary wall/roof types across batch using index
+        BuildingMesh single = generate(fp, coordFunc, groundY, idx % 4, (idx * 3 + 1) % 4);
         if (!single.empty()) {
             batch.append(single);
         }
+        idx++;
     }
     return batch;
 }

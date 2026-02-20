@@ -38,9 +38,13 @@ public:
     // Generate mesh for a single building footprint.
     // coordFunc converts lat/lon to world X/Z.
     // groundY is the Y level of the terrain at this building (0 if flat).
+    // wallType (0-3): atlas sub-region for wall texture (brick/concrete/stone/stucco)
+    // roofType (0-3): atlas sub-region for roof texture (slate/terracotta/brown/zinc)
     static BuildingMesh generate(const BuildingFootprint& fp,
                                   CoordFunc coordFunc,
-                                  float groundY = 0.0f);
+                                  float groundY = 0.0f,
+                                  int wallType = 0,
+                                  int roofType = 0);
 
     // Generate and merge meshes for a batch of buildings (single draw call).
     static BuildingMesh generateBatch(const std::vector<BuildingFootprint>& footprints,

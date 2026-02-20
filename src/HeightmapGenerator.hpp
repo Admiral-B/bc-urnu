@@ -53,6 +53,12 @@ public:
     // Set OSM water polygons (lat/lon pairs) -- authoritative for inland water bodies
     void setOSMWaterPolygons(const std::vector<std::vector<std::pair<double,double>>>& polys);
 
+    // Set barrier geometries (dams, breakwaters, barrages) as lat/lon polylines.
+    // After initial height generation, a flood-fill algorithm rasterizes these as
+    // impassable boundaries and floods from grid edges through water pixels.
+    // Water pixels not reachable from any edge are reclassified as land.
+    void setBarriers(const std::vector<std::vector<std::pair<double,double>>>& barriers);
+
     // Load DEM GeoTIFF files for land elevation (e.g. Copernicus DEM tiles)
     // Multiple tiles are merged to cover the full area. Requires GDAL.
     bool loadDEMTiles(const std::vector<std::string>& tifPaths);
@@ -98,6 +104,8 @@ private:
     std::vector<WaterHole> waterHoles;
     // OSM water polygons stored as lat/lon rings
     std::vector<std::vector<std::pair<double,double>>> osmWaterPolygons;
+    // Barrier polylines (dams, breakwaters, barrages) stored as lat/lon
+    std::vector<std::vector<std::pair<double,double>>> barrierLines;
     HeightmapBounds bounds;
     bool boundsSet = false;
 
@@ -135,6 +143,11 @@ private:
 
     // Check if a point is on land (inside any coastline/land polygon)
     bool isLand(double lon, double lat) const;
+
+    // Apply barrier flood-fill: rasterize barriers, flood from edges,
+    // convert unreachable water to land
+    void applyBarrierFloodFill(std::vector<std::vector<float>>& grid,
+                               const HeightmapBounds& b) const;
 };
 
 #endif // WITH_GDAL

@@ -14,11 +14,15 @@ class OSMWaterReader {
 public:
     using ProgressCallback = std::function<void(const std::string&)>;
 
-    // Query Overpass API for water polygons in bounding box (blocking).
+    // Query Overpass API for water polygons AND barrier ways in bounding box (blocking).
+    // Barriers are dams (waterway=dam) and breakwaters (man_made=breakwater).
     bool query(double minLat, double maxLat, double minLon, double maxLon,
                ProgressCallback progress = nullptr);
 
     const std::vector<WaterPolygon>& getWaterAreas() const { return waterAreas; }
+
+    // Barrier geometries (dams, breakwaters) as lat/lon polylines
+    const std::vector<std::vector<std::pair<double,double>>>& getBarriers() const { return barriers; }
 
     bool hasData() const { return queryDone; }
     const std::string& getError() const { return errorMsg; }
@@ -30,12 +34,14 @@ public:
     bool saveCache(const std::string& path) const;
     bool loadCache(const std::string& path);
 
+    // Parse Overpass JSON response (public for testing)
+    bool parseResponse(const std::string& jsonStr);
+
 private:
     std::vector<WaterPolygon> waterAreas;
+    std::vector<std::vector<std::pair<double,double>>> barriers; // lat/lon polylines
     bool queryDone = false;
     std::string errorMsg;
-
-    bool parseResponse(const std::string& jsonStr);
 
     static bool pointInRing(double lat, double lon,
                             const std::vector<std::pair<double, double>>& ring);

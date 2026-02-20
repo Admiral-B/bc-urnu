@@ -1,4 +1,4 @@
-Created GraphicsDevice_DX12 (1813 ms)
+Created GraphicsDevice_DX12 (2175 ms)
 Adapter: NVIDIA GeForce RTX 4060 Laptop GPU
 
 [wi::initializer] Initializing Wicked Engine, please wait...
@@ -16,35 +16,27 @@ No embedded shaders found, shaders will be compiled at runtime if needed.
 	Shader source path: C:/Users/PB/source/bc-urnu/bin/../../WickedEngine/WickedEngine/shaders/
 	Shader binary path: ../../WickedEngine/WickedEngine/shaders/
 
-wi::jobsystem Initialized with 16 cores in 3.78 ms
+wi::jobsystem Initialized with 16 cores in 7.82 ms
 	High priority threads: 15
 	Low priority threads: 14
 	Streaming threads: 1
 
 wi::input Initialized (0 ms)
-wi::physics Initialized [Jolt Physics 5.4.0] (0 ms)
-wi::lua Initialized [Lua 5.4.8] (1 ms)
-wi::TrailRenderer Initialized (5 ms)
-wi::texturehelper Initialized (6 ms)
-wi::GPUBVH Initialized (40 ms)
-wi::image Initialized (69 ms)
-wi::gpusortlib Initialized (86 ms)
-wi::Ocean Initialized (139 ms)
-wi::HairParticleSystem Initialized (141 ms)
-wi::EmittedParticleSystem Initialized (183 ms)
-wi::audio Initialized [XAudio2] (223 ms)
-wi::font Initialized (3 ms)
-wi::renderer Initialized (295 ms)
+wi::physics Initialized [Jolt Physics 5.4.0] (1 ms)
+wi::lua Initialized [Lua 5.4.8] (2 ms)
+wi::texturehelper Initialized (13 ms)
+wi::TrailRenderer Initialized (77 ms)
+wi::image Initialized (104 ms)
+wi::gpusortlib Initialized (113 ms)
+wi::GPUBVH Initialized (128 ms)
+wi::HairParticleSystem Initialized (235 ms)
+wi::Ocean Initialized (251 ms)
+wi::EmittedParticleSystem Initialized (350 ms)
+wi::renderer Initialized (467 ms)
+wi::audio Initialized [XAudio2] (868 ms)
+wi::font Initialized (4 ms)
 
-[wi::initializer] Wicked Engine Initialized (299 ms)
-SuballocateGPUBuffer created buffer block with size: 256.0 MB, with page size: 64.0 KB, page count: 4096
-Created volumetric cloud map: 1.1 MB
-BlockCompress created a new raw block texture to fit request: BC1_UNORM (512, 512)
-	Format = R32G32_UINT
-	Resolution = 128 * 128
-	Array Size = 1
-	Memory = 128.0 KB
-
+[wi::initializer] Wicked Engine Initialized (883 ms)
 Created envprobe depth buffer for request
 	Resolution = 64 * 64 * 6
 	Sample Count = 1
@@ -71,4 +63,12 @@ BlockCompress created a new raw block texture to fit request: BC6H_UF16 (64, 64)
 	Resolution = 64 * 64
 	Array Size = 6
 	Memory = 384.0 KB
+
+SuballocateGPUBuffer created buffer block with size: 256.0 MB, with page size: 64.0 KB, page count: 4096
+Created volumetric cloud map: 1.1 MB
+BlockCompress created a new raw block texture to fit request: BC1_UNORM (1024, 1024)
+	Format = R32G32_UINT
+	Resolution = 256 * 256
+	Array Size = 1
+	Memory = 512.0 KB
 

@@ -24,6 +24,15 @@ public:
 
     const std::vector<BuildingFootprint>& getBuildings() const { return buildings; }
 
+    // Barrier polylines (original centerlines of dams/breakwaters, before polygon buffering).
+    // Suitable for flood-fill barrier detection without a separate Overpass query.
+    const std::vector<std::vector<std::pair<double,double>>>& getBarrierLines() const { return barrierLines; }
+
+    // Island outlines (closed polygons from place=island/islet ways).
+    // Used to supplement Natural Earth coastlines when OSM land polygon shapefile
+    // is not available. Each entry is a closed lat/lon ring.
+    const std::vector<std::vector<std::pair<double,double>>>& getIslandPolygons() const { return islandPolygons; }
+
     bool hasData() const { return queryDone; }
     const std::string& getError() const { return errorMsg; }
 
@@ -39,6 +48,8 @@ public:
 
 private:
     std::vector<BuildingFootprint> buildings;
+    std::vector<std::vector<std::pair<double,double>>> barrierLines;
+    std::vector<std::vector<std::pair<double,double>>> islandPolygons;
     bool queryDone = false;
     std::string errorMsg;
     bool parseResponse(const std::string& jsonStr);
