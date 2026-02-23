@@ -44,7 +44,7 @@ int SatelliteTexture::suggestZoom(double minLat, double maxLat,
 
     double z = std::log2(targetSize * 360.0 / (maxExtent * 256.0));
     int zoom = static_cast<int>(std::round(z));
-    return std::max(1, std::min(zoom, 18));
+    return std::max(1, std::min(zoom, 19));
 }
 
 std::vector<uint8_t> SatelliteTexture::generate(

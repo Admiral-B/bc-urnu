@@ -20,6 +20,7 @@
 #include "BuildingGenerator.hpp"
 #include "editor/OSMBuildingReader.hpp"
 #include "editor/OSMWaterReader.hpp"
+#include "editor/OpenSeaMapSource.hpp"
 
 #include <sstream>
 #include <fstream>
@@ -454,6 +455,34 @@ WorldGeneratorResult WorldGenerator::generateWorld(const std::string& chartPath,
     {
         std::ofstream f(outputDir + "/landobject.ini");
         if (f.is_open()) f << ChartReader::generateLandObjectIni(landmarks);
+    }
+
+    // Fallback: if chart yielded no nav aids, query OpenSeaMap
+    if (buoys.empty() && lights.empty() && landmarks.empty()) {
+        std::cout << "WorldGenerator: No nav aids from chart, querying OpenSeaMap..." << std::endl;
+        OpenSeaMapSource osm;
+        if (osm.query(bounds.minLat, bounds.maxLat, bounds.minLon, bounds.maxLon,
+                      [](const std::string& msg) { std::cout << "WorldGenerator: " << msg << std::endl; })) {
+            {
+                std::ofstream f(outputDir + "/buoy.ini");
+                if (f.is_open()) f << osm.generateBuoyIni();
+            }
+            {
+                std::ofstream f(outputDir + "/light.ini");
+                if (f.is_open()) f << osm.generateLightIni();
+            }
+            {
+                std::ofstream f(outputDir + "/landobject.ini");
+                if (f.is_open()) f << osm.generateLandObjectIni();
+            }
+            result.buoyCount = static_cast<int>(osm.getBuoys().size());
+            result.lightCount = static_cast<int>(osm.getLights().size());
+            result.landmarkCount = static_cast<int>(osm.getLandmarks().size());
+            std::cout << "WorldGenerator: OpenSeaMap fallback: " << result.buoyCount << " buoys, "
+                      << result.lightCount << " lights, " << result.landmarkCount << " landmarks" << std::endl;
+        } else {
+            std::cout << "WorldGenerator: OpenSeaMap query failed: " << osm.getError() << std::endl;
+        }
     }
 
     // Query OSM for building footprints and generate building meshes

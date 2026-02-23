@@ -75,7 +75,10 @@ int BarrierFloodFill::apply(float* grid, int resolution,
     //   - Closed polygons (e.g., Cardiff Bay Barrage): the polygon outline sits in
     //     water and BFS can flow around its ends. Snapping vertices near headlands
     //     connects the barrier to land on both sides.
-    const int snapRadius = 40;
+    // Scale snap radius with resolution so physical distance stays ~200m.
+    // At 1025 resolution for a typical 10km area, 40px ≈ 390m.
+    // At 2049, 80px ≈ 390m.
+    const int snapRadius = std::max(40, resolution * 40 / 1025);
     for (const auto& barrier : barriers) {
         if (barrier.size() < 2) continue;
 
@@ -119,23 +122,27 @@ int BarrierFloodFill::apply(float* grid, int resolution,
         }
     }
 
-    // Step 2: Dilate boundary by 1 pixel to close diagonal gaps
+    // Step 2: Dilate boundary by 3 pixels.
+    // Barriers are thin polylines (~1px). After dilation they become ~7px wide,
+    // which survives the terrain mesh subsampling (step=2 for 1025->512 mesh).
     {
         const int d4x[] = {-1, 1, 0, 0};
         const int d4y[] = {0, 0, -1, 1};
-        std::vector<bool> dilated = isBoundary;
-        for (int py = 0; py < res; py++) {
-            for (int px = 0; px < res; px++) {
-                if (isBoundary[py * res + px]) {
-                    for (int d = 0; d < 4; d++) {
-                        int nx = px + d4x[d], ny = py + d4y[d];
-                        if (nx >= 0 && nx < res && ny >= 0 && ny < res)
-                            dilated[ny * res + nx] = true;
+        for (int dilatePass = 0; dilatePass < 3; dilatePass++) {
+            std::vector<bool> dilated = isBoundary;
+            for (int py = 0; py < res; py++) {
+                for (int px = 0; px < res; px++) {
+                    if (isBoundary[py * res + px]) {
+                        for (int d = 0; d < 4; d++) {
+                            int nx = px + d4x[d], ny = py + d4y[d];
+                            if (nx >= 0 && nx < res && ny >= 0 && ny < res)
+                                dilated[ny * res + nx] = true;
+                        }
                     }
                 }
             }
+            isBoundary = std::move(dilated);
         }
-        isBoundary = std::move(dilated);
     }
 
     // Step 3: Raise barrier boundary pixels that sit on water.

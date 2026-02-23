@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "bc-screenshot": {
+      "type": "stdio",
+      "command": "python",
+      "args": [
+        "c:/Users/PB/source/bc-urnu/tools/screenshot_mcp.py"
+      ]
+    }
+  }
+}

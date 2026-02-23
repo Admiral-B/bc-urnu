@@ -195,6 +195,7 @@
     <ClCompile Include="..\editor\OSMLandPolygons.cpp" />
     <ClCompile Include="..\editor\ElevationTile.cpp" />
     <ClCompile Include="..\editor\OSMWaterReader.cpp" />
+    <ClCompile Include="..\editor\OSMLandUseReader.cpp" />
     <ClCompile Include="..\ChartReader.cpp" />
     <ClCompile Include="..\BarrierFloodFill.cpp" />
     <ClCompile Include="..\HeightmapGenerator.cpp" />
@@ -247,6 +248,7 @@
     <ClInclude Include="..\editor\OSMLandPolygons.hpp" />
     <ClInclude Include="..\editor\ElevationTile.hpp" />
     <ClInclude Include="..\editor\OSMWaterReader.hpp" />
+    <ClInclude Include="..\editor\OSMLandUseReader.hpp" />
     <ClInclude Include="..\ChartReader.hpp" />
     <ClInclude Include="..\BarrierFloodFill.hpp" />
     <ClInclude Include="..\HeightmapGenerator.hpp" />

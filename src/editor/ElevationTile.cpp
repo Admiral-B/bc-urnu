@@ -33,9 +33,8 @@ int ElevationTile::suggestZoom(double minLat, double maxLat,
 
     double z = std::log2(targetSize * 360.0 / (maxExtent * 256.0));
     int zoom = static_cast<int>(std::round(z));
-    // Cap at 12: elevation data beyond ~40m/pixel adds download cost
-    // without meaningful detail for ship simulator heightmaps.
-    return std::max(1, std::min(zoom, 12));
+    // Cap at 14: ~10m/pixel elevation for detailed coastal terrain.
+    return std::max(1, std::min(zoom, 14));
 }
 
 std::vector<float> ElevationTile::generate(
@@ -61,7 +60,7 @@ std::vector<float> ElevationTile::generate(
     int tilesY = maxTileY - minTileY + 1;
     int totalTiles = tilesX * tilesY;
 
-    if (totalTiles <= 0 || totalTiles > 1024) {
+    if (totalTiles <= 0 || totalTiles > 4096) {
         std::cerr << "ElevationTile: tile count out of range (" << totalTiles << ")" << std::endl;
         return {};
     }

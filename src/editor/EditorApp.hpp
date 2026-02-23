@@ -140,7 +140,7 @@ private:
     // World generation dialog
     bool showGenerateDialog = false;
     char worldNameBuf[128] = {};
-    int worldResolution = 1025;
+    int worldResolution = 2049;
     bool useGEBCO = true;
     bool useCopernicusDEM = true;
     bool useSatelliteTexture = true;

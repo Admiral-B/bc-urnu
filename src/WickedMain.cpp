@@ -81,6 +81,15 @@ static wi::Application* g_weApp = nullptr;
 static LRESULT CALLBACK WickedWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
     case WM_SIZE:
+        if (wParam == SIZE_MINIMIZED) {
+            if (g_weApp) g_weApp->is_window_active = false;
+        } else if (wParam == SIZE_RESTORED || wParam == SIZE_MAXIMIZED) {
+            if (g_weApp) {
+                g_weApp->is_window_active = true;
+                g_weApp->SetWindow(hWnd);
+            }
+        }
+        break;
     case WM_DPICHANGED:
         if (g_weApp && g_weApp->is_window_active)
             g_weApp->SetWindow(hWnd);
@@ -106,6 +115,7 @@ static LRESULT CALLBACK WickedWndProc(HWND hWnd, UINT message, WPARAM wParam, LP
         if (g_weApp) g_weApp->is_window_active = true;
         break;
     case WM_DESTROY:
+        weLog("WM_DESTROY received -- posting quit");
         PostQuitMessage(0);
         break;
     default:
@@ -1270,6 +1280,32 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             }
             weLog("  Pre-baked buildings loaded");
         }
+
+        // Load pre-baked structures (dams, breakwaters, piers) with concrete material
+        std::string structPath = worldPath + "structures.obj";
+        if (Utilities::pathExists(structPath)) {
+            weLog("  Loading pre-baked structures: " + structPath);
+            wi::ecs::Entity structEntity = loadModelOrPlaceholder(scene, structPath,
+                                                                    "PrebakeStructures", 0.7f, 0.7f, 0.68f, 8.0f);
+            if (structEntity != wi::ecs::INVALID_ENTITY) {
+                // Override all materials to concrete (grey, rough, double-sided)
+                for (size_t i = 0; i < scene.materials.GetCount(); i++) {
+                    auto* nameComp = scene.names.GetComponent(scene.materials.GetEntity(i));
+                    if (!nameComp) continue;
+                    const auto& n = nameComp->name;
+                    if (n.find("concrete") != std::string::npos) {
+                        scene.materials[i].baseColor = DirectX::XMFLOAT4(0.85f, 0.85f, 0.82f, 1.0f);
+                        scene.materials[i].roughness = 0.80f;
+                        scene.materials[i].metalness = 0.0f;
+                        scene.materials[i].SetDoubleSided(true);
+                        scene.materials[i].SetCastShadow(true);
+                        // Keep the concrete texture if loaded from MTL
+                        scene.materials[i].CreateRenderData();
+                    }
+                }
+                weLog("  Pre-baked structures loaded");
+            }
+        }
     } else if (coords.terrainLongExtent > 0 && coords.terrainLatExtent > 0) {
         weLog("  Loading OSM buildings...");
 
@@ -1531,6 +1567,20 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     // (timer has been running during entire scene setup above)
     SimBridge::syncTimer();
 
+    // Compute absolute paths for screenshot file-watch (CWD may have shifted
+    // during Irrlicht model loading, so relative paths are unreliable).
+    std::string screenshotRequestPath, screenshotOutputPath;
+    {
+        char exePath[MAX_PATH] = {};
+        GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+        std::string exeDir(exePath);
+        auto slashPos = exeDir.find_last_of("\\/");
+        if (slashPos != std::string::npos) exeDir = exeDir.substr(0, slashPos);
+        screenshotRequestPath = exeDir + "\\screenshot_request.txt";
+        screenshotOutputPath = exeDir + "\\screenshot.png";
+    }
+    weLog("  Screenshot watch: " + screenshotRequestPath);
+
     MSG msg = {};
     int frameCount = 0;
     while (msg.message != WM_QUIT) {
@@ -1559,6 +1609,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
 
             // ESC = quit
             if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) {
+                weLog("ESC pressed -- posting quit");
                 PostQuitMessage(0);
                 continue;
             }
@@ -1784,11 +1835,13 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                     camTargetZ = ownShipZ;
                     camDistance = 200.0f;
                     camPitch = 25.0f;
+                } else {
+                    // Reset bridge view to forward-looking default
+                    camPitch = 0.0f;
+                    camYawOffset = 0.0f;
                 }
-                // Show own ship in orbit mode, hide in bridge mode
-                if (ownShipEntity != wi::ecs::INVALID_ENTITY) {
-                    setEntityVisible(scene, ownShipEntity, camOrbitMode);
-                }
+                // Ship stays visible in both modes: orbit sees it from outside,
+                // bridge mode sees the bridge interior from inside.
             }
             keyOWasDown = keyODown;
 
@@ -1909,6 +1962,15 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             camera.TransformCamera(invView);
             if (frameCount <= 3) weLog("  Frame " + std::to_string(frameCount) + " post-camera");
 
+            // Skip rendering when window is inactive (minimized or lost focus).
+            // Must check BEFORE ImGuiNewFrame() to avoid NewFrame/EndFrame mismatch.
+            // If focus is lost DURING application.Run(), Run() may skip Compose()
+            // (which calls ImGui::Render()), leaving an unbalanced NewFrame -> crash.
+            if (!application.is_window_active) {
+                Sleep(16);
+                continue;
+            }
+
             // ===== IMGUI HUD =====
             {
                 // Feed input state to ImGui
@@ -1985,6 +2047,10 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 PostQuitMessage(1);
             }
 
+            // Safety: if Run() skipped Compose() (e.g. focus lost during render),
+            // ImGui::Render() was never called. EndFrame() no-ops if already called.
+            ImGui::EndFrame();
+
             if (frameCount <= 5)
                 weLog("  Frame " + std::to_string(frameCount) + " post-Run() OK");
 
@@ -2003,8 +2069,34 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             if (frameCount % 500 == 0 && g_weLog.is_open()) {
                 g_weLog.flush();
             }
+
+            // Screenshot support: F12 key or file-watch trigger.
+            // File-watch: external tool writes "screenshot_request.txt", we save
+            // "screenshot.png" and delete the request file to signal completion.
+            {
+                static bool f12WasDown = false;
+                bool f12IsDown = (GetAsyncKeyState(VK_F12) & 0x8000) != 0;
+                bool fileRequest = Utilities::pathExists(screenshotRequestPath);
+
+                if ((f12IsDown && !f12WasDown) || fileRequest) {
+                    std::string outPath = fileRequest ? screenshotOutputPath : "";
+                    std::string result = wi::helper::screenshot(application.swapChain, outPath);
+                    if (!result.empty()) {
+                        weLog("Screenshot saved: " + result);
+                    }
+                    if (fileRequest) {
+                        std::remove(screenshotRequestPath.c_str());
+                    }
+                }
+                f12WasDown = f12IsDown;
+            }
         }
     }
+
+    // Log why we exited the render loop
+    weLog("Render loop ended: msg.message=" + std::to_string(msg.message) +
+          " wParam=" + std::to_string(msg.wParam) +
+          " frame=" + std::to_string(frameCount));
 
     // Cleanup
     weLog("Shutting down SimulationBridge...");

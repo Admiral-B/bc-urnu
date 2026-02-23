@@ -183,10 +183,43 @@ bool OpenSeaMapSource::query(double minLat, double maxLat,
        << "node[\"man_made\"~\"tower|chimney|lighthouse|mast\"]("
        << minLat << "," << minLon << "," << maxLat << "," << maxLon
        << ");"
+       << "way[\"man_made\"~\"tower|chimney|lighthouse|mast\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "way[\"seamark:type\"~\"light_major|light_minor\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
        << "node[\"building\"~\"church|cathedral|chapel\"]("
        << minLat << "," << minLon << "," << maxLat << "," << maxLon
        << ");"
        << "way[\"building\"~\"church|cathedral|chapel\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "node[\"seamark:type\"=\"wreck\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "node[\"seamark:type\"=\"rock\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "node[\"seamark:type\"=\"obstruction\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "node[\"seamark:type\"=\"mooring\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "node[\"seamark:type\"=\"anchorage\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "node[\"seamark:type\"=\"harbour\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "node[\"seamark:type\"=\"offshore_platform\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "way[\"seamark:type\"=\"restricted_area\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "way[\"seamark:type\"=\"anchorage\"]("
        << minLat << "," << minLon << "," << maxLat << "," << maxLon
        << "););"
        << "out body center;";
@@ -344,7 +377,7 @@ bool OpenSeaMapSource::parseResponse(const std::string& jsonStr) {
         if (tags.contains("seamark:type"))
             seamarkType = tags["seamark:type"].get<std::string>();
 
-        // ---- Buoys and lights (nodes only, not ways) ----
+        // ---- Buoys (nodes only, not ways) ----
         if (elemType == "node") {
 
         if (seamarkType == "buoy_lateral" || seamarkType == "beacon_lateral") {
@@ -416,9 +449,11 @@ bool OpenSeaMapSource::parseResponse(const std::string& jsonStr) {
             buoys.push_back(buoy);
         }
 
-        // ---- Lights ----
+        } // end if (elemType == "node") -- buoys only
+
+        // ---- Lights (both nodes and ways) ----
         // Lights can be standalone or on the same node as a buoy.
-        // We always create a light entry; linkage to buoys happens in query().
+        // Ways are needed for lighthouses mapped as building outlines.
         if (seamarkType == "light" || seamarkType == "light_major" || seamarkType == "light_minor" ||
             tags.contains("seamark:light:character") || tags.contains("seamark:light:1:character")) {
 
@@ -488,8 +523,6 @@ bool OpenSeaMapSource::parseResponse(const std::string& jsonStr) {
             }
         }
 
-        } // end if (elemType == "node") -- buoys/lights
-
         // ---- Landmarks (both nodes and ways) ----
         if (seamarkType == "landmark") {
             OsmLandmark lm;
@@ -512,18 +545,23 @@ bool OpenSeaMapSource::parseResponse(const std::string& jsonStr) {
             landmarks.push_back(lm);
         }
 
-        // ---- Non-seamark navigational landmarks (towers, churches, chimneys, masts) ----
-        if (seamarkType.empty()) {
+        // ---- Navigational landmarks (towers, churches, chimneys, masts, lighthouses) ----
+        // Lighthouses tagged with seamark:type=light_major/light_minor must also create
+        // landmark entries so a visible tower appears (not just an invisible light).
+        {
             std::string manMade, building;
             if (tags.contains("man_made"))
                 manMade = tags["man_made"].get<std::string>();
             if (tags.contains("building"))
                 building = tags["building"].get<std::string>();
 
+            bool isLighthouse = (manMade == "lighthouse");
+            if (seamarkType.empty() || isLighthouse) {
+
             int cat = 0;
             if (manMade == "tower") cat = 17;
             else if (manMade == "chimney") cat = 3;
-            else if (manMade == "lighthouse") cat = 17;
+            else if (manMade == "lighthouse") cat = 99; // custom: maps to Lighthouse model
             else if (manMade == "mast") cat = 18;
             else if (building == "church" || building == "cathedral" || building == "chapel") cat = 20;
 
@@ -533,71 +571,26 @@ bool OpenSeaMapSource::parseResponse(const std::string& jsonStr) {
                 lm.longitude = lon;
                 lm.category = cat;
 
-                if (tags.contains("height")) {
+                // Check multiple height tags (seamark-specific take priority)
+                if (tags.contains("seamark:landmark:height")) {
+                    try { lm.height = std::stod(tags["seamark:landmark:height"].get<std::string>()); }
+                    catch (...) {}
+                } else if (tags.contains("seamark:light:height")) {
+                    try { lm.height = std::stod(tags["seamark:light:height"].get<std::string>()); }
+                    catch (...) {}
+                } else if (tags.contains("height")) {
                     try { lm.height = std::stod(tags["height"].get<std::string>()); }
                     catch (...) {}
                 }
-                if (tags.contains("name"))
+                if (tags.contains("seamark:name"))
+                    lm.name = tags["seamark:name"].get<std::string>();
+                else if (tags.contains("name"))
                     lm.name = tags["name"].get<std::string>();
 
                 landmarks.push_back(lm);
-
-                // Lighthouses may also have seamark:light:* tags for their light
-                // properties. Extract these to create a proper light entry.
-                if (manMade == "lighthouse" &&
-                    (tags.contains("seamark:light:character") ||
-                     tags.contains("seamark:light:colour") ||
-                     tags.contains("seamark:light:1:character"))) {
-
-                    std::vector<std::string> lightPrefixes;
-                    if (tags.contains("seamark:light:character") || tags.contains("seamark:light:colour"))
-                        lightPrefixes.push_back("seamark:light:");
-                    for (int li = 1; li <= 8; li++) {
-                        std::string prefix = "seamark:light:" + std::to_string(li) + ":";
-                        if (tags.contains(prefix + "character") || tags.contains(prefix + "colour"))
-                            lightPrefixes.push_back(prefix);
-                    }
-
-                    for (const auto& prefix : lightPrefixes) {
-                        OsmLight light;
-                        light.latitude = lat;
-                        light.longitude = lon;
-
-                        if (tags.contains(prefix + "character"))
-                            light.characteristic = parseCharacteristic(tags[prefix + "character"].get<std::string>());
-                        if (tags.contains(prefix + "period")) {
-                            try { light.period = std::stod(tags[prefix + "period"].get<std::string>()); }
-                            catch (...) {}
-                        }
-                        if (tags.contains(prefix + "group"))
-                            light.group = tags[prefix + "group"].get<std::string>();
-                        if (tags.contains(prefix + "colour"))
-                            light.colour = parseColour(tags[prefix + "colour"].get<std::string>());
-                        if (tags.contains(prefix + "range")) {
-                            try { light.range = std::stod(tags[prefix + "range"].get<std::string>()); }
-                            catch (...) {}
-                        }
-                        if (tags.contains(prefix + "height")) {
-                            try { light.height = std::stod(tags[prefix + "height"].get<std::string>()); }
-                            catch (...) {}
-                        }
-                        if (tags.contains(prefix + "sector_start")) {
-                            try { light.sectorStart = std::stod(tags[prefix + "sector_start"].get<std::string>()); }
-                            catch (...) {}
-                        }
-                        if (tags.contains(prefix + "sector_end")) {
-                            try { light.sectorEnd = std::stod(tags[prefix + "sector_end"].get<std::string>()); }
-                            catch (...) {}
-                        }
-                        // Lighthouses typically have longer range
-                        if (light.range <= 5.0)
-                            light.range = 15.0;
-
-                        lights.push_back(light);
-                    }
-                }
             }
         }
+        } // end navigational landmarks scope
     }
 
     return true;
@@ -673,6 +666,7 @@ std::string OpenSeaMapSource::mapLandmarkType(int category) {
         case 18: return "Masts";
         case 19: return "Masts";
         case 20: return "Church";
+        case 99: return "Lighthouse"; // custom: man_made=lighthouse
         default: return "Tower";
     }
 }
@@ -861,9 +855,16 @@ std::string OpenSeaMapSource::generateLandObjectIni() const {
         oss << "Long(" << idx << ")=" << landmarks[i].longitude << "\n";
         oss << "Lat(" << idx << ")=" << landmarks[i].latitude << "\n";
 
-        if (landmarks[i].height > 0) {
+        // Lighthouses: place model at sea/ground level (Absolute=2 clamps to
+        // max(0, terrain)).  The model geometry provides the visual height;
+        // the focal-plane height from OSM goes to light.ini, not here.
+        // Other objects: write HeightCorrection as-is (terrain-relative).
+        if (landmarks[i].category == 99) {
+            // Lighthouse: no height correction, clamp to sea level
+            oss << "Absolute(" << idx << ")=2\n";
+        } else if (landmarks[i].height > 0) {
             oss.precision(1);
-            oss << "HeightAbove(" << idx << ")=" << landmarks[i].height << "\n";
+            oss << "HeightCorrection(" << idx << ")=" << landmarks[i].height << "\n";
         }
 
         oss << "Rotation(" << idx << ")=0\n";

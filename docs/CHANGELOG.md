@@ -109,6 +109,14 @@ Editor no-chart path (OpenSeaMap):
 - Queries OpenSeaMap Overpass API for seamarks (buoys, lights, landmarks)
 - Queries OSM for building footprints, generates building meshes
 - Works without S-57 charts -- uses built-in coastline data + ESRI satellite tiles
+- OSM island polygons (`place=island/islet`, `natural=rock/bare_rock`) rasterized as protected terrain
+- Synthetic lighthouse islands (50m radius, 5m center height with quadratic falloff)
+- Island protection mask prevents water subtraction, DEM flattening, and smoothing erosion
+- Barrier snap radius scales with heightmap resolution (maintains ~390m physical distance)
+- Comprehensive OSM queries: 43+ feature tags across buildings, water, land use, seamarks
+- Terrain PBR: Sobel normal map, per-land-use roughness map, 6-octave FBM detail textures
+- Building PBR: procedural wall normal maps, roughness maps, weathered roof atlas
+- Default resolution 2049, elevation zoom 14, satellite zoom 19, terrain mesh limit 1024
 
 ---
 

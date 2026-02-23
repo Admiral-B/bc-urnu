@@ -116,8 +116,9 @@ BuildingMesh BuildingGenerator::generate(const BuildingFootprint& fp,
     // Wall atlas: 2x2 grid (each cell 0.5 x 0.5 in UV space)
     float wallCellU = (wallType % 2) * 0.5f;
     float wallCellV = (wallType / 2) * 0.5f;
-    // Roof atlas: 4x1 strip (each cell 0.25 x 1.0 in UV space)
-    float roofCellU = roofType * 0.25f;
+    // Roof atlas: 2x2 grid (each cell 0.5 x 0.5 in UV space)
+    float roofCellU = (roofType % 2) * 0.5f;
+    float roofCellV = (roofType / 2) * 0.5f;
 
     float height = fp.height;
     float roofY = groundY + height;
@@ -216,10 +217,10 @@ BuildingMesh BuildingGenerator::generate(const BuildingFootprint& fp,
             float z = worldPoly[i].second;
             mesh.positions.insert(mesh.positions.end(), {x, roofY, z});
             mesh.normals.insert(mesh.normals.end(), {0.0f, 1.0f, 0.0f});
-            // Roof UV: project XZ, remap into roof atlas cell
+            // Roof UV: project XZ, remap into roof atlas cell (2x2 grid)
             mesh.uvs.insert(mesh.uvs.end(), {
-                atlasUV(x * uvScale, 0.25f, roofCellU),
-                atlasUV(z * uvScale, 1.0f, 0.0f)
+                atlasUV(x * uvScale, 0.5f, roofCellU),
+                atlasUV(z * uvScale, 0.5f, roofCellV)
             });
         }
 

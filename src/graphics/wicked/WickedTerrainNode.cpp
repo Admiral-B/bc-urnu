@@ -184,7 +184,7 @@ bool WickedTerrainNode::createTerrainMesh(const std::string& texturePath) {
 
     // Subsample large heightmaps for performance (max 512x512 mesh)
     int step = 1;
-    while (rows / step > 512 || cols / step > 512) step *= 2;
+    while (rows / step > 1024 || cols / step > 1024) step *= 2;
     int meshRows = rows / step;
     int meshCols = cols / step;
 
@@ -222,6 +222,28 @@ bool WickedTerrainNode::createTerrainMesh(const std::string& texturePath) {
                 std::cout << "WickedTerrainNode: texture loaded: " << normalizedPath << std::endl;
             } else {
                 std::cerr << "WickedTerrainNode: texture NOT found: " << normalizedPath << std::endl;
+            }
+
+            // Look for PBR maps (normal.png, roughness.png) alongside texture.png
+            size_t lastSlash = normalizedPath.rfind('/');
+            if (lastSlash != std::string::npos) {
+                std::string worldDir = normalizedPath.substr(0, lastSlash + 1);
+                std::string normalFile = worldDir + "normal.png";
+                std::string roughFile = worldDir + "roughness.png";
+
+                if (wi::helper::FileExists(normalFile)) {
+                    material->textures[MaterialComponent::NORMALMAP].name = normalFile;
+                    material->textures[MaterialComponent::NORMALMAP].resource =
+                        wi::resourcemanager::Load(normalFile);
+                    std::cout << "WickedTerrainNode: normal map loaded: " << normalFile << std::endl;
+                }
+                if (wi::helper::FileExists(roughFile)) {
+                    material->textures[MaterialComponent::SURFACEMAP].name = roughFile;
+                    material->textures[MaterialComponent::SURFACEMAP].resource =
+                        wi::resourcemanager::Load(roughFile);
+                    material->roughness = 1.0f; // Let texture drive roughness
+                    std::cout << "WickedTerrainNode: roughness map loaded: " << roughFile << std::endl;
+                }
             }
         }
         material->CreateRenderData();

@@ -167,12 +167,26 @@ float OSMBuildingReader::estimateHeight(const std::string& heightStr,
     if (type == "garage" || type == "shed") return 3.0f;
     if (type == "commercial" || type == "office") return 12.0f;
 
-    // Harbour structures
-    if (type == "dam") return 4.0f;
-    if (type == "breakwater") return 4.0f;
+    // Harbour structures (taller than real-world for visibility from bridge)
+    if (type == "dam") return 8.0f;
+    if (type == "breakwater") return 5.0f;
     if (type == "pier") return 3.0f;
     if (type == "jetty") return 2.0f;
     if (type == "groyne") return 1.5f;
+    if (type == "quay") return 3.0f;
+    if (type == "wharf") return 3.0f;
+    if (type == "slipway") return 1.0f;
+    if (type == "boat_ramp") return 1.5f;
+    if (type == "dockyard") return 6.0f;
+    if (type == "dry_dock") return 4.0f;
+    if (type == "landing_stage") return 2.0f;
+    if (type == "crane") return 25.0f;
+    if (type == "storage_tank") return 12.0f;
+    if (type == "silo") return 15.0f;
+    if (type == "water_tower") return 20.0f;
+    if (type == "power_tower") return 30.0f;
+    if (type == "bridge") return 6.0f;
+    if (type == "embankment") return 3.0f;
 
     return 9.0f; // ~3 storeys
 }
@@ -217,7 +231,7 @@ bool OSMBuildingReader::query(double minLat, double maxLat,
        << "(way[\"building\"]("
        << minLat << "," << minLon << "," << maxLat << "," << maxLon
        << ");"
-       << "way[\"man_made\"~\"pier|jetty|groyne\"]("
+       << "way[\"man_made\"~\"pier|jetty|groyne|quay|wharf\"]("
        << minLat << "," << minLon << "," << maxLat << "," << maxLon
        << ");"
        << "way[\"man_made\"=\"breakwater\"]("
@@ -229,7 +243,55 @@ bool OSMBuildingReader::query(double minLat, double maxLat,
        << "way[\"waterway\"=\"weir\"]("
        << minLat << "," << minLon << "," << maxLat << "," << maxLon
        << ");"
+       << "way[\"man_made\"=\"slipway\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "way[\"leisure\"=\"slipway\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
        << "way[\"place\"~\"island|islet\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "way[\"natural\"~\"rock|bare_rock\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "way[\"man_made\"=\"boat_ramp\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "way[\"man_made\"=\"dockyard\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "way[\"man_made\"=\"dry_dock\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "way[\"man_made\"=\"landing_stage\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "way[\"man_made\"=\"crane\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "way[\"man_made\"=\"embankment\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "way[\"man_made\"=\"bridge\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "way[\"man_made\"=\"storage_tank\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "way[\"man_made\"=\"silo\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "way[\"man_made\"=\"water_tower\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "way[\"man_made\"=\"power_tower\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "way[\"waterway\"=\"dry_dock\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "way[\"waterway\"=\"boatyard\"]("
        << minLat << "," << minLon << "," << maxLat << "," << maxLon
        << "););"
        << "out geom;";
@@ -322,10 +384,18 @@ bool OSMBuildingReader::parseResponse(const std::string& jsonStr) {
         if (elem.contains("tags") && elem["tags"].is_object()) {
             const auto& tags = elem["tags"];
 
-            // Island/islet polygons: store outline and skip building processing
-            if (tags.contains("place")) {
-                std::string place = tags["place"].get<std::string>();
-                if ((place == "island" || place == "islet") && fp.outline.size() >= 3) {
+            // Island/islet/rock polygons: store outline and skip building processing
+            if (fp.outline.size() >= 3) {
+                bool isIsland = false;
+                if (tags.contains("place")) {
+                    std::string place = tags["place"].get<std::string>();
+                    isIsland = (place == "island" || place == "islet");
+                }
+                if (!isIsland && tags.contains("natural")) {
+                    std::string nat = tags["natural"].get<std::string>();
+                    isIsland = (nat == "rock" || nat == "bare_rock");
+                }
+                if (isIsland) {
                     islandPolygons.push_back(fp.outline);
                     continue; // not a building
                 }
@@ -334,13 +404,33 @@ bool OSMBuildingReader::parseResponse(const std::string& jsonStr) {
             if (tags.contains("building"))
                 buildingType = tags["building"].get<std::string>();
 
-            // Harbour structures: man_made=breakwater|pier|jetty|groyne, waterway=dam
+            // Harbour structures: man_made=breakwater|pier|jetty|groyne|quay|wharf|slipway, waterway=dam
             if (tags.contains("man_made")) {
                 structureType = tags["man_made"].get<std::string>();
                 if (structureType == "pier" ||
                     structureType == "jetty" || structureType == "groyne" ||
-                    structureType == "breakwater") {
+                    structureType == "breakwater" ||
+                    structureType == "quay" || structureType == "wharf" ||
+                    structureType == "slipway" ||
+                    structureType == "boat_ramp" ||
+                    structureType == "dockyard" ||
+                    structureType == "dry_dock" ||
+                    structureType == "landing_stage" ||
+                    structureType == "crane" ||
+                    structureType == "embankment" ||
+                    structureType == "bridge" ||
+                    structureType == "storage_tank" ||
+                    structureType == "silo" ||
+                    structureType == "water_tower" ||
+                    structureType == "power_tower") {
                     isStructure = true;
+                }
+            }
+            if (tags.contains("leisure")) {
+                std::string leisure = tags["leisure"].get<std::string>();
+                if (leisure == "slipway") {
+                    isStructure = true;
+                    structureType = "slipway";
                 }
             }
             if (tags.contains("waterway")) {
@@ -348,6 +438,12 @@ bool OSMBuildingReader::parseResponse(const std::string& jsonStr) {
                 if (ww == "dam" || ww == "weir") {
                     isStructure = true;
                     structureType = "dam";
+                } else if (ww == "dry_dock") {
+                    isStructure = true;
+                    structureType = "dry_dock";
+                } else if (ww == "boatyard") {
+                    isStructure = true;
+                    structureType = "dockyard";
                 }
             }
 

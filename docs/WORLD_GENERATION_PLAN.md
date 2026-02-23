@@ -196,6 +196,135 @@ height.png texture.png buoy.ini  buildings/
 
 ---
 
+## Phase 6: GlobalBuildingAtlas Height Data
+
+**Goal:** Use ML-estimated building heights from GBA to replace hardcoded defaults.
+
+### Problem
+
+Most OSM buildings lack `height` or `building:levels` tags. The editor currently defaults to 8-12m based on type. GBA provides per-building height estimates with uncertainty for every building globally.
+
+### Data Source
+
+**GlobalBuildingAtlas** (zhu-xlab, TU Munich) -- https://github.com/zhu-xlab/GlobalBuildingAtlas
+
+| Component | License | Host | Content |
+|---|---|---|---|
+| GBA.ODbLPolygon | ODbL | HuggingFace | OSM + Microsoft ML footprints |
+| GBA.LoD1 | CC BY-NC 4.0 | HuggingFace | Footprints + height JSON |
+| GBA.Height | CC BY-NC 4.0 | mediaTUM | Height rasters (GeoTIFF) |
+
+### GeoJSON Output Schema
+
+```json
+{
+  "geometry": "Polygon (EPSG:3857)",
+  "properties": {
+    "source": "str",
+    "id": "str",
+    "height": "float (metres, max value from raster)",
+    "var": "float (height variance/uncertainty)",
+    "region": "str"
+  }
+}
+```
+
+**CRS**: EPSG:3857 (Web Mercator). Must reproject to WGS84 for lat/lon matching.
+
+### Data Organization
+
+- 5x5 degree tiles in WGS84 grid
+- Tile naming: `{e/w}{lon_min}_{n/s}{lat_max}_{e/w}{lon_max}_{n/s}{lat_min}`
+- Example: Cardiff Bay area falls in tile `w5_n55_w0_n50`
+- Index files: `lod1.geojson`, `height_zip.geojson`, `height_tif.geojson`
+
+### Access Methods
+
+1. **WFS endpoint**: `https://tubvsig-so2sat-vm1.srv.mwn.de/geoserver/ows?` (bbox query, may be slow/unreliable -- returned 502 during testing)
+2. **HuggingFace download**: Pre-download 5x5 degree tiles, load at generation time
+3. **Height rasters**: GeoTIFF files queryable with GDAL (already available in editor)
+
+### Integration Strategy
+
+Use GBA as a **height supplement** to OSM, not a replacement:
+
+1. OSM Overpass provides building footprints (better type/name metadata, more current)
+2. For each footprint without OSM height data, spatial-query the GBA tile:
+   - Reproject building centroid from WGS84 to EPSG:3857
+   - Find intersecting GBA polygon by centroid containment
+   - Use GBA `height` field, ignore if `var` > threshold (uncertain)
+3. Fall back to type-based defaults only when both OSM and GBA lack height
+
+### Task 6.1: GBA Tile Downloader
+
+- Download relevant 5x5 degree GeoJSON tile from HuggingFace at generation time
+- Cache in `%APPDATA%/Bridge Command/gba_cache/`
+- Parse with nlohmann/json (already in project)
+- Build spatial index (R-tree or grid) for fast centroid lookup
+
+### Task 6.2: Height Enrichment in OSMBuildingReader
+
+- After Overpass query returns footprints, for each building without height:
+  - Reproject centroid: `x = lon * 20037508.34 / 180`, `y = ln(tan(PI/4 + lat*PI/360)) * 20037508.34 / PI`
+  - Query GBA spatial index for nearest polygon
+  - Assign `height` from GBA if `var` < threshold
+- New field in BuildingFootprint: `heightSource` (osm/gba/default)
+
+### Task 6.3: Alternative -- GBA Height Raster via GDAL
+
+- Simpler than polygon matching: download the GeoTIFF height raster for the tile
+- Use GDAL to sample height at each building centroid (already have GDAL in x86 editor)
+- `GDALRasterIO` point query, reproject coordinates with `OGRCoordinateTransformation`
+- Pro: fast, no polygon matching needed. Con: less precise (raster pixel vs polygon boundary)
+
+### License Note
+
+GBA.LoD1 and GBA.Height are CC BY-NC 4.0 (non-commercial). GBA.ODbLPolygon (footprints only, no heights) is ODbL. For a commercial product, only use ODbL footprints or implement the height estimation independently.
+
+---
+
+## Known Issues and Fixes
+
+### Small Island Rendering (e.g. Monkstone)
+
+**Problem:** Small islands with lighthouses appeared as flat cylinders instead of terrain.
+
+**Root causes (3):**
+
+1. OSM island polygons (`place=island/islet`) were only rasterized in the Natural Earth fallback path. The preferred OSM land polygon path skipped them entirely.
+2. Synthetic lighthouse islands (Step 1.4) set height to 3m, but DEM merge (Step 3) overrode it to `max(0.5, DEM_elev)` = 0.5m since DEM lacks data for tiny islands.
+3. Water subtraction (Step 1.5) erased island pixels when OSM water polygons overlapped them.
+
+**Fix:** Island protection mask (`islandMask`) that prevents water subtraction, DEM flattening, and smoothing erosion. Island polygons now rasterized on all paths. Synthetic islands enlarged (50m radius, 5m center height with quadratic falloff to 1m at edge).
+
+### Barrier Snap Radius vs Resolution
+
+**Problem:** Barrier endpoint snapping was hardcoded at 40px. At 2049 resolution this halved the physical snap distance (~200m vs ~390m at 1025), causing barrage endpoints to not reach nearby land.
+
+**Fix:** `snapRadius = max(40, resolution * 40 / 1025)` scales proportionally.
+
+### Heightmap Pipeline Order (No-Chart Path)
+
+The generation pipeline processes in this order -- later steps can overwrite earlier ones:
+
+```
+Step 1:   Land classification (OSM land polygons or NE coastlines)
+Step 1+:  Island polygon rasterization (place=island/islet, natural=rock)
+Step 1.4: Synthetic lighthouse islands (50m radius circles, protected by islandMask)
+Step 1.5: Water polygon subtraction (skips islandMask pixels)
+Step 2:   DEM elevation download (AWS Terrain Tiles)
+Step 3:   Merge (land=max(0.5,DEM), islands=keep if DEM<1m, water=min(-0.5,DEM))
+Step 3+:  3-pass smoothing (skips islandMask and thin features)
+Step 4:   Barrier flood-fill (raises barrier polylines to 5m)
+Step 4.1: Lock channel re-cutting (-3m depth, 2px dilation)
+```text
+
+Key invariants:
+
+- `islandMask` pixels survive all subsequent steps
+- Thin features (barrier, narrow channels) skip smoothing
+- Lock channels are always re-cut AFTER barrier flood-fill
+
 ## File Map
 
 | File | Purpose |
@@ -206,12 +335,20 @@ height.png texture.png buoy.ini  buildings/
 | `bin/Models/BuildingAtlas/` | Facade texture atlas (Phase 3) |
 | `src/editor/SatelliteTexture.cpp` | Enhanced terrain textures (Phase 4) |
 | `src/editor/TileDownloader.cpp` | Performance fixes (Phase 5) |
+| `src/editor/OpenSeaMapSource.hpp/cpp` | Seamark buoys, lights, landmarks (OSM) |
+| `src/editor/OSMWaterReader.hpp/cpp` | Water polygon subtraction (docks, canals) |
+| `src/editor/OSMLandUseReader.hpp/cpp` | Land use classification (forest, residential) |
+| `src/editor/TerrainTextureBlender.hpp/cpp` | Procedural terrain detail textures |
+| `src/editor/BarrierFloodFill.hpp/cpp` | Barrier-enclosed water detection |
 
 ## Dependencies
 
 | Library | License | Purpose | Phase |
 | --- | --- | --- | --- |
 | earcut.hpp | ISC | Polygon triangulation | 2 |
-| nlohmann/json | MIT | Already in project, parse Overpass responses | 2 |
+| nlohmann/json | MIT | Already in project, parse Overpass/GBA responses | 2, 6 |
 | stb_image | Public domain | Already in project, decode PBR textures | 1 |
 | ambientCG textures | CC0 | Building facade textures | 1, 3 |
+| GDAL | MIT/X | x86 editor only, S-57 charts + GBA height rasters | 6 |
+| GBA.ODbLPolygon | ODbL | Building footprints with ML heights (open) | 6 |
+| GBA.Height | CC BY-NC 4.0 | Height rasters (non-commercial only) | 6 |
