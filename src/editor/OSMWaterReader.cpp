@@ -197,6 +197,15 @@ bool OSMWaterReader::query(double minLat, double maxLat,
     for (auto& server : servers) {
         if (progress) progress(std::string("Querying water areas from ") + server + "...");
         response = OSMBuildingReader::httpPost(server, postBody, USER_AGENT);
+        // Detect HTML error pages (rate limiting) -- first non-ws char must be { or [
+        if (!response.empty()) {
+            size_t i = 0;
+            while (i < response.size() && (response[i] == ' ' || response[i] == '\t' || response[i] == '\n' || response[i] == '\r')) i++;
+            if (i >= response.size() || (response[i] != '{' && response[i] != '[')) {
+                if (progress) progress("Overpass returned non-JSON response (rate limited?), retrying...");
+                response.clear();
+            }
+        }
         if (!response.empty()) break;
     }
     if (response.empty()) {

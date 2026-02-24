@@ -183,6 +183,8 @@ public:
     void     setTimeDelta(float scenarioTime);
     uint32_t getLightLevel() const; //Ambient light level 0-255
 
+    irr::video::IImage* getRadarImageOverlaid() const { return radarImageOverlaidChosen; }
+
     uint32_t getNumberOfOtherShips() const;
     uint32_t getNumberOfBuoys() const;
     std::string getOtherShipName(int number) const;
@@ -260,6 +262,7 @@ public:
     irr::video::SColor getRadarSurroundColour() const;
 	void increaseRadarRange();
     void decreaseRadarRange();
+    float getRadarRangeNm() const;
     void setRadarGain(float value);
     void setRadarClutter(float value);
     void setRadarRain(float value);
@@ -301,6 +304,7 @@ public:
     void setRadarCameraActive();
     void updateViewport(float aspect);
     void setMouseDown(bool isMouseDown);
+    void setRadarCursorPosition(irr::core::vector2di pos);
     void setZoom(bool zoomOn);
     void setZoom(bool zoomOn, float zoomLevel);
     void setViewAngle(float viewAngle);
@@ -425,6 +429,7 @@ private:
     GUIMain* guiMain;
 	ISound* sound;
     bool isMouseDown; //Updated by the event receiver, used by radar
+    irr::core::vector2di cursorPositionRadar; // Radar cursor position (pixels relative to radar center)
     bool moveViewWithPrimary;
     ManOverboard manOverboard;
 

@@ -28,10 +28,11 @@ static irr::scene::ISceneManager* g_converterSmgr = nullptr;
 static bool ensureDevice() {
     if (g_converterDevice) return true;
 
-    // Try EDT_BURNINGSVIDEO first (software renderer that actually loads textures,
-    // giving us per-submesh texture filenames). Fall back to EDT_NULL if it fails.
+    // EDT_NULL is sufficient: Irrlicht's .x/.3ds loaders parse materials and
+    // create SDummyTexture objects with correct filenames even with the NULL driver.
+    // This gives us per-submesh texture names without needing a real renderer.
     irr::SIrrlichtCreationParameters params;
-    params.DriverType = irr::video::EDT_BURNINGSVIDEO;
+    params.DriverType = irr::video::EDT_NULL;
     params.WindowSize = irr::core::dimension2d<irr::u32>(1, 1);
     params.Stencilbuffer = false;
     params.AntiAlias = 0;
@@ -39,14 +40,8 @@ static bool ensureDevice() {
 
     g_converterDevice = irr::createDeviceEx(params);
     if (!g_converterDevice) {
-        // Fall back to EDT_NULL (no texture name extraction)
-        std::cerr << "IrrlichtModelConverter: EDT_BURNINGSVIDEO failed, falling back to EDT_NULL" << std::endl;
-        params.DriverType = irr::video::EDT_NULL;
-        g_converterDevice = irr::createDeviceEx(params);
-        if (!g_converterDevice) {
-            std::cerr << "IrrlichtModelConverter: Failed to create device" << std::endl;
-            return false;
-        }
+        std::cerr << "IrrlichtModelConverter: Failed to create EDT_NULL device" << std::endl;
+        return false;
     }
 
     g_converterSmgr = g_converterDevice->getSceneManager();
@@ -108,7 +103,7 @@ ConvertedModel convertModelViaIrrlicht(const std::string& filepath) {
 
         submesh.material.shininess = mat.Shininess;
 
-        // Texture name (available with EDT_BURNINGSVIDEO, null with EDT_NULL)
+        // Texture name from Irrlicht material (EDT_NULL creates SDummyTexture with filename)
         if (mat.TextureLayer[0].Texture) {
             submesh.material.textureName =
                 mat.TextureLayer[0].Texture->getName().getPath().c_str();
@@ -117,6 +112,14 @@ ConvertedModel convertModelViaIrrlicht(const std::string& filepath) {
         // Extract vertices
         irr::u32 vertCount = mb->getVertexCount();
         submesh.vertices.resize(vertCount);
+
+        const char* vtxTypeNames[] = {"STANDARD", "2TCOORDS", "TANGENTS"};
+        int vtxType = mb->getVertexType();
+        std::cerr << "  MB[" << b << "]: " << vertCount << " verts, "
+                  << mb->getIndexCount() << " idx, type="
+                  << (vtxType < 3 ? vtxTypeNames[vtxType] : "UNKNOWN")
+                  << ", idx" << (mb->getIndexType() == irr::video::EIT_32BIT ? "32" : "16")
+                  << ", tex=" << (mat.TextureLayer[0].Texture ? "yes" : "no") << std::endl;
 
         switch (mb->getVertexType()) {
         case irr::video::EVT_STANDARD: {
@@ -127,6 +130,14 @@ ConvertedModel convertModelViaIrrlicht(const std::string& filepath) {
                     v[i].Normal.X, v[i].Normal.Y, v[i].Normal.Z,
                     v[i].TCoords.X, v[i].TCoords.Y
                 };
+            }
+            // Log first few UVs for debugging
+            if (vertCount > 0) {
+                std::cerr << "    UV samples: ";
+                for (irr::u32 i = 0; i < std::min(vertCount, irr::u32(5)); i++) {
+                    std::cerr << "(" << v[i].TCoords.X << "," << v[i].TCoords.Y << ") ";
+                }
+                std::cerr << std::endl;
             }
             break;
         }
@@ -154,12 +165,19 @@ ConvertedModel convertModelViaIrrlicht(const std::string& filepath) {
         }
         }
 
-        // Extract indices (Irrlicht uses 16-bit indices)
+        // Extract indices (handle both 16-bit and 32-bit index types)
         irr::u32 idxCount = mb->getIndexCount();
         submesh.indices.resize(idxCount);
-        const irr::u16* idx16 = mb->getIndices();
-        for (irr::u32 i = 0; i < idxCount; i++) {
-            submesh.indices[i] = static_cast<uint32_t>(idx16[i]);
+        if (mb->getIndexType() == irr::video::EIT_32BIT) {
+            const irr::u32* idx32 = reinterpret_cast<const irr::u32*>(mb->getIndices());
+            for (irr::u32 i = 0; i < idxCount; i++) {
+                submesh.indices[i] = static_cast<uint32_t>(idx32[i]);
+            }
+        } else {
+            const irr::u16* idx16 = reinterpret_cast<const irr::u16*>(mb->getIndices());
+            for (irr::u32 i = 0; i < idxCount; i++) {
+                submesh.indices[i] = static_cast<uint32_t>(idx16[i]);
+            }
         }
 
         result.submeshes.push_back(std::move(submesh));

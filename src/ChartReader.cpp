@@ -97,6 +97,36 @@ void ChartReader::close() {
     }
 }
 
+// Convert S-57 IHO COLOUR codes to semicolon-separated named colours.
+// Input: raw OGR string like "(1,6)" or "1,6" (comma-separated IHO codes)
+// Output: "white;yellow" (semicolon-separated colour names for renderer)
+static std::string ihoColoursToNames(const std::string& raw) {
+    if (raw.empty()) return "";
+    // IHO S-57 COLOUR codes
+    static const char* names[] = {
+        "", "white", "black", "red", "green", "blue", "yellow",
+        "grey", "brown", "orange", "violet", "orange", "orange", "orange"
+    };
+    std::string result;
+    std::string cleaned;
+    for (char c : raw) {
+        if (c >= '0' && c <= '9') cleaned += c;
+        else if (c == ',') cleaned += ',';
+    }
+    std::istringstream iss(cleaned);
+    std::string token;
+    bool first = true;
+    while (std::getline(iss, token, ',')) {
+        if (token.empty()) continue;
+        int code = std::atoi(token.c_str());
+        const char* name = (code >= 1 && code <= 13) ? names[code] : "white";
+        if (!first) result += ';';
+        result += name;
+        first = false;
+    }
+    return result;
+}
+
 std::vector<ChartBuoy> ChartReader::extractBuoys() {
     std::vector<ChartBuoy> buoys;
 
@@ -138,7 +168,7 @@ std::vector<ChartBuoy> ChartReader::extractBuoys() {
             buoy.shape = (idx >= 0) ? feature->GetFieldAsInteger(idx) : 0;
 
             idx = feature->GetFieldIndex("COLOUR");
-            buoy.colours = (idx >= 0) ? feature->GetFieldAsString(idx) : "";
+            buoy.colours = (idx >= 0) ? ihoColoursToNames(feature->GetFieldAsString(idx)) : "";
 
             idx = feature->GetFieldIndex("CATLAM");
             buoy.categoryLateral = (idx >= 0) ? feature->GetFieldAsInteger(idx) : 0;
@@ -579,57 +609,26 @@ std::vector<TSSArea> ChartReader::extractTSSAreas() {
 // ── Buoy type mapping ──────────────────────────────────────────────────────
 
 std::string ChartReader::mapBuoyType(const ChartBuoy& buoy) {
-    // Lateral buoys
+    // Shape-primary mapping: explicit shape tag takes priority
+    switch (buoy.shape) {
+        case 1: return "shape_conical";
+        case 2: return "shape_can";
+        case 3: return "shape_spherical";
+        case 4: return "shape_pillar";
+        case 5: return "shape_spar";
+        case 6: return "shape_barrel";
+    }
+    // Infer shape from buoy type/category when shape tag absent
     if (buoy.layerName == "BOYLAT") {
-        if (buoy.categoryLateral == 1) {
-            // Port (IALA A: red, IALA B: green - we assume IALA B for US charts)
-            // In IALA B (Americas), CATLAM=1 (port hand) marks are red
-            if (buoy.shape == 5) return "port_post";  // spar/post
-            if (buoy.shape == 4) return "port_post";  // pillar
-            return "port_med";
-        }
-        if (buoy.categoryLateral == 2) {
-            // Starboard
-            if (buoy.shape == 5) return "stbd_post";
-            if (buoy.shape == 4) return "stbd_post";
-            return "stbd_med";
-        }
-        if (buoy.categoryLateral == 3) {
-            // Preferred channel to starboard
-            return "pref_stbd_small";
-        }
-        if (buoy.categoryLateral == 4) {
-            // Preferred channel to port
-            return "pref_port_small";
-        }
+        if (buoy.categoryLateral == 1) return "shape_can";      // port = can
+        if (buoy.categoryLateral == 2) return "shape_conical";   // stbd = conical
+        return "shape_can";
     }
-
-    // Cardinal buoys
-    if (buoy.layerName == "BOYCAR") {
-        if (buoy.categoryCardinal == 1) return "north_small";
-        if (buoy.categoryCardinal == 2) return "east_small";
-        if (buoy.categoryCardinal == 3) return "south_small";
-        if (buoy.categoryCardinal == 4) return "west_small";
-    }
-
-    // Isolated danger
-    if (buoy.layerName == "BOYISD") {
-        return "black"; // Black with red band
-    }
-
-    // Safe water
-    if (buoy.layerName == "BOYSAW") {
-        return "safe";
-    }
-
-    // Special purpose
-    if (buoy.layerName == "BOYSPP") {
-        if (buoy.shape == 5 || buoy.shape == 4) return "special_post";
-        return "special_1";
-    }
-
-    // Default fallback
-    return "port_small";
+    if (buoy.layerName == "BOYCAR") return "shape_pillar";
+    if (buoy.layerName == "BOYISD") return "shape_pillar";
+    if (buoy.layerName == "BOYSAW") return "shape_spherical";
+    if (buoy.layerName == "BOYSPP") return "shape_can";
+    return "shape_can";
 }
 
 // ── Landmark type mapping ─────────────────────────────────────────────────
@@ -847,6 +846,26 @@ std::string ChartReader::generateBuoyIni(const std::vector<ChartBuoy>& buoys) {
         if (buoys[i].shape == 4 || buoys[i].shape == 5) {
             oss << "Grounded(" << idx << ")=1\n";
         }
+
+        // Write colour data for runtime recolouring (IALA-A inference if absent)
+        std::string colours = buoys[i].colours;
+        if (colours.empty()) {
+            if (buoys[i].layerName == "BOYLAT") {
+                if (buoys[i].categoryLateral == 1) colours = "red";
+                else if (buoys[i].categoryLateral == 2) colours = "green";
+                else if (buoys[i].categoryLateral == 3) colours = "green;red;green";
+                else if (buoys[i].categoryLateral == 4) colours = "red;green;red";
+            } else if (buoys[i].layerName == "BOYCAR") {
+                if (buoys[i].categoryCardinal == 1) colours = "black;yellow";
+                else if (buoys[i].categoryCardinal == 2) colours = "black;yellow;black";
+                else if (buoys[i].categoryCardinal == 3) colours = "yellow;black";
+                else if (buoys[i].categoryCardinal == 4) colours = "yellow;black;yellow";
+            } else if (buoys[i].layerName == "BOYISD") colours = "black;red;black";
+            else if (buoys[i].layerName == "BOYSAW") colours = "red;white";
+            else if (buoys[i].layerName == "BOYSPP") colours = "yellow";
+        }
+        if (!colours.empty())
+            oss << "Colours(" << idx << ")=" << colours << "\n";
 
         oss << "\n";
     }

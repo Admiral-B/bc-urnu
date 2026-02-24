@@ -297,6 +297,15 @@ GBA.LoD1 and GBA.Height are CC BY-NC 4.0 (non-commercial). GBA.ODbLPolygon (foot
 
 **Fix:** Island protection mask (`islandMask`) that prevents water subtraction, DEM flattening, and smoothing erosion. Island polygons now rasterized on all paths. Synthetic islands enlarged (50m radius, 5m center height with quadratic falloff to 1m at edge).
 
+### Barrier vs Structure Classification (CRITICAL)
+
+Structures from OSM are classified into two categories:
+
+- **Barriers** (`dam`, `breakwater` -- LINEAR/OPEN WAYS ONLY): Added to `barrierLines` for BarrierFloodFill terrain generation. These create solid land/terrain because they physically block water.
+- **Structures** (`harbour_wall`, `pier`, `jetty`, `groyne`, PLUS `breakwater` with `area=yes`): Extruded as building polygons only. Water flows underneath -- they do NOT generate terrain fill.
+
+The key check is `!isClosed`: only open-way dams/breakwaters become barriers. Closed-polygon breakwaters (e.g. Cardiff Bay harbour arms, mapped with `area=yes`) are structures, not barriers.
+
 ### Barrier Snap Radius vs Resolution
 
 **Problem:** Barrier endpoint snapping was hardcoded at 40px. At 2049 resolution this halved the physical snap distance (~200m vs ~390m at 1025), causing barrage endpoints to not reach nearby land.
@@ -315,6 +324,7 @@ Step 1.5: Water polygon subtraction (skips islandMask pixels)
 Step 2:   DEM elevation download (AWS Terrain Tiles)
 Step 3:   Merge (land=max(0.5,DEM), islands=keep if DEM<1m, water=min(-0.5,DEM))
 Step 3+:  3-pass smoothing (skips islandMask and thin features)
+Step 3.5: Beach ramp (chamfer distance transform + smoothstep, 6px width)
 Step 4:   Barrier flood-fill (raises barrier polylines to 5m)
 Step 4.1: Lock channel re-cutting (-3m depth, 2px dilation)
 ```text

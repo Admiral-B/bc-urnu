@@ -2312,9 +2312,11 @@ void EditorApp::generateWorldFromArea() {
                     if (f.is_open()) f << osm.generateLandObjectIni();
                 }
 
-                // Save lighthouse positions for synthetic land patch creation
+                // Save lighthouse positions for synthetic land patch creation.
+                // Only actual lighthouses (cat 99) -- towers (cat 17) on piers/breakwaters
+                // should NOT get synthetic islands.
                 for (const auto& lm : osm.getLandmarks()) {
-                    if (lm.category == 17 || lm.category == 99) // tower or lighthouse
+                    if (lm.category == 99) // lighthouse only
                         lighthousePositions.push_back({lm.latitude, lm.longitude});
                 }
 
@@ -2332,6 +2334,9 @@ void EditorApp::generateWorldFromArea() {
                 resultMsg = "OpenSeaMap query failed: " + osm.getError();
             }
         }
+
+        // Stagger Overpass API requests to avoid rate limiting (~2 req/min).
+        std::this_thread::sleep_for(std::chrono::seconds(3));
 
         // Query OSM for buildings AND barrier structures (dams, breakwaters) in one request.
         // Barrier data is extracted from the same Overpass response and used for
@@ -2449,6 +2454,11 @@ void EditorApp::generateWorldFromArea() {
                 double radiusLat = 50.0 / 110540.0;
                 double radiusLon = 50.0 / (111320.0 * cosLat);
                 int patchCount = 0;
+                // Proximity check radius: ~300m in pixels. Lighthouses near existing
+                // land (on piers, breakwaters, coastal structures) skip island creation.
+                // 300m covers typical pier lengths (Penarth pier is ~200m).
+                int proxPx = std::max(5, (int)(300.0 / 110540.0 / latRange * (resolution - 1)));
+
                 for (const auto& [lhLat, lhLon] : lighthousePositions) {
                     // Check if position is within bounds and currently water
                     int cpy = (int)((maxLat - lhLat) / latRange * (resolution - 1));
@@ -2459,6 +2469,20 @@ void EditorApp::generateWorldFromArea() {
                         islandMask[cpy * resolution + cpx] = true;
                         continue;
                     }
+
+                    // Skip island creation if there's existing land within ~150m.
+                    // Lighthouses on piers/breakwaters don't need synthetic islands.
+                    bool nearLand = false;
+                    for (int dy = -proxPx; dy <= proxPx && !nearLand; dy++) {
+                        for (int dx = -proxPx; dx <= proxPx && !nearLand; dx++) {
+                            int ny = cpy + dy, nx = cpx + dx;
+                            if (ny >= 0 && ny < resolution && nx >= 0 && nx < resolution) {
+                                if (landMask[ny * resolution + nx])
+                                    nearLand = true;
+                            }
+                        }
+                    }
+                    if (nearLand) continue;
 
                     // Rasterize a circle of raised land with sloped edges
                     int rPx = std::max(2, (int)(radiusLat / latRange * (resolution - 1)));
@@ -2490,6 +2514,9 @@ void EditorApp::generateWorldFromArea() {
             // Also saves lock polygons for re-cutting after barrier flood-fill.
             std::vector<WaterPolygon> lockPolygons; // saved for Step 4.1
             {
+                // Stagger to avoid Overpass rate limit
+                generateStatus = "Waiting before water query (rate limit)...";
+                std::this_thread::sleep_for(std::chrono::seconds(3));
                 generateStatus = "Querying OSM for water areas...";
                 OSMWaterReader waterReader;
                 if (waterReader.query(minLat, maxLat, minLon, maxLon,
@@ -2501,8 +2528,9 @@ void EditorApp::generateWorldFromArea() {
                         int subtracted = 0;
                         for (const auto& wp : waterAreas) {
                             if (wp.outline.size() < 3) continue;
-                            // Save lock polygons for re-cutting after barrier flood-fill
-                            if (wp.type == "lock") lockPolygons.push_back(wp);
+                            // Save lock and dock polygons for re-cutting after barrier flood-fill.
+                            // Barrier dilation can overwrite these navigable water areas.
+                            if (wp.type == "lock" || wp.type == "dock") lockPolygons.push_back(wp);
                             for (int py = 0; py < resolution; py++) {
                                 double lat = maxLat - latRange * py / (resolution - 1);
                                 std::vector<double> crossings;
@@ -2670,6 +2698,70 @@ void EditorApp::generateWorldFromArea() {
                             if (landMask[i] && heightGrid[i] < 0.5f) heightGrid[i] = 0.5f;
                             if (!landMask[i] && heightGrid[i] > -0.5f) heightGrid[i] = -0.5f;
                         }
+
+                        // Beach ramp: distance transform from coastline + smoothstep falloff.
+                        // Creates gradual beach slopes instead of sharp cliff at land/water boundary.
+                        {
+                            const int beachWidth = 6; // pixels (~60m at 2049 res / 12km)
+                            std::vector<int> coastDist(resolution * resolution, beachWidth + 1);
+
+                            // Two-pass chamfer distance transform from coastline boundary
+                            // Forward pass (top-left to bottom-right)
+                            for (int py = 0; py < resolution; py++) {
+                                for (int px = 0; px < resolution; px++) {
+                                    int ci = py * resolution + px;
+                                    if (islandMask[ci]) continue;
+                                    // Is this pixel on a coastline boundary?
+                                    bool isLand = landMask[ci];
+                                    bool onBoundary = false;
+                                    for (int dy = -1; dy <= 1 && !onBoundary; dy++) {
+                                        for (int dx = -1; dx <= 1 && !onBoundary; dx++) {
+                                            if (dy == 0 && dx == 0) continue;
+                                            int ny = py + dy, nx = px + dx;
+                                            if (ny >= 0 && ny < resolution && nx >= 0 && nx < resolution) {
+                                                if (landMask[ny * resolution + nx] != isLand)
+                                                    onBoundary = true;
+                                            }
+                                        }
+                                    }
+                                    if (onBoundary) { coastDist[ci] = 0; continue; }
+                                    // Propagate from top and left neighbors
+                                    if (py > 0) coastDist[ci] = std::min(coastDist[ci], coastDist[(py-1)*resolution+px] + 1);
+                                    if (px > 0) coastDist[ci] = std::min(coastDist[ci], coastDist[py*resolution+px-1] + 1);
+                                }
+                            }
+                            // Backward pass (bottom-right to top-left)
+                            for (int py = resolution - 1; py >= 0; py--) {
+                                for (int px = resolution - 1; px >= 0; px--) {
+                                    int ci = py * resolution + px;
+                                    if (islandMask[ci]) continue;
+                                    if (py < resolution-1) coastDist[ci] = std::min(coastDist[ci], coastDist[(py+1)*resolution+px] + 1);
+                                    if (px < resolution-1) coastDist[ci] = std::min(coastDist[ci], coastDist[py*resolution+px+1] + 1);
+                                }
+                            }
+
+                            // Apply beach ramp using smoothstep falloff
+                            for (int i = 0; i < resolution * resolution; i++) {
+                                if (islandMask[i]) continue;
+                                int d = coastDist[i];
+                                if (d >= beachWidth) continue;
+
+                                float t = (float)d / (float)beachWidth;
+                                // smoothstep: 3t^2 - 2t^3
+                                float s = t * t * (3.0f - 2.0f * t);
+
+                                float h = heightGrid[i];
+                                if (landMask[i]) {
+                                    // Land side: ramp from 0.3m at coastline to full DEM height
+                                    float target = std::max(h, 0.5f);
+                                    heightGrid[i] = 0.3f + (target - 0.3f) * s;
+                                } else {
+                                    // Water side: ramp from -0.2m at coastline to full depth
+                                    float target = std::min(h, -0.5f);
+                                    heightGrid[i] = -0.2f + (target + 0.2f) * s;
+                                }
+                            }
+                        }
                     }
 
                     // Recompute height range after smoothing
@@ -2765,8 +2857,11 @@ void EditorApp::generateWorldFromArea() {
                     }
                 }
 
-                // Dilate lock mask by 2 pixels (4-connected) to widen narrow channels
-                for (int dilatePass = 0; dilatePass < 2; dilatePass++) {
+                // Dilate lock mask to widen narrow channels so they survive
+                // mesh subsampling and punch through the ~7px barrier dilation.
+                // Scale with resolution: 2px at 1025, 4px at 2049.
+                int lockDilate = std::max(2, resolution * 2 / 1025);
+                for (int dilatePass = 0; dilatePass < lockDilate; dilatePass++) {
                     std::vector<bool> dilated = lockMask;
                     const int d4x[] = {-1, 1, 0, 0};
                     const int d4y[] = {0, 0, -1, 1};
@@ -2996,8 +3091,9 @@ void EditorApp::generateWorldFromArea() {
                         }
                         // Structures in enclosed water (e.g. Cardiff Bay at -20m) must sit
                         // at sea level, not at the water floor depth.
+                        // Piers/jetties sit slightly above water (deck height ~1m)
                         if (fp.isStructure && groundY < 0.0f) {
-                            groundY = 0.0f;
+                            groundY = (fp.type == "pier" || fp.type == "jetty") ? 1.0f : 0.0f;
                         }
 
                         // Deterministic material variation from building position
@@ -3448,6 +3544,9 @@ void EditorApp::generateWorldFromArea() {
         // Query OSM for land use polygons (for procedural texturing)
         std::vector<uint8_t> landUseGrid(resolution * resolution, 0);
         {
+            // Stagger to avoid Overpass rate limit
+            generateStatus = "Waiting before land use query (rate limit)...";
+            std::this_thread::sleep_for(std::chrono::seconds(3));
             generateStatus = "Querying OSM for land use data...";
             OSMLandUseReader luReader;
             if (luReader.query(minLat, maxLat, minLon, maxLon,

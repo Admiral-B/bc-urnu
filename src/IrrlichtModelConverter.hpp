@@ -24,7 +24,7 @@ struct ConvertedMaterial {
     float r = 0.8f, g = 0.8f, b = 0.8f, a = 1.0f; // diffuse color
     float er = 0, eg = 0, eb = 0;                    // emissive color
     float shininess = 0;
-    std::string textureName; // may be empty (EDT_NULL can't load textures)
+    std::string textureName; // from Irrlicht (EDT_NULL creates SDummyTexture with correct name)
 };
 
 struct ConvertedSubMesh {

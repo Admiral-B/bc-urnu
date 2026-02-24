@@ -1,4 +1,4 @@
-Created GraphicsDevice_DX12 (1845 ms)
+Created GraphicsDevice_DX12 (1826 ms)
 Adapter: NVIDIA GeForce RTX 4060 Laptop GPU
 
 [wi::initializer] Initializing Wicked Engine, please wait...
@@ -16,7 +16,7 @@ No embedded shaders found, shaders will be compiled at runtime if needed.
 	Shader source path: C:/Users/PB/source/bc-urnu/bin/../../WickedEngine/WickedEngine/shaders/
 	Shader binary path: ../../WickedEngine/WickedEngine/shaders/
 
-wi::jobsystem Initialized with 16 cores in 3.63 ms
+wi::jobsystem Initialized with 16 cores in 3.58 ms
 	High priority threads: 15
 	Low priority threads: 14
 	Streaming threads: 1
@@ -24,19 +24,19 @@ wi::jobsystem Initialized with 16 cores in 3.63 ms
 wi::input Initialized (0 ms)
 wi::physics Initialized [Jolt Physics 5.4.0] (0 ms)
 wi::lua Initialized [Lua 5.4.8] (2 ms)
-wi::texturehelper Initialized (5 ms)
-wi::gpusortlib Initialized (13 ms)
-wi::GPUBVH Initialized (102 ms)
-wi::TrailRenderer Initialized (155 ms)
-wi::image Initialized (204 ms)
-wi::Ocean Initialized (221 ms)
-wi::EmittedParticleSystem Initialized (417 ms)
-wi::HairParticleSystem Initialized (447 ms)
-wi::renderer Initialized (490 ms)
-wi::audio Initialized [XAudio2] (830 ms)
+wi::texturehelper Initialized (6 ms)
+wi::image Initialized (7 ms)
+wi::TrailRenderer Initialized (7 ms)
+wi::GPUBVH Initialized (15 ms)
+wi::gpusortlib Initialized (17 ms)
+wi::Ocean Initialized (129 ms)
+wi::HairParticleSystem Initialized (136 ms)
+wi::EmittedParticleSystem Initialized (217 ms)
+wi::renderer Initialized (255 ms)
+wi::audio Initialized [XAudio2] (769 ms)
 wi::font Initialized (4 ms)
 
-[wi::initializer] Wicked Engine Initialized (841 ms)
+[wi::initializer] Wicked Engine Initialized (779 ms)
 Created envprobe depth buffer for request
 	Resolution = 64 * 64 * 6
 	Sample Count = 1

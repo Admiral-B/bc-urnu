@@ -318,10 +318,11 @@ wi::ecs::Entity LoadModelFromFile(const std::string& filename, Scene& scene) {
         scene.Entity_Remove(rootEntity); // Remove our placeholder
         rootEntity = wi::scene::LoadModel(filename);
     } else if (ext == ".gltf" || ext == ".glb") {
-        // GLTF support requires WE Editor importer -- not yet integrated
-        // For now, try WE's LoadModel which may handle GLTF in some versions
+        // glTF/GLB import via ported WE Editor importer (uses tinygltf)
+        // Imports into a temp scene internally, FlipZAxis there, then merges.
+        // Returns the root entity (ID preserved across merge).
         scene.Entity_Remove(rootEntity);
-        rootEntity = wi::scene::LoadModel(filename);
+        rootEntity = ImportModel_GLTF(filename, scene);
     } else if (ext == ".x" || ext == ".3ds") {
         // DirectX .x and .3ds formats are not supported by Wicked Engine.
         // These models need to be converted to .obj or .gltf first.

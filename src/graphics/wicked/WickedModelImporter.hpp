@@ -26,5 +26,9 @@ void ImportModel_OBJ(const std::string& filename, wi::scene::Scene& scene,
 
 }}} // namespace bc::graphics::wicked
 
+// Free function from ported WE Editor glTF importer (ModelImporter_GLTF.cpp)
+// Returns the root entity of the imported model.
+wi::ecs::Entity ImportModel_GLTF(const std::string& fileName, wi::scene::Scene& scene);
+
 #endif // WITH_WICKED_ENGINE
 #endif // BC_GRAPHICS_WICKED_MODELIMPORTER_HPP

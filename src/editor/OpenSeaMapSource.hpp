@@ -9,13 +9,21 @@
 struct OsmBuoy {
     double longitude = 0;
     double latitude = 0;
-    int shape = 0;           // 1=conical,2=can,3=sphere,4=pillar,5=spar
+    int shape = 0;           // 1=conical,2=can,3=sphere,4=pillar,5=spar,6=barrel
     int categoryLateral = 0; // 1=port,2=starboard,3=pref_stbd,4=pref_port
     int categoryCardinal = 0;// 1=N,2=E,3=S,4=W
     int categorySpecial = 0;
     std::string name;
     std::string layerName;   // Synthetic: BOYLAT, BOYCAR, BOYISD, BOYSAW, BOYSPP
     bool grounded = false;   // true for beacons
+
+    // Colour data from OSM seamark tags
+    std::string colours;        // semicolon-separated: "red", "black;yellow", "red;white;red"
+    std::string colourPattern;  // "horizontal", "vertical", ""
+
+    // Topmark (parsed now, rendered later)
+    int topmarkShape = 0;       // 1=cone up,2=cone down,3=sphere,4=2 cones up,etc.
+    std::string topmarkColour;
 };
 
 struct OsmLight {

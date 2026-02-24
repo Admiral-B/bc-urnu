@@ -236,9 +236,18 @@ bool OpenSeaMapSource::query(double minLat, double maxLat,
         if (attempt > 0 && progress) progress("Retrying with fallback Overpass server...");
         else if (progress) progress("Querying Overpass API...");
         response = httpPost(overpassServers[attempt], postBody, USER_AGENT);
+        // Detect HTML error pages (rate limiting) -- first non-ws char must be { or [
+        if (!response.empty()) {
+            size_t i = 0;
+            while (i < response.size() && (response[i] == ' ' || response[i] == '\t' || response[i] == '\n' || response[i] == '\r')) i++;
+            if (i >= response.size() || (response[i] != '{' && response[i] != '[')) {
+                if (progress) progress("Overpass returned non-JSON response (rate limited?), retrying...");
+                response.clear();
+            }
+        }
     }
     if (response.empty()) {
-        errorMsg = "Overpass API returned empty response";
+        errorMsg = "Overpass API returned empty or non-JSON response (rate limited?)";
         return false;
     }
 
@@ -311,7 +320,58 @@ static int parseShape(const std::string& s) {
     if (s == "spherical") return 3;
     if (s == "pillar") return 4;
     if (s == "spar") return 5;
+    if (s == "barrel") return 6;
     return 0;
+}
+
+static int parseTopmarkShape(const std::string& s) {
+    if (s == "cone, point up") return 1;
+    if (s == "cone, point down") return 2;
+    if (s == "sphere") return 3;
+    if (s == "2 cones, point up" || s == "2 cones point up") return 4;
+    if (s == "2 cones, point down" || s == "2 cones point down") return 5;
+    if (s == "2 cones base to base") return 6;
+    if (s == "2 cones point to point") return 7;
+    if (s == "x-shape") return 8;
+    if (s == "2 spheres") return 9;
+    return 0;
+}
+
+// IALA-A colour defaults when OSM colour tag is absent
+static std::string inferBuoyColours(const OsmBuoy& buoy) {
+    if (!buoy.colours.empty()) return buoy.colours;
+
+    if (buoy.layerName == "BOYLAT") {
+        if (buoy.categoryLateral == 1) return "red";
+        if (buoy.categoryLateral == 2) return "green";
+        if (buoy.categoryLateral == 3) return "green;red;green";
+        if (buoy.categoryLateral == 4) return "red;green;red";
+    }
+    if (buoy.layerName == "BOYCAR") {
+        if (buoy.categoryCardinal == 1) return "black;yellow";
+        if (buoy.categoryCardinal == 2) return "black;yellow;black";
+        if (buoy.categoryCardinal == 3) return "yellow;black";
+        if (buoy.categoryCardinal == 4) return "yellow;black;yellow";
+    }
+    if (buoy.layerName == "BOYISD") return "black;red;black";
+    if (buoy.layerName == "BOYSAW") return "red;white";
+    if (buoy.layerName == "BOYSPP") return "yellow";
+
+    return "red";
+}
+
+// Extract colour and topmark tags from a buoy element
+static void parseBuoyColourAndTopmark(OsmBuoy& buoy, const nlohmann::json& tags,
+                                       const std::string& seamarkType) {
+    std::string prefix = "seamark:" + seamarkType;
+    if (tags.contains(prefix + ":colour"))
+        buoy.colours = tags[prefix + ":colour"].get<std::string>();
+    if (tags.contains(prefix + ":colour_pattern"))
+        buoy.colourPattern = tags[prefix + ":colour_pattern"].get<std::string>();
+    if (tags.contains("seamark:topmark:shape"))
+        buoy.topmarkShape = parseTopmarkShape(tags["seamark:topmark:shape"].get<std::string>());
+    if (tags.contains("seamark:topmark:colour"))
+        buoy.topmarkColour = tags["seamark:topmark:colour"].get<std::string>();
 }
 
 static int parseLandmarkCategory(const std::string& s) {
@@ -394,6 +454,7 @@ bool OpenSeaMapSource::parseResponse(const std::string& jsonStr) {
                 buoy.shape = parseShape(tags[prefix + ":shape"].get<std::string>());
             if (tags.contains("seamark:name"))
                 buoy.name = tags["seamark:name"].get<std::string>();
+            parseBuoyColourAndTopmark(buoy, tags, seamarkType);
 
             buoys.push_back(buoy);
         }
@@ -411,6 +472,7 @@ bool OpenSeaMapSource::parseResponse(const std::string& jsonStr) {
                 buoy.shape = parseShape(tags[prefix + ":shape"].get<std::string>());
             if (tags.contains("seamark:name"))
                 buoy.name = tags["seamark:name"].get<std::string>();
+            parseBuoyColourAndTopmark(buoy, tags, seamarkType);
 
             buoys.push_back(buoy);
         }
@@ -422,6 +484,7 @@ bool OpenSeaMapSource::parseResponse(const std::string& jsonStr) {
             buoy.grounded = (seamarkType.find("beacon") != std::string::npos);
             if (tags.contains("seamark:name"))
                 buoy.name = tags["seamark:name"].get<std::string>();
+            parseBuoyColourAndTopmark(buoy, tags, seamarkType);
             buoys.push_back(buoy);
         }
         else if (seamarkType == "buoy_safe_water") {
@@ -431,6 +494,7 @@ bool OpenSeaMapSource::parseResponse(const std::string& jsonStr) {
             buoy.layerName = "BOYSAW";
             if (tags.contains("seamark:name"))
                 buoy.name = tags["seamark:name"].get<std::string>();
+            parseBuoyColourAndTopmark(buoy, tags, seamarkType);
             buoys.push_back(buoy);
         }
         else if (seamarkType == "buoy_special_purpose" || seamarkType == "beacon_special_purpose") {
@@ -445,6 +509,7 @@ bool OpenSeaMapSource::parseResponse(const std::string& jsonStr) {
                 buoy.shape = parseShape(tags[prefix + ":shape"].get<std::string>());
             if (tags.contains("seamark:name"))
                 buoy.name = tags["seamark:name"].get<std::string>();
+            parseBuoyColourAndTopmark(buoy, tags, seamarkType);
 
             buoys.push_back(buoy);
         }
@@ -546,8 +611,9 @@ bool OpenSeaMapSource::parseResponse(const std::string& jsonStr) {
         }
 
         // ---- Navigational landmarks (towers, churches, chimneys, masts, lighthouses) ----
-        // Lighthouses tagged with seamark:type=light_major/light_minor must also create
-        // landmark entries so a visible tower appears (not just an invisible light).
+        // Creates visible land object models. Lighthouses tagged with
+        // seamark:type=light_major/light_minor must also get a landmark entry
+        // so a visible tower appears (not just an invisible light).
         {
             std::string manMade, building;
             if (tags.contains("man_made"))
@@ -556,7 +622,9 @@ bool OpenSeaMapSource::parseResponse(const std::string& jsonStr) {
                 building = tags["building"].get<std::string>();
 
             bool isLighthouse = (manMade == "lighthouse");
-            if (seamarkType.empty() || isLighthouse) {
+            // Also treat light_major/light_minor as lighthouse if no man_made tag
+            bool isSeamarkLight = (seamarkType == "light_major" || seamarkType == "light_minor");
+            if (seamarkType.empty() || isLighthouse || isSeamarkLight) {
 
             int cat = 0;
             if (manMade == "tower") cat = 17;
@@ -564,6 +632,8 @@ bool OpenSeaMapSource::parseResponse(const std::string& jsonStr) {
             else if (manMade == "lighthouse") cat = 99; // custom: maps to Lighthouse model
             else if (manMade == "mast") cat = 18;
             else if (building == "church" || building == "cathedral" || building == "chapel") cat = 20;
+            // Seamark light without man_made tag -> assume lighthouse structure
+            else if (isSeamarkLight && cat == 0) cat = 99;
 
             if (cat > 0) {
                 OsmLandmark lm;
@@ -620,35 +690,26 @@ int OpenSeaMapSource::findClosestBuoy(double lon, double lat,
 // ---- Buoy type mapping (mirrors ChartReader::mapBuoyType) ----
 
 std::string OpenSeaMapSource::mapBuoyType(const OsmBuoy& buoy) {
+    // Shape-primary mapping: explicit shape tag takes priority
+    switch (buoy.shape) {
+        case 1: return "shape_conical";
+        case 2: return "shape_can";
+        case 3: return "shape_spherical";
+        case 4: return "shape_pillar";
+        case 5: return "shape_spar";
+        case 6: return "shape_barrel";
+    }
+    // Infer shape from buoy type/category when shape tag absent
     if (buoy.layerName == "BOYLAT") {
-        if (buoy.categoryLateral == 1) {
-            if (buoy.shape == 4 || buoy.shape == 5) return "port_post";
-            return "port_med";
-        }
-        if (buoy.categoryLateral == 2) {
-            if (buoy.shape == 4 || buoy.shape == 5) return "stbd_post";
-            return "stbd_med";
-        }
-        if (buoy.categoryLateral == 3) return "pref_stbd_small";
-        if (buoy.categoryLateral == 4) return "pref_port_small";
+        if (buoy.categoryLateral == 1) return "shape_can";      // port = can (IALA A)
+        if (buoy.categoryLateral == 2) return "shape_conical";   // stbd = conical (IALA A)
+        return "shape_can";
     }
-
-    if (buoy.layerName == "BOYCAR") {
-        if (buoy.categoryCardinal == 1) return "north_small";
-        if (buoy.categoryCardinal == 2) return "east_small";
-        if (buoy.categoryCardinal == 3) return "south_small";
-        if (buoy.categoryCardinal == 4) return "west_small";
-    }
-
-    if (buoy.layerName == "BOYISD") return "black";
-    if (buoy.layerName == "BOYSAW") return "safe";
-
-    if (buoy.layerName == "BOYSPP") {
-        if (buoy.shape == 4 || buoy.shape == 5) return "special_post";
-        return "special_1";
-    }
-
-    return "port_small";
+    if (buoy.layerName == "BOYCAR") return "shape_pillar";
+    if (buoy.layerName == "BOYISD") return "shape_pillar";
+    if (buoy.layerName == "BOYSAW") return "shape_spherical";
+    if (buoy.layerName == "BOYSPP") return "shape_can";
+    return "shape_can";
 }
 
 // ---- Landmark type mapping (mirrors ChartReader::mapLandmarkType) ----
@@ -785,6 +846,13 @@ std::string OpenSeaMapSource::generateBuoyIni() const {
             oss << "Grounded(" << idx << ")=1\n";
         }
 
+        // Write colour data for runtime recolouring
+        std::string colours = inferBuoyColours(buoys[i]);
+        if (!colours.empty())
+            oss << "Colours(" << idx << ")=" << colours << "\n";
+        if (!buoys[i].colourPattern.empty())
+            oss << "ColourPattern(" << idx << ")=" << buoys[i].colourPattern << "\n";
+
         oss << "\n";
     }
 
@@ -855,13 +923,13 @@ std::string OpenSeaMapSource::generateLandObjectIni() const {
         oss << "Long(" << idx << ")=" << landmarks[i].longitude << "\n";
         oss << "Lat(" << idx << ")=" << landmarks[i].latitude << "\n";
 
-        // Lighthouses: place model at sea/ground level (Absolute=2 clamps to
-        // max(0, terrain)).  The model geometry provides the visual height;
-        // the focal-plane height from OSM goes to light.ini, not here.
-        // Other objects: write HeightCorrection as-is (terrain-relative).
         if (landmarks[i].category == 99) {
-            // Lighthouse: no height correction, clamp to sea level
+            // Lighthouse: clamp to sea level, write structural height for procedural model
             oss << "Absolute(" << idx << ")=2\n";
+            if (landmarks[i].height > 0) {
+                oss.precision(1);
+                oss << "HeightAbove(" << idx << ")=" << landmarks[i].height << "\n";
+            }
         } else if (landmarks[i].height > 0) {
             oss.precision(1);
             oss << "HeightCorrection(" << idx << ")=" << landmarks[i].height << "\n";

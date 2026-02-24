@@ -35,6 +35,7 @@ set(BC_TESTABLE_SOURCES
     ${BC_SRC_DIR}/editor/OSMLandPolygons.cpp
     ${BC_SRC_DIR}/editor/ElevationTile.cpp
     ${BC_SRC_DIR}/editor/TerrainTextureBlender.cpp
+    ${BC_SRC_DIR}/gui/IniFileRW.cpp
     test_stubs.cpp
 )
 
@@ -49,6 +50,7 @@ set(BC_TEST_SOURCES
     test_barrier_flood_fill.cpp
     test_building_generator.cpp
     test_osm_water_reader.cpp
+    test_ini_file_rw.cpp
 )
 
 # Conditionally add chart/world generation if GDAL is available

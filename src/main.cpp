@@ -456,11 +456,18 @@ int main(int argc, char ** argv)
         if (strcmp(argv[i], "--wicked") == 0) {
             useWickedEngine = true;
         }
+        if (strcmp(argv[i], "--no-wicked") == 0) {
+            useWickedEngine = false;
+        }
         #endif
     }
-    // Also check bc5.ini for use_wicked_engine=1
+    // Also check bc5.ini for use_wicked_engine=1 (--no-wicked overrides)
     #ifdef WITH_WICKED_ENGINE
-    if (!useWickedEngine && IniFile::iniFileTou32(iniFilename, "use_wicked_engine") == 1) {
+    bool forceNoWicked = false;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--no-wicked") == 0) forceNoWicked = true;
+    }
+    if (!useWickedEngine && !forceNoWicked && IniFile::iniFileTou32(iniFilename, "use_wicked_engine") == 1) {
         useWickedEngine = true;
     }
     #endif

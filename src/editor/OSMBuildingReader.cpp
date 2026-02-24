@@ -170,6 +170,7 @@ float OSMBuildingReader::estimateHeight(const std::string& heightStr,
     // Harbour structures (taller than real-world for visibility from bridge)
     if (type == "dam") return 8.0f;
     if (type == "breakwater") return 5.0f;
+    if (type == "harbour_wall") return 5.0f;
     if (type == "pier") return 3.0f;
     if (type == "jetty") return 2.0f;
     if (type == "groyne") return 1.5f;
@@ -235,6 +236,9 @@ bool OSMBuildingReader::query(double minLat, double maxLat,
        << minLat << "," << minLon << "," << maxLat << "," << maxLon
        << ");"
        << "way[\"man_made\"=\"breakwater\"]("
+       << minLat << "," << minLon << "," << maxLat << "," << maxLon
+       << ");"
+       << "way[\"man_made\"=\"harbour_wall\"]("
        << minLat << "," << minLon << "," << maxLat << "," << maxLon
        << ");"
        << "way[\"waterway\"=\"dam\"]("
@@ -308,9 +312,18 @@ bool OSMBuildingReader::query(double minLat, double maxLat,
         if (attempt > 0 && progress) progress("Retrying with fallback Overpass server...");
         else if (progress) progress("Querying Overpass API for buildings and structures...");
         response = httpPost(overpassServers[attempt], postBody, USER_AGENT);
+        // Detect HTML error pages (rate limiting) -- first non-ws char must be { or [
+        if (!response.empty()) {
+            size_t i = 0;
+            while (i < response.size() && (response[i] == ' ' || response[i] == '\t' || response[i] == '\n' || response[i] == '\r')) i++;
+            if (i >= response.size() || (response[i] != '{' && response[i] != '[')) {
+                if (progress) progress("Overpass returned non-JSON response (rate limited?), retrying...");
+                response.clear();
+            }
+        }
     }
     if (response.empty()) {
-        errorMsg = "Overpass API returned empty response";
+        errorMsg = "Overpass API returned empty or non-JSON response (rate limited?)";
         return false;
     }
 
@@ -410,6 +423,7 @@ bool OSMBuildingReader::parseResponse(const std::string& jsonStr) {
                 if (structureType == "pier" ||
                     structureType == "jetty" || structureType == "groyne" ||
                     structureType == "breakwater" ||
+                    structureType == "harbour_wall" ||
                     structureType == "quay" || structureType == "wharf" ||
                     structureType == "slipway" ||
                     structureType == "boat_ramp" ||
@@ -474,8 +488,12 @@ bool OSMBuildingReader::parseResponse(const std::string& jsonStr) {
                          std::abs(fp.outline.front().first - fp.outline.back().first) < 1e-7 &&
                          std::abs(fp.outline.front().second - fp.outline.back().second) < 1e-7);
 
-        // Save original centerline for dams/breakwaters before polygon buffering
-        if (isStructure && (structureType == "dam" || structureType == "breakwater") &&
+        // Save original centerline for dams/breakwaters before polygon buffering.
+        // Only LINEAR ways (open, not closed polygons) become barrier lines.
+        // Closed-polygon breakwaters (area=yes, like Cardiff Bay harbour arms)
+        // are extruded as structures but should NOT generate terrain fill.
+        if (isStructure && !isClosed &&
+            (structureType == "dam" || structureType == "breakwater") &&
             fp.outline.size() >= 2) {
             barrierLines.push_back(fp.outline);
         }
@@ -483,7 +501,7 @@ bool OSMBuildingReader::parseResponse(const std::string& jsonStr) {
         if (!isClosed && fp.isStructure) {
             if (fp.outline.size() >= 2) {
                 // Buffer open-way structures (piers/jetties/groynes) into thin polygons
-                double widthM = (structureType == "dam" || structureType == "breakwater") ? 6.0 : 3.0;
+                double widthM = (structureType == "dam" || structureType == "breakwater" || structureType == "harbour_wall") ? 6.0 : 3.0;
                 double widthDeg = widthM / 111320.0;
 
                 std::vector<std::pair<double,double>> left, right;

@@ -10,6 +10,8 @@
 #include "graphics/wicked/WickedModelImporter.hpp"
 #include "graphics/wicked/WickedImGui.hpp"
 #include "gui/ImGuiOverlay.hpp"
+#include "gui/SettingsPanel.hpp"
+#include "gui/RadarDisplay.hpp"
 #include "IrrlichtModelConverter.hpp"
 #include "SimulationBridge.hpp"
 #include "BuildingGenerator.hpp"
@@ -18,9 +20,17 @@
 #include "Utilities.hpp"
 #include "Constants.hpp"
 #include "Sound.hpp"
+#include "TextureUpscaler.hpp"
+#include "MapScreen.hpp"
 
 // ImGui header needed for IO access in game loop
 #include "graphics/wicked/imgui/imgui.h"
+
+// Win32 platform backend for ImGui (mouse/keyboard/scroll input)
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+bool ImGui_ImplWin32_Init(void* hwnd);
+void ImGui_ImplWin32_Shutdown();
+void ImGui_ImplWin32_NewFrame();
 
 #include <iostream>
 #include <fstream>
@@ -31,6 +41,7 @@
 #include <algorithm>
 #include <chrono>
 #include <unordered_map>
+#include <sstream>
 
 // Log file for diagnosing crashes (console disappears on crash)
 static std::ofstream g_weLog;
@@ -79,6 +90,10 @@ static bool runAppWithSEH(wi::Application& app) {
 static wi::Application* g_weApp = nullptr;
 
 static LRESULT CALLBACK WickedWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    // Forward to ImGui Win32 backend for mouse/keyboard/scroll input
+    if (ImGui_ImplWin32_WndProcHandler(hWnd, message, wParam, lParam))
+        return true;
+
     switch (message) {
     case WM_SIZE:
         if (wParam == SIZE_MINIMIZED) {
@@ -136,9 +151,14 @@ static float camPosZ = 0.0f;
 static float camTargetX = 0.0f;
 static float camTargetY = 10.0f;
 static float camTargetZ = 0.0f;
+static float walkLocalX = 0.0f;  // ship-local walk offset from default bridge position
+static float walkLocalZ = 0.0f;
 static bool mouseRightDown = false;
 static bool mouseLeftDown = false;
 static int lastMouseX = 0, lastMouseY = 0;
+
+// Persistent radar texture for rendering (must be before BCRenderPath)
+static wi::graphics::Texture g_radarTex;
 
 // RenderPath subclass to hook ImGui rendering into WE's Compose pass
 class BCRenderPath : public wi::RenderPath3D {
@@ -176,7 +196,145 @@ struct CoordConverter {
         if (terrainLatExtent == 0) return 0;
         return ((latitude - terrainLat) * terrainZWidth) / terrainLatExtent;
     }
+    double xToLong(float x) const {
+        if (terrainXWidth == 0) return terrainLong;
+        return terrainLong + x * terrainLongExtent / terrainXWidth;
+    }
+    double zToLat(float z) const {
+        if (terrainZWidth == 0) return terrainLat;
+        return terrainLat + z * terrainLatExtent / terrainZWidth;
+    }
 };
+
+// ===== Procedural lighthouse geometry =====
+// Creates a multi-section cylindrical lighthouse with tower, gallery, lantern, and dome.
+// Cached by height (rounded to nearest 0.5m) to share GPU mesh across instances.
+static std::unordered_map<int, wi::ecs::Entity> g_lighthouseMeshCache;
+
+static wi::ecs::Entity createProceduralLighthouse(wi::scene::Scene& scene,
+                                                    const std::string& name,
+                                                    float totalHeight) {
+    // Clamp to reasonable range; default 15m if not provided
+    if (totalHeight < 3.0f) totalHeight = 15.0f;
+    if (totalHeight > 80.0f) totalHeight = 80.0f;
+
+    // Cache by height (0.5m granularity)
+    int cacheKey = (int)(totalHeight * 2);
+    auto it = g_lighthouseMeshCache.find(cacheKey);
+    if (it != g_lighthouseMeshCache.end()) {
+        wi::ecs::Entity entity = scene.Entity_CreateObject(name);
+        auto* object = scene.objects.GetComponent(entity);
+        if (object) object->meshID = it->second;
+        return entity;
+    }
+
+    const int N = 16; // circumference segments
+
+    // Section boundaries (absolute heights)
+    float towerTop   = totalHeight - 3.5f;
+    float galleryTop = totalHeight - 3.0f;
+    float lanternTop = totalHeight - 0.8f;
+    float domeTop    = totalHeight;
+
+    // Radii (proportional with reasonable minimums)
+    float baseR      = std::max(1.5f, totalHeight * 0.10f);
+    float towerTopR  = baseR * 0.75f;
+    float galleryR   = baseR * 1.3f;
+    float lanternR   = towerTopR * 0.7f;
+
+    wi::ecs::Entity meshEntity = scene.Entity_CreateMesh(name + "_lh_mesh");
+    auto* mesh = scene.meshes.GetComponent(meshEntity);
+    if (!mesh) return wi::ecs::INVALID_ENTITY;
+
+    // Lambda: add a cylinder/cone section with optional top cap
+    auto addSection = [&](float yBot, float yTop, float rBot, float rTop,
+                          float cr, float cg, float cb, float rough, bool cap) {
+        wi::ecs::Entity matEntity = scene.Entity_CreateMaterial(name + "_lh_mat");
+        auto* mat = scene.materials.GetComponent(matEntity);
+        if (mat) {
+            mat->baseColor = DirectX::XMFLOAT4(cr, cg, cb, 1.0f);
+            mat->roughness = rough;
+            mat->metalness = 0.0f;
+            mat->SetDoubleSided(true);
+            mat->CreateRenderData();
+        }
+
+        uint32_t base = (uint32_t)mesh->vertex_positions.size();
+
+        for (int i = 0; i <= N; i++) {
+            float a = (float)i / N * 6.28318530718f;
+            float ca = cosf(a), sa = sinf(a);
+
+            // Bottom ring vertex
+            mesh->vertex_positions.push_back({rBot * ca, yBot, rBot * sa});
+            mesh->vertex_normals.push_back({ca, 0.0f, sa});
+            mesh->vertex_uvset_0.push_back({(float)i / N, 0.0f});
+
+            // Top ring vertex
+            mesh->vertex_positions.push_back({rTop * ca, yTop, rTop * sa});
+            mesh->vertex_normals.push_back({ca, 0.0f, sa});
+            mesh->vertex_uvset_0.push_back({(float)i / N, 1.0f});
+        }
+
+        wi::scene::MeshComponent::MeshSubset subset;
+        subset.materialID = matEntity;
+        subset.indexOffset = (uint32_t)mesh->indices.size();
+
+        // Wall triangles (two per quad segment)
+        for (int i = 0; i < N; i++) {
+            uint32_t bl = base + i * 2;
+            uint32_t tl = bl + 1;
+            uint32_t br = base + (i + 1) * 2;
+            uint32_t tr = br + 1;
+
+            mesh->indices.push_back(bl);
+            mesh->indices.push_back(tl);
+            mesh->indices.push_back(br);
+            mesh->indices.push_back(br);
+            mesh->indices.push_back(tl);
+            mesh->indices.push_back(tr);
+        }
+
+        // Top cap (fan from center vertex)
+        if (cap && rTop > 0.01f) {
+            uint32_t center = (uint32_t)mesh->vertex_positions.size();
+            mesh->vertex_positions.push_back({0.0f, yTop, 0.0f});
+            mesh->vertex_normals.push_back({0.0f, 1.0f, 0.0f});
+            mesh->vertex_uvset_0.push_back({0.5f, 0.5f});
+
+            for (int i = 0; i < N; i++) {
+                uint32_t t0 = base + i * 2 + 1;       // top ring vertex i
+                uint32_t t1 = base + (i + 1) * 2 + 1; // top ring vertex i+1
+                mesh->indices.push_back(center);
+                mesh->indices.push_back(t0);
+                mesh->indices.push_back(t1);
+            }
+        }
+
+        subset.indexCount = (uint32_t)(mesh->indices.size() - subset.indexOffset);
+        mesh->subsets.push_back(subset);
+    };
+
+    // Tower body: cream/white, tapered
+    addSection(0.0f, towerTop, baseR, towerTopR,  0.95f, 0.92f, 0.85f, 0.65f, false);
+    // Gallery platform: dark grey iron, wider, capped
+    addSection(towerTop, galleryTop, galleryR, galleryR,  0.20f, 0.20f, 0.22f, 0.40f, true);
+    // Lantern room: dark blue-grey glass
+    addSection(galleryTop, lanternTop, lanternR, lanternR,  0.12f, 0.15f, 0.20f, 0.25f, false);
+    // Dome: red, tapered to near-point
+    addSection(lanternTop, domeTop, lanternR, 0.05f,  0.75f, 0.10f, 0.10f, 0.45f, false);
+
+    mesh->CreateRenderData();
+    g_lighthouseMeshCache[cacheKey] = meshEntity;
+
+    weLog("    Created procedural lighthouse mesh h=" + std::to_string(totalHeight) +
+          " baseR=" + std::to_string(baseR));
+
+    wi::ecs::Entity entity = scene.Entity_CreateObject(name);
+    auto* object = scene.objects.GetComponent(entity);
+    if (object) object->meshID = meshEntity;
+    return entity;
+}
 
 // Shared placeholder mesh cache -- avoids creating hundreds of identical GPU meshes
 struct PlaceholderMeshKey {
@@ -257,12 +415,10 @@ static wi::ecs::Entity createPlaceholderBox(wi::scene::Scene& scene, const std::
 static std::unordered_map<std::string, wi::ecs::Entity> g_convertedMeshCache;
 
 // Create a WE mesh entity from Irrlicht-converted model data (standalone, not attached to any root)
-// textureNames: optional list of texture filenames scanned from the model file
 // modelDir: directory containing the model (for resolving relative texture paths)
 static wi::ecs::Entity createWEMeshFromConverted(wi::scene::Scene& scene,
                                                    const bc::ConvertedModel& model,
                                                    const std::string& baseName,
-                                                   const std::vector<std::string>& textureNames = {},
                                                    const std::string& modelDir = "",
                                                    bool allowTransparency = false) {
     wi::ecs::Entity meshEntity = scene.Entity_CreateMesh(baseName + "_mesh");
@@ -295,14 +451,16 @@ static wi::ecs::Entity createWEMeshFromConverted(wi::scene::Scene& scene,
             material->roughness = std::max(0.04f, std::min(1.0f, roughness));
             material->metalness = 0.0f; // buildings/structures are non-metallic
 
-            // Color-only models (no texture) look flat at roughness=1.0;
-            // give them a moderate sheen like painted concrete/plaster
+            // Color-only models (no texture): use high roughness to prevent
+            // sky/environment reflections from tinting surfaces blue in PBR
             if (sub.material.textureName.empty() && roughness > 0.7f) {
-                material->roughness = 0.55f;
+                material->roughness = 0.85f;
             }
 
-            // Assign texture: prefer per-submesh name from Irrlicht (correct mapping),
-            // fall back to scanned names by index (approximate)
+            // Assign texture from Irrlicht material data.
+            // EDT_NULL creates SDummyTexture objects for materials that reference
+            // texture files, so textureName is correct for textured materials.
+            // Materials without textureName are genuinely untextured (color-only).
             std::string texPath;
             if (!sub.material.textureName.empty()) {
                 texPath = sub.material.textureName;
@@ -312,8 +470,6 @@ static wi::ecs::Entity createWEMeshFromConverted(wi::scene::Scene& scene,
                     texPath.find(':') == std::string::npos) {
                     texPath = modelDir + texPath;
                 }
-            } else if (i < textureNames.size() && !textureNames[i].empty()) {
-                texPath = modelDir + textureNames[i];
             }
             if (!texPath.empty()) {
                 // Normalize backslashes to forward slashes (WE convention)
@@ -322,12 +478,25 @@ static wi::ecs::Entity createWEMeshFromConverted(wi::scene::Scene& scene,
                 if (texPath.find(':') == std::string::npos && !texPath.empty()) {
                     texPath = wi::helper::GetCurrentPath() + "/" + texPath;
                 }
+                // Runtime texture upscaling: bilinear 2x for textures below 512px
+                {
+                    std::string upscaled = TextureUpscaler::ensureMinSize(
+                        texPath, Utilities::getUserDirBase() + "texcache/", 512);
+                    if (!upscaled.empty()) {
+                        weLog("    Upscaled: " + texPath + " -> " + upscaled);
+                        texPath = upscaled;
+                    }
+                }
                 material->textures[wi::scene::MaterialComponent::BASECOLORMAP].name = texPath;
                 // Explicitly pre-load texture into resource manager before CreateRenderData
                 // (CreateRenderData queues async load but may not resolve without this)
                 if (wi::helper::FileExists(texPath)) {
                     material->textures[wi::scene::MaterialComponent::BASECOLORMAP].resource =
                         wi::resourcemanager::Load(texPath);
+                    // In Irrlicht, DiffuseColor affects lighting, not texture tinting.
+                    // In WE PBR, baseColor * texture = final albedo. Set white to avoid
+                    // DiffuseColor tinting the texture (e.g. blue console panels).
+                    material->baseColor = DirectX::XMFLOAT4(1.0f, 1.0f, 1.0f, effectiveAlpha);
                     weLog("    Texture[" + std::to_string(i) + "]: " + texPath + " [OK]");
 
                     // Auto-detect PBR maps alongside base texture
@@ -359,6 +528,11 @@ static wi::ecs::Entity createWEMeshFromConverted(wi::scene::Scene& scene,
                     weLog("    Texture[" + std::to_string(i) + "]: " + texPath + " [MISSING]");
                     weLog("      Raw Irrlicht name: " + sub.material.textureName);
                 }
+            } else {
+                // No texture for this submesh - log its diffuse color for debugging
+                weLog("    Submesh[" + std::to_string(i) + "]: no texture, diffuse=(" +
+                      std::to_string(sub.material.r) + "," + std::to_string(sub.material.g) +
+                      "," + std::to_string(sub.material.b) + "," + std::to_string(sub.material.a) + ")");
             }
 
             // Models from mixed formats (.x=CW, .3ds=CCW winding), render both sides
@@ -381,10 +555,14 @@ static wi::ecs::Entity createWEMeshFromConverted(wi::scene::Scene& scene,
         subset.indexCount = static_cast<uint32_t>(sub.indices.size());
 
         // Add vertices (no Z-flip: .x files are already left-handed like WE)
+        // Sanitize UVs: clamp garbage values (e.g. 4.9e19 from corrupt .x data)
         for (const auto& v : sub.vertices) {
             mesh->vertex_positions.push_back(DirectX::XMFLOAT3(v.px, v.py, v.pz));
             mesh->vertex_normals.push_back(DirectX::XMFLOAT3(v.nx, v.ny, v.nz));
-            mesh->vertex_uvset_0.push_back(DirectX::XMFLOAT2(v.u, v.v));
+            float su = v.u, sv = v.v;
+            if (std::abs(su) > 1e6f || std::isnan(su) || std::isinf(su)) su = 0.0f;
+            if (std::abs(sv) > 1e6f || std::isnan(sv) || std::isinf(sv)) sv = 0.0f;
+            mesh->vertex_uvset_0.push_back(DirectX::XMFLOAT2(su, sv));
         }
 
         // Add indices (offset by vertices from previous submeshes)
@@ -445,22 +623,20 @@ static wi::ecs::Entity loadModelOrPlaceholder(wi::scene::Scene& scene,
                 totalVerts += s.vertices.size();
                 totalIdx += s.indices.size();
             }
-            // Scan model file for texture filenames
-            std::vector<std::string> textureNames = bc::scanTextureNames(modelPath);
             // Get model directory for resolving relative texture paths
             std::string modelDir;
             size_t lastSlash = modelPath.find_last_of("/\\");
             if (lastSlash != std::string::npos)
                 modelDir = modelPath.substr(0, lastSlash + 1);
 
-            // Count submeshes with per-submesh texture names from Irrlicht
+            // Count submeshes with texture names from Irrlicht
             size_t irrlichtTexCount = 0;
             for (const auto& s : converted.submeshes) {
                 if (!s.material.textureName.empty()) irrlichtTexCount++;
             }
 
             wi::ecs::Entity meshEntity = createWEMeshFromConverted(
-                scene, converted, name, textureNames, modelDir, allowTransparency);
+                scene, converted, name, modelDir, allowTransparency);
             if (meshEntity != wi::ecs::INVALID_ENTITY) {
                 g_convertedMeshCache[modelPath] = meshEntity;
                 weLog("    Loaded via Irrlicht: " + modelPath +
@@ -468,8 +644,7 @@ static wi::ecs::Entity loadModelOrPlaceholder(wi::scene::Scene& scene,
                       std::to_string(totalVerts) + " verts, " +
                       std::to_string(totalIdx / 3) + " tris, " +
                       std::to_string(irrlichtTexCount) + "/" +
-                      std::to_string(converted.submeshes.size()) + " per-submesh textures, " +
-                      std::to_string(textureNames.size()) + " scanned)");
+                      std::to_string(converted.submeshes.size()) + " textured)");
                 return createObjectFromMesh(scene, meshEntity, name);
             }
         }
@@ -480,6 +655,364 @@ static wi::ecs::Entity loadModelOrPlaceholder(wi::scene::Scene& scene,
     // Fall back to placeholder box
     weLog("    Using placeholder box for: " + modelPath);
     return createPlaceholderBox(scene, name, r, g, b, placeholderSize);
+}
+
+// ===== Buoy colour helpers =====
+
+struct ColourBand {
+    float r, g, b;
+};
+
+static void colourNameToRGB(const std::string& name, float& r, float& g, float& b) {
+    // Case-insensitive matching
+    std::string lower = name;
+    for (auto& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (lower == "red")    { r=0.80f; g=0.05f; b=0.05f; return; }
+    if (lower == "green")  { r=0.05f; g=0.60f; b=0.05f; return; }
+    if (lower == "yellow") { r=0.95f; g=0.85f; b=0.00f; return; }
+    if (lower == "black")  { r=0.08f; g=0.08f; b=0.08f; return; }
+    if (lower == "white")  { r=0.95f; g=0.95f; b=0.95f; return; }
+    if (lower == "orange") { r=0.95f; g=0.50f; b=0.00f; return; }
+    if (lower == "blue")   { r=0.00f; g=0.20f; b=0.80f; return; }
+    r=0.95f; g=0.95f; b=0.95f; // default white
+}
+
+static std::vector<ColourBand> parseColourBands(const std::string& colours) {
+    std::vector<ColourBand> bands;
+    std::istringstream iss(colours);
+    std::string token;
+    while (std::getline(iss, token, ';')) {
+        // Trim whitespace
+        while (!token.empty() && token.front() == ' ') token.erase(token.begin());
+        while (!token.empty() && token.back() == ' ') token.pop_back();
+        if (token.empty()) continue;
+        ColourBand band;
+        colourNameToRGB(token, band.r, band.g, band.b);
+        bands.push_back(band);
+    }
+    return bands;
+}
+
+// Infer IALA cardinal topmark type from colour pattern.
+// Returns: 0=none, 1=North (both up), 2=South (both down),
+//          3=East (base-to-base), 4=West (point-to-point)
+static int inferCardinalTopmark(const std::string& colours) {
+    if (colours == "black;yellow") return 1;
+    if (colours == "yellow;black") return 2;
+    if (colours == "black;yellow;black") return 3;
+    if (colours == "yellow;black;yellow") return 4;
+    return 0;
+}
+
+// Helper: add a cone to the mesh (black material). yBase = wide end, yApex = point end.
+static void addConeToMesh(wi::scene::MeshComponent* mesh, wi::scene::Scene& scene,
+                           const std::string& matName,
+                           float yBase, float yApex, float baseRadius, int segments) {
+    wi::ecs::Entity matEntity = scene.Entity_CreateMaterial(matName);
+    auto* mat = scene.materials.GetComponent(matEntity);
+    if (mat) {
+        mat->baseColor = DirectX::XMFLOAT4(0.08f, 0.08f, 0.08f, 1.0f); // black
+        mat->roughness = 0.40f;
+        mat->metalness = 0.0f;
+        mat->SetDoubleSided(true);
+        mat->CreateRenderData();
+    }
+
+    float ny = (yApex > yBase) ? 0.5f : -0.5f; // normal Y hint for slant
+
+    // Apex vertex
+    uint32_t apexIdx = (uint32_t)mesh->vertex_positions.size();
+    mesh->vertex_positions.push_back({0.0f, yApex, 0.0f});
+    mesh->vertex_normals.push_back({0.0f, ny, 0.0f});
+    mesh->vertex_uvset_0.push_back({0.5f, 0.5f});
+
+    // Base ring
+    uint32_t ringBase = (uint32_t)mesh->vertex_positions.size();
+    for (int i = 0; i <= segments; i++) {
+        float a = (float)i / segments * 6.28318530718f;
+        float ca = cosf(a), sa = sinf(a);
+        mesh->vertex_positions.push_back({baseRadius * ca, yBase, baseRadius * sa});
+        mesh->vertex_normals.push_back({ca * 0.866f, ny * 0.5f, sa * 0.866f}); // slanted normal
+        mesh->vertex_uvset_0.push_back({(float)i / segments, 0.0f});
+    }
+
+    // Cone side triangles
+    wi::scene::MeshComponent::MeshSubset subset;
+    subset.materialID = matEntity;
+    subset.indexOffset = (uint32_t)mesh->indices.size();
+    for (int i = 0; i < segments; i++) {
+        if (yApex > yBase) {
+            // Point up: apex, ring[i], ring[i+1]
+            mesh->indices.push_back(apexIdx);
+            mesh->indices.push_back(ringBase + i);
+            mesh->indices.push_back(ringBase + i + 1);
+        } else {
+            // Point down: apex, ring[i+1], ring[i] (reversed winding)
+            mesh->indices.push_back(apexIdx);
+            mesh->indices.push_back(ringBase + i + 1);
+            mesh->indices.push_back(ringBase + i);
+        }
+    }
+    subset.indexCount = (uint32_t)(mesh->indices.size() - subset.indexOffset);
+    mesh->subsets.push_back(subset);
+}
+
+// Create a procedural cylinder with horizontal colour bands for multi-band buoys.
+// Bands are ordered top-to-bottom per IALA/OSM: "black;yellow" = black on top.
+// topmarkType: 0=none, 1=N(both up), 2=S(both down), 3=E(base-to-base), 4=W(point-to-point)
+static wi::ecs::Entity createBandedBuoyCylinder(wi::scene::Scene& scene,
+                                                  const std::string& name,
+                                                  const std::vector<ColourBand>& bands,
+                                                  float height, float radius,
+                                                  int topmarkType = 0) {
+    const int N = 12; // circumference segments
+
+    wi::ecs::Entity meshEntity = scene.Entity_CreateMesh(name + "_bandmesh");
+    auto* mesh = scene.meshes.GetComponent(meshEntity);
+    if (!mesh) return wi::ecs::INVALID_ENTITY;
+
+    float bandH = height / static_cast<float>(bands.size());
+
+    // Bands[0] = top, bands[N-1] = bottom per IALA convention
+    for (size_t b = 0; b < bands.size(); b++) {
+        float yTop = height - b * bandH;
+        float yBot = height - (b + 1) * bandH;
+
+        wi::ecs::Entity matEntity = scene.Entity_CreateMaterial(name + "_bmat" + std::to_string(b));
+        auto* mat = scene.materials.GetComponent(matEntity);
+        if (mat) {
+            mat->baseColor = DirectX::XMFLOAT4(bands[b].r, bands[b].g, bands[b].b, 1.0f);
+            mat->roughness = 0.45f;
+            mat->metalness = 0.0f;
+            mat->SetDoubleSided(true);
+            mat->CreateRenderData();
+        }
+
+        uint32_t base = (uint32_t)mesh->vertex_positions.size();
+        for (int i = 0; i <= N; i++) {
+            float a = (float)i / N * 6.28318530718f;
+            float ca = cosf(a), sa = sinf(a);
+            mesh->vertex_positions.push_back({radius * ca, yBot, radius * sa});
+            mesh->vertex_normals.push_back({ca, 0.0f, sa});
+            mesh->vertex_uvset_0.push_back({(float)i / N, 0.0f});
+            mesh->vertex_positions.push_back({radius * ca, yTop, radius * sa});
+            mesh->vertex_normals.push_back({ca, 0.0f, sa});
+            mesh->vertex_uvset_0.push_back({(float)i / N, 1.0f});
+        }
+
+        wi::scene::MeshComponent::MeshSubset subset;
+        subset.materialID = matEntity;
+        subset.indexOffset = (uint32_t)mesh->indices.size();
+        for (int i = 0; i < N; i++) {
+            uint32_t bl = base + i * 2, tl = bl + 1;
+            uint32_t br = base + (i + 1) * 2, tr = br + 1;
+            mesh->indices.push_back(bl); mesh->indices.push_back(tl); mesh->indices.push_back(br);
+            mesh->indices.push_back(br); mesh->indices.push_back(tl); mesh->indices.push_back(tr);
+        }
+        subset.indexCount = (uint32_t)(mesh->indices.size() - subset.indexOffset);
+        mesh->subsets.push_back(subset);
+    }
+
+    // Top cap (uses top band colour)
+    {
+        uint32_t base = (uint32_t)mesh->vertex_positions.size();
+        wi::ecs::Entity capMat = scene.Entity_CreateMaterial(name + "_capm");
+        auto* cm = scene.materials.GetComponent(capMat);
+        if (cm) {
+            cm->baseColor = DirectX::XMFLOAT4(bands[0].r, bands[0].g, bands[0].b, 1.0f);
+            cm->roughness = 0.45f; cm->metalness = 0.0f;
+            cm->SetDoubleSided(true); cm->CreateRenderData();
+        }
+        mesh->vertex_positions.push_back({0.0f, height, 0.0f});
+        mesh->vertex_normals.push_back({0.0f, 1.0f, 0.0f});
+        mesh->vertex_uvset_0.push_back({0.5f, 0.5f});
+        for (int i = 0; i <= N; i++) {
+            float a = (float)i / N * 6.28318530718f;
+            mesh->vertex_positions.push_back({radius * cosf(a), height, radius * sinf(a)});
+            mesh->vertex_normals.push_back({0.0f, 1.0f, 0.0f});
+            mesh->vertex_uvset_0.push_back({0.5f + 0.5f * cosf(a), 0.5f + 0.5f * sinf(a)});
+        }
+        wi::scene::MeshComponent::MeshSubset capSub;
+        capSub.materialID = capMat;
+        capSub.indexOffset = (uint32_t)mesh->indices.size();
+        for (int i = 0; i < N; i++) {
+            mesh->indices.push_back(base);
+            mesh->indices.push_back(base + 1 + i);
+            mesh->indices.push_back(base + 1 + i + 1);
+        }
+        capSub.indexCount = (uint32_t)(mesh->indices.size() - capSub.indexOffset);
+        mesh->subsets.push_back(capSub);
+    }
+
+    // IALA cardinal topmarks: two black cones on a staff above the body
+    if (topmarkType >= 1 && topmarkType <= 4) {
+        float staffR = radius * 0.08f;  // thin staff
+        float coneR = radius * 0.55f;   // cone base radius
+        float coneH = height * 0.18f;   // cone height
+        float gap = height * 0.05f;     // gap between cones
+
+        // Staff: thin cylinder from body top to above topmarks
+        float staffBot = height;
+        float staffTop = height + coneH * 2.0f + gap * 3.0f;
+        {
+            wi::ecs::Entity sMat = scene.Entity_CreateMaterial(name + "_staff");
+            auto* sm = scene.materials.GetComponent(sMat);
+            if (sm) {
+                sm->baseColor = DirectX::XMFLOAT4(0.08f, 0.08f, 0.08f, 1.0f);
+                sm->roughness = 0.40f; sm->metalness = 0.0f;
+                sm->SetDoubleSided(true); sm->CreateRenderData();
+            }
+            uint32_t base = (uint32_t)mesh->vertex_positions.size();
+            for (int i = 0; i <= N; i++) {
+                float a = (float)i / N * 6.28318530718f;
+                float ca = cosf(a), sa = sinf(a);
+                mesh->vertex_positions.push_back({staffR * ca, staffBot, staffR * sa});
+                mesh->vertex_normals.push_back({ca, 0, sa});
+                mesh->vertex_uvset_0.push_back({(float)i / N, 0});
+                mesh->vertex_positions.push_back({staffR * ca, staffTop, staffR * sa});
+                mesh->vertex_normals.push_back({ca, 0, sa});
+                mesh->vertex_uvset_0.push_back({(float)i / N, 1});
+            }
+            wi::scene::MeshComponent::MeshSubset sSub;
+            sSub.materialID = sMat;
+            sSub.indexOffset = (uint32_t)mesh->indices.size();
+            for (int i = 0; i < N; i++) {
+                uint32_t bl = base + i * 2, tl = bl + 1;
+                uint32_t br = base + (i + 1) * 2, tr = br + 1;
+                mesh->indices.push_back(bl); mesh->indices.push_back(tl); mesh->indices.push_back(br);
+                mesh->indices.push_back(br); mesh->indices.push_back(tl); mesh->indices.push_back(tr);
+            }
+            sSub.indexCount = (uint32_t)(mesh->indices.size() - sSub.indexOffset);
+            mesh->subsets.push_back(sSub);
+        }
+
+        // Position cones based on cardinal direction
+        float y1Base, y1Apex, y2Base, y2Apex; // cone 1 (lower), cone 2 (upper)
+        float yOff = height + gap; // base offset above body
+
+        switch (topmarkType) {
+        case 1: // North: both cones point UP
+            y1Base = yOff;
+            y1Apex = yOff + coneH;
+            y2Base = yOff + coneH + gap;
+            y2Apex = yOff + coneH * 2.0f + gap;
+            break;
+        case 2: // South: both cones point DOWN
+            y1Apex = yOff;
+            y1Base = yOff + coneH;
+            y2Apex = yOff + coneH + gap;
+            y2Base = yOff + coneH * 2.0f + gap;
+            break;
+        case 3: // East: base-to-base (lower points down, upper points up)
+            y1Apex = yOff;
+            y1Base = yOff + coneH;
+            y2Base = yOff + coneH; // bases touch
+            y2Apex = yOff + coneH * 2.0f;
+            break;
+        case 4: // West: point-to-point (lower points up, upper points down)
+            y1Base = yOff;
+            y1Apex = yOff + coneH;
+            y2Apex = yOff + coneH; // points touch
+            y2Base = yOff + coneH * 2.0f;
+            break;
+        default:
+            y1Base = y1Apex = y2Base = y2Apex = 0;
+            break;
+        }
+
+        addConeToMesh(mesh, scene, name + "_cone1", y1Base, y1Apex, coneR, N);
+        addConeToMesh(mesh, scene, name + "_cone2", y2Base, y2Apex, coneR, N);
+    }
+
+    mesh->CreateRenderData();
+    return meshEntity;
+}
+
+// Load a buoy with colour override. For multi-band buoys (cardinals, isolated danger),
+// uses procedural cylinder geometry to guarantee clean equal-height bands.
+// For single-colour buoys, applies colour to the model's existing geometry.
+static wi::ecs::Entity loadBuoyWithColour(wi::scene::Scene& scene,
+                                            const std::string& modelPath,
+                                            const std::string& name,
+                                            const std::string& colours) {
+    std::string cacheKey = modelPath + "|" + colours;
+    auto cachedIt = g_convertedMeshCache.find(cacheKey);
+    if (cachedIt != g_convertedMeshCache.end()) {
+        return createObjectFromMesh(scene, cachedIt->second, name);
+    }
+
+    std::vector<ColourBand> bands = parseColourBands(colours);
+    if (bands.empty()) {
+        return loadModelOrPlaceholder(scene, modelPath, name, 0.8f, 0.2f, 0.2f, 3.0f);
+    }
+
+    // Multi-band buoys: use procedural cylinder for guaranteed correct IALA bands.
+    // Model geometry often has uneven vertex distribution (wide base, narrow top)
+    // which makes per-triangle banding look wrong.
+    if (bands.size() > 1) {
+        // Height 10 units (scaled to world size by ScaleFactor from buoy.ini)
+        int topmark = inferCardinalTopmark(colours);
+        wi::ecs::Entity meshEntity = createBandedBuoyCylinder(scene, name, bands, 10.0f, 1.5f, topmark);
+        g_convertedMeshCache[cacheKey] = meshEntity;
+        weLog("    Created banded buoy cylinder: " + name + " colours=" + colours +
+              " (" + std::to_string(bands.size()) + " bands" +
+              (topmark > 0 ? ", topmark=" + std::to_string(topmark) : "") + ")");
+        return createObjectFromMesh(scene, meshEntity, name);
+    }
+
+    // Single-colour buoys: load model geometry and apply colour
+    bc::ConvertedModel converted;
+    try {
+        converted = bc::convertModelViaIrrlicht(modelPath);
+    } catch (...) {
+        weLogErr("Exception converting buoy: " + modelPath);
+    }
+
+    if (!converted.valid || converted.submeshes.empty()) {
+        weLog("    Using coloured placeholder for: " + modelPath + " colours=" + colours);
+        return createPlaceholderBox(scene, name, bands[0].r, bands[0].g, bands[0].b, 3.0f);
+    }
+
+    // Apply single colour to all submeshes
+    wi::ecs::Entity meshEntity = scene.Entity_CreateMesh(name + "_colmesh");
+    auto* mesh = scene.meshes.GetComponent(meshEntity);
+    if (!mesh) {
+        return createPlaceholderBox(scene, name, bands[0].r, bands[0].g, bands[0].b, 3.0f);
+    }
+
+    wi::ecs::Entity matEntity = scene.Entity_CreateMaterial(name + "_colmat");
+    auto* material = scene.materials.GetComponent(matEntity);
+    if (material) {
+        material->baseColor = DirectX::XMFLOAT4(bands[0].r, bands[0].g, bands[0].b, 1.0f);
+        material->roughness = 0.45f;
+        material->metalness = 0.0f;
+        material->SetDoubleSided(true);
+        material->CreateRenderData();
+    }
+
+    uint32_t vertOff = 0;
+    for (const auto& sub : converted.submeshes) {
+        for (const auto& v : sub.vertices) {
+            mesh->vertex_positions.push_back({v.px, v.py, v.pz});
+            mesh->vertex_normals.push_back({v.nx, v.ny, v.nz});
+            mesh->vertex_uvset_0.push_back({v.u, v.v});
+        }
+        for (uint32_t idx : sub.indices) {
+            mesh->indices.push_back(idx + vertOff);
+        }
+        vertOff += (uint32_t)sub.vertices.size();
+    }
+
+    mesh->subsets.push_back(wi::scene::MeshComponent::MeshSubset());
+    auto& subset = mesh->subsets.back();
+    subset.materialID = matEntity;
+    subset.indexOffset = 0;
+    subset.indexCount = (uint32_t)mesh->indices.size();
+
+    mesh->CreateRenderData();
+    g_convertedMeshCache[cacheKey] = meshEntity;
+    weLog("    Loaded buoy with colour: " + modelPath + " colour=" + colours);
+    return createObjectFromMesh(scene, meshEntity, name);
 }
 
 // Create a WE mesh entity from a BuildingMesh (procedural geometry, no model file)
@@ -793,8 +1326,17 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
 
     // --- Initialize ImGui overlay ---
     bc::graphics::wicked::ImGuiInit(hWnd);
+    ImGui_ImplWin32_Init(hWnd);  // Win32 platform backend for proper input
     bc::gui::ImGuiOverlay overlay;
     overlay.init(width, height);
+
+    // --- ESC menu + Settings panel + Radar display ---
+    bool showEscMenu = false;
+    bool showSettings = false;
+    bool showRadarFullscreen = false;
+    bc::gui::SettingsPanel settingsPanel;
+    settingsPanel.load(userFolder);
+    bc::gui::RadarDisplay radarDisplay;
     weLog("  ImGui overlay initialized.");
 
     // --- Initialize Sound ---
@@ -829,7 +1371,28 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     float ownShipHeightCorr = 0;
     float cameraViewX = 0, cameraViewY = 10.0f, cameraViewZ = 0; // bridge position in world coords
     float viewLocalX = 0, viewLocalY = 0, viewLocalZ = 0; // bridge view in ship-local coords (pre-scale)
+    float bridgeHalfW = 3.0f, bridgeHalfD = 3.0f; // walkable bridge bounds (meters, ship-local)
     wi::ecs::Entity ownShipEntity = wi::ecs::INVALID_ENTITY; // stored to toggle visibility
+
+    // Radar screen
+    static const int RADAR_TEX_SIZE = 1024;
+    static uint8_t radarPixels[RADAR_TEX_SIZE * RADAR_TEX_SIZE * 4];
+    wi::ecs::Entity radarScreenEntity = wi::ecs::INVALID_ENTITY;
+    wi::ecs::Entity radarMaterialEntity = wi::ecs::INVALID_ENTITY;
+    float radarLocalX = 0, radarLocalY = 0, radarLocalZ = 0; // ship-local (scaled)
+    float radarScreenSize = 1.0f; // metres
+    float radarScreenTilt = 0.0f; // degrees
+
+    // Map screen (ECDIS)
+    static const int MAP_TEX_SIZE = 512;
+    std::unique_ptr<MapScreen> mapScreen;
+    wi::ecs::Entity mapScreenEntity = wi::ecs::INVALID_ENTITY;
+    wi::ecs::Entity mapMaterialEntity = wi::ecs::INVALID_ENTITY;
+    float mapLocalX = 0, mapLocalY = 0, mapLocalZ = 0;
+    float mapScreenSizeVal = 0;
+    float mapScreenTilt = 0;
+    float mapScreenAngle = 0; // yaw offset in degrees (negative = face port/center)
+    int mapZoom = 14;
 
     // Other ship movement state
     struct OtherShipState {
@@ -1048,6 +1611,30 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             viewLocalZ = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("ViewZ", 1));
         }
 
+        // Compute walkable bridge bounds from view positions (in scaled meters)
+        // Bridge views at similar Y to view 1 define the walkable area
+        {
+            float maxDx = 0, maxDz = 0;
+            for (uint32_t v = 2; v <= numViews; v++) {
+                float vHigh = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("ViewHigh", v));
+                if (vHigh > 0.5f) continue; // skip overhead/high views
+                float vx = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("ViewX", v));
+                float vy = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("ViewY", v));
+                float vz = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("ViewZ", v));
+                // Only include views near bridge deck height (within 10 model units)
+                if (std::abs(vy - viewLocalY) > 10.0f) continue;
+                float dx = std::abs(vx - viewLocalX) * scaleFactor;
+                float dz = std::abs(vz - viewLocalZ) * scaleFactor;
+                if (dx > maxDx) maxDx = dx;
+                if (dz > maxDz) maxDz = dz;
+            }
+            // Add margin beyond wing positions (1m width, 0.5m depth)
+            bridgeHalfW = std::max(3.0f, maxDx + 1.0f);
+            bridgeHalfD = std::max(1.5f, maxDz + 0.5f); // tight fore-aft to prevent walking through windows
+            weLog("  Bridge walk bounds: +-" + std::to_string(bridgeHalfW) +
+                  "m x +-" + std::to_string(bridgeHalfD) + "m");
+        }
+
         // Convert own ship lat/lon to world coordinates
         ownShipX = coords.longToX(scenarioData.ownShipData.initialLong);
         ownShipZ = coords.latToZ(scenarioData.ownShipData.initialLat);
@@ -1070,6 +1657,208 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
         weLog("  Own ship: " + shipName + " at (" +
               std::to_string(ownShipX) + ", " + std::to_string(ownShipZ) +
               ") heading " + std::to_string(ownShipHeading));
+
+        // Read radar screen position from boat.ini
+        float rsx = IniFile::iniFileTof32(boatIni, "RadarScreenX");
+        float rsy = IniFile::iniFileTof32(boatIni, "RadarScreenY");
+        float rsz = IniFile::iniFileTof32(boatIni, "RadarScreenZ");
+        radarScreenSize = IniFile::iniFileTof32(boatIni, "RadarScreenSize");
+        radarScreenTilt = IniFile::iniFileTof32(boatIni, "RadarScreenTilt");
+        if (radarScreenSize <= 0) radarScreenSize = 1.0f;
+        radarLocalX = rsx * scaleFactor;
+        radarLocalY = rsy * scaleFactor + heightCorrection;
+        radarLocalZ = rsz * scaleFactor;
+        float screenMetres = radarScreenSize * scaleFactor * 0.5f; // halve to fit model's screen surface
+
+        // Create radar screen quad mesh
+        if (rsx != 0 || rsy != 0 || rsz != 0) {
+            // Initialize radar pixels to black (will be filled by RadarCalculation)
+            memset(radarPixels, 0, sizeof(radarPixels));
+            for (int i = 0; i < RADAR_TEX_SIZE * RADAR_TEX_SIZE; i++) {
+                radarPixels[i * 4 + 3] = 255; // A = opaque
+            }
+
+            // Create initial GPU texture (will be recreated each radar update)
+            {
+                wi::graphics::TextureDesc desc;
+                desc.width = RADAR_TEX_SIZE;
+                desc.height = RADAR_TEX_SIZE;
+                desc.format = wi::graphics::Format::R8G8B8A8_UNORM;
+                desc.bind_flags = wi::graphics::BindFlag::SHADER_RESOURCE;
+                desc.mip_levels = 1;
+                desc.array_size = 1;
+                wi::graphics::SubresourceData initData;
+                initData.data_ptr = radarPixels;
+                initData.row_pitch = RADAR_TEX_SIZE * 4;
+                initData.slice_pitch = initData.row_pitch * RADAR_TEX_SIZE;
+                wi::graphics::GetDevice()->CreateTexture(&desc, &initData, &g_radarTex);
+                weLog("  Radar texture: " + std::string(g_radarTex.IsValid() ? "OK" : "FAILED"));
+            }
+
+            // Create emissive material (self-lit screen, not affected by scene lighting)
+            radarMaterialEntity = scene.Entity_CreateMaterial("radar_screen_mat");
+            auto* radarMat = scene.materials.GetComponent(radarMaterialEntity);
+            if (radarMat) {
+                radarMat->baseColor = DirectX::XMFLOAT4(0, 0, 0, 1);
+                radarMat->roughness = 0.2f;
+                radarMat->metalness = 0.0f;
+                radarMat->SetEmissiveStrength(3.0f);
+                radarMat->emissiveColor = DirectX::XMFLOAT4(1, 1, 1, 1);
+                radarMat->textures[wi::scene::MaterialComponent::EMISSIVEMAP].resource.SetTexture(g_radarTex);
+                radarMat->SetDoubleSided(true);
+                radarMat->CreateRenderData();
+            }
+
+            // Create quad mesh (two triangles, tilted by RadarScreenTilt)
+            wi::ecs::Entity meshEntity = scene.Entity_CreateMesh("radar_screen_mesh");
+            auto* mesh = scene.meshes.GetComponent(meshEntity);
+            if (mesh) {
+                float half = screenMetres * 0.5f;
+                float tiltRad = radarScreenTilt * (float)M_PI / 180.0f;
+                float cosT = std::cos(tiltRad);
+                float sinT = std::sin(tiltRad);
+
+                // Quad corners in local space (tilted around X axis)
+                // Bottom-left, bottom-right, top-right, top-left
+                mesh->vertex_positions.push_back(DirectX::XMFLOAT3(-half, -half * cosT, -half * sinT));
+                mesh->vertex_positions.push_back(DirectX::XMFLOAT3( half, -half * cosT, -half * sinT));
+                mesh->vertex_positions.push_back(DirectX::XMFLOAT3( half,  half * cosT,  half * sinT));
+                mesh->vertex_positions.push_back(DirectX::XMFLOAT3(-half,  half * cosT,  half * sinT));
+
+                DirectX::XMFLOAT3 normal(0, sinT, -cosT);
+                for (int n = 0; n < 4; n++)
+                    mesh->vertex_normals.push_back(normal);
+
+                mesh->vertex_uvset_0.push_back(DirectX::XMFLOAT2(0, 1));
+                mesh->vertex_uvset_0.push_back(DirectX::XMFLOAT2(1, 1));
+                mesh->vertex_uvset_0.push_back(DirectX::XMFLOAT2(1, 0));
+                mesh->vertex_uvset_0.push_back(DirectX::XMFLOAT2(0, 0));
+
+                mesh->indices = {0, 1, 2, 0, 2, 3};
+
+                mesh->subsets.push_back(wi::scene::MeshComponent::MeshSubset());
+                mesh->subsets.back().materialID = radarMaterialEntity;
+                mesh->subsets.back().indexOffset = 0;
+                mesh->subsets.back().indexCount = 6;
+                mesh->CreateRenderData();
+            }
+
+            // Create radar screen entity with transform
+            radarScreenEntity = wi::ecs::CreateEntity();
+            scene.transforms.Create(radarScreenEntity);
+            scene.names.Create(radarScreenEntity) = "RadarScreen";
+
+            wi::ecs::Entity radarObj = scene.Entity_CreateObject("radar_screen_obj");
+            scene.Component_Attach(radarObj, radarScreenEntity);
+            auto* obj = scene.objects.GetComponent(radarObj);
+            if (obj) obj->meshID = meshEntity;
+
+            weLog("  Radar screen at (" + std::to_string(rsx) + "," +
+                  std::to_string(rsy) + "," + std::to_string(rsz) +
+                  ") size=" + std::to_string(radarScreenSize) +
+                  " tilt=" + std::to_string(radarScreenTilt));
+        }
+
+        // ===== MAP SCREEN (ECDIS) =====
+        {
+            float msx = IniFile::iniFileTof32(boatIni, "MapScreenX");
+            float msy = IniFile::iniFileTof32(boatIni, "MapScreenY");
+            float msz = IniFile::iniFileTof32(boatIni, "MapScreenZ");
+            mapScreenSizeVal = IniFile::iniFileTof32(boatIni, "MapScreenSize");
+            mapScreenTilt = IniFile::iniFileTof32(boatIni, "MapScreenTilt");
+            mapScreenAngle = IniFile::iniFileTof32(boatIni, "MapScreenAngle");
+            mapZoom = IniFile::iniFileTou32(boatIni, "MapScreenZoom");
+            if (mapScreenSizeVal <= 0) mapScreenSizeVal = 0;
+            if (mapZoom < 10 || mapZoom > 17) mapZoom = 14;
+
+            if (mapScreenSizeVal > 0 && (msx != 0 || msy != 0 || msz != 0)) {
+                mapLocalX = msx * scaleFactor;
+                mapLocalY = msy * scaleFactor + heightCorrection;
+                mapLocalZ = msz * scaleFactor;
+            float mapMetres = mapScreenSizeVal * scaleFactor * 0.5f;
+
+            // Init MapScreen tile downloaders
+            mapScreen = std::make_unique<MapScreen>(MAP_TEX_SIZE);
+            mapScreen->init(Utilities::getUserDirBase() + "tilecache/");
+
+            // Create initial GPU texture (dark)
+            uint8_t* mapPx = const_cast<uint8_t*>(mapScreen->getPixels());
+            wi::graphics::TextureDesc texDesc;
+            texDesc.width = MAP_TEX_SIZE;
+            texDesc.height = MAP_TEX_SIZE;
+            texDesc.format = wi::graphics::Format::R8G8B8A8_UNORM;
+            texDesc.bind_flags = wi::graphics::BindFlag::SHADER_RESOURCE;
+            texDesc.mip_levels = 1;
+            texDesc.array_size = 1;
+            wi::graphics::SubresourceData texData;
+            texData.data_ptr = mapPx;
+            texData.row_pitch = MAP_TEX_SIZE * 4;
+            texData.slice_pitch = texData.row_pitch * MAP_TEX_SIZE;
+
+            static wi::graphics::Texture mapGPUTex;
+            wi::graphics::GetDevice()->CreateTexture(&texDesc, &texData, &mapGPUTex);
+
+            // Emissive material (self-lit screen)
+            mapMaterialEntity = scene.Entity_CreateMaterial("map_screen_mat");
+            auto* mapMat = scene.materials.GetComponent(mapMaterialEntity);
+            if (mapMat) {
+                mapMat->baseColor = DirectX::XMFLOAT4(0, 0, 0, 1);
+                mapMat->roughness = 0.2f;
+                mapMat->metalness = 0.0f;
+                mapMat->SetEmissiveStrength(3.0f);
+                mapMat->emissiveColor = DirectX::XMFLOAT4(1, 1, 1, 1);
+                mapMat->textures[wi::scene::MaterialComponent::EMISSIVEMAP].resource.SetTexture(mapGPUTex);
+                mapMat->SetDoubleSided(true);
+                mapMat->CreateRenderData();
+            }
+
+            // Tilted quad mesh (same as radar)
+            wi::ecs::Entity mapMeshEntity = scene.Entity_CreateMesh("map_screen_mesh");
+            auto* mesh = scene.meshes.GetComponent(mapMeshEntity);
+            if (mesh) {
+                float half = mapMetres * 0.5f;
+                float tiltRad = mapScreenTilt * (float)M_PI / 180.0f;
+                float cosT = std::cos(tiltRad);
+                float sinT = std::sin(tiltRad);
+
+                mesh->vertex_positions.push_back(DirectX::XMFLOAT3(-half, -half * cosT, -half * sinT));
+                mesh->vertex_positions.push_back(DirectX::XMFLOAT3( half, -half * cosT, -half * sinT));
+                mesh->vertex_positions.push_back(DirectX::XMFLOAT3( half,  half * cosT,  half * sinT));
+                mesh->vertex_positions.push_back(DirectX::XMFLOAT3(-half,  half * cosT,  half * sinT));
+
+                DirectX::XMFLOAT3 normal(0, sinT, -cosT);
+                for (int n = 0; n < 4; n++)
+                    mesh->vertex_normals.push_back(normal);
+
+                mesh->vertex_uvset_0.push_back(DirectX::XMFLOAT2(0, 1));
+                mesh->vertex_uvset_0.push_back(DirectX::XMFLOAT2(1, 1));
+                mesh->vertex_uvset_0.push_back(DirectX::XMFLOAT2(1, 0));
+                mesh->vertex_uvset_0.push_back(DirectX::XMFLOAT2(0, 0));
+
+                mesh->indices = {0, 1, 2, 0, 2, 3};
+
+                mesh->subsets.push_back(wi::scene::MeshComponent::MeshSubset());
+                mesh->subsets.back().materialID = mapMaterialEntity;
+                mesh->subsets.back().indexOffset = 0;
+                mesh->subsets.back().indexCount = 6;
+                mesh->CreateRenderData();
+            }
+
+            mapScreenEntity = wi::ecs::CreateEntity();
+            scene.transforms.Create(mapScreenEntity);
+            scene.names.Create(mapScreenEntity) = "MapScreen";
+
+            wi::ecs::Entity mapObj = scene.Entity_CreateObject("map_screen_obj");
+            scene.Component_Attach(mapObj, mapScreenEntity);
+            auto* obj = scene.objects.GetComponent(mapObj);
+            if (obj) obj->meshID = mapMeshEntity;
+
+            weLog("  Map screen at (" + std::to_string(msx) + "," +
+                  std::to_string(msy) + "," + std::to_string(msz) +
+                  ") size=" + std::to_string(mapScreenSizeVal) +
+                  " zoom=" + std::to_string(mapZoom));
+            }
+        }
     }
 
     // ===== OTHER SHIPS =====
@@ -1195,8 +1984,18 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
 
             std::string buoyModelPath = buoyBasePath + buoyFileName;
             std::string objName = "Buoy_" + std::to_string(b - 1);
-            wi::ecs::Entity buoyEntity = loadModelOrPlaceholder(scene, buoyModelPath,
-                                                                 objName, 0.8f, 0.2f, 0.2f, 3.0f);
+
+            // Read colour override from buoy.ini (new field, backward compatible)
+            std::string buoyColours = IniFile::iniFileToString(buoyIniFile,
+                IniFile::enumerate1("Colours", b));
+
+            wi::ecs::Entity buoyEntity;
+            if (!buoyColours.empty()) {
+                buoyEntity = loadBuoyWithColour(scene, buoyModelPath, objName, buoyColours);
+            } else {
+                buoyEntity = loadModelOrPlaceholder(scene, buoyModelPath,
+                                                     objName, 0.8f, 0.2f, 0.2f, 3.0f);
+            }
             setEntityTransform(scene, buoyEntity, bx, heightCorr, bz, 0, buoyScale);
 
             buoyStates[b - 1].entity = buoyEntity;
@@ -1243,8 +2042,18 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             weLog("  LandObject " + std::to_string(lo) + "/" + std::to_string(numLandObjs) +
                   ": " + objType + " model=" + loModelPath);
             std::string objName = "LandObject_" + std::to_string(lo - 1);
-            wi::ecs::Entity loEntity = loadModelOrPlaceholder(scene, loModelPath,
-                                                               objName, 0.5f, 0.35f, 0.2f, 8.0f);
+            wi::ecs::Entity loEntity;
+            if (objType == "Lighthouse") {
+                // Use procedural lighthouse (GLB import via temp scene merge
+                // produces invisible geometry -- needs further investigation)
+                float lhHeight = IniFile::iniFileTof32(landObjIniFile, IniFile::enumerate1("HeightAbove", lo));
+                if (lhHeight < 1.0f) lhHeight = 15.0f;
+                loEntity = createProceduralLighthouse(scene, objName, lhHeight);
+                loScale = 1.0f;
+            } else {
+                loEntity = loadModelOrPlaceholder(scene, loModelPath,
+                                                   objName, 0.5f, 0.35f, 0.2f, 8.0f);
+            }
             setEntityTransform(scene, loEntity, ox, objY, oz, rotation, loScale);
         }
         weLog("  Loaded " + std::to_string(numLandObjs) + " land objects");
@@ -1538,6 +2347,9 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
         SimBridge::setPortEngine(ownShipPortEngine);
         SimBridge::setStbdEngine(ownShipStbdEngine);
     }
+    // Enable ARPA auto-detection so radar contacts can be clicked to track
+    SimBridge::setArpaMode(1);
+
     weLog("  SimulationBridge ready (initial engine: " +
           std::to_string(ownShipPortEngine) + "/" + std::to_string(ownShipStbdEngine) + ")");
 
@@ -1607,16 +2419,33 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                       " active=" + std::to_string(application.is_window_active));
             }
 
-            // ESC = quit
-            if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) {
-                weLog("ESC pressed -- posting quit");
-                PostQuitMessage(0);
-                continue;
+            // ESC = toggle pause menu (debounced)
+            {
+                static bool escWasDown = false;
+                bool escDown = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
+                if (escDown && !escWasDown) {
+                    if (showSettings) {
+                        showSettings = false; // Close settings first
+                    } else {
+                        showEscMenu = !showEscMenu;
+                    }
+                }
+                escWasDown = escDown;
+            }
+
+            // R key toggles full-screen radar (debounced)
+            {
+                static bool rWasDown = false;
+                bool rDown = (GetAsyncKeyState('R') & 0x8000) != 0;
+                if (rDown && !rWasDown && !showEscMenu && !showSettings) {
+                    showRadarFullscreen = !showRadarFullscreen;
+                }
+                rWasDown = rDown;
             }
 
             // ===== OWN SHIP CONTROLS =====
-            // Skip keyboard controls if ImGui wants input or GUI slider is active
-            bool imguiWantsKB = bc::graphics::wicked::ImGuiWantsKeyboard();
+            // Skip keyboard controls if ImGui wants input, GUI slider is active, or overlay is open
+            bool imguiWantsKB = bc::graphics::wicked::ImGuiWantsKeyboard() || showEscMenu || showSettings || showRadarFullscreen;
             bool guiControlActive = overlay.isControlActive();
             // Arrow Up/Down: engine ahead/astern (telegraph-style, ~5s full travel)
             // Both engines move together via keyboard
@@ -1825,6 +2654,145 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 }
             }
 
+            // ===== RADAR DATA UPDATE =====
+            // Write radar pixels to UPLOAD staging texture; the actual GPU copy
+            // happens in BCRenderPath::Compose() on the GRAPHICS queue command list.
+            {
+                static int radarUpdateCounter = 0;
+                if (++radarUpdateCounter >= 4) {
+                    radarUpdateCounter = 0;
+                    const int RS = RADAR_TEX_SIZE;
+                    bool ok = SimBridge::getRadarImage(radarPixels, RS);
+                    static int radarFailCount = 0;
+                    if (!ok) {
+                        if (++radarFailCount <= 3) {
+                            weLog("  Radar getImage FAILED (attempt " +
+                                  std::to_string(radarFailCount) + ", imgSize=" +
+                                  std::to_string(SimBridge::getRadarImageSize()) + ")");
+                        }
+                    }
+                    static bool radarDataLogged = false;
+                    if (!radarDataLogged && ok) {
+                        int mid = RS / 2;
+                        int idx = (mid * RS + mid) * 4;
+                        weLog("  Radar data: src=" + std::to_string(SimBridge::getRadarImageSize()) +
+                              " center RGBA=(" +
+                              std::to_string(radarPixels[idx]) + "," +
+                              std::to_string(radarPixels[idx+1]) + "," +
+                              std::to_string(radarPixels[idx+2]) + "," +
+                              std::to_string(radarPixels[idx+3]) + ")");
+                        radarDataLogged = true;
+                    }
+                    if (ok) {
+                        // Recreate the texture with new pixel data.
+                        // CreateTexture handles staging internally (CopyAllocator).
+                        wi::graphics::TextureDesc texDesc;
+                        texDesc.width = RS;
+                        texDesc.height = RS;
+                        texDesc.format = wi::graphics::Format::R8G8B8A8_UNORM;
+                        texDesc.bind_flags = wi::graphics::BindFlag::SHADER_RESOURCE;
+                        texDesc.mip_levels = 1;
+                        texDesc.array_size = 1;
+                        wi::graphics::SubresourceData texData;
+                        texData.data_ptr = radarPixels;
+                        texData.row_pitch = RS * 4;
+                        texData.slice_pitch = texData.row_pitch * RS;
+                        wi::graphics::GetDevice()->CreateTexture(&texDesc, &texData, &g_radarTex);
+
+                        // Update 3D screen material: SetTexture copies the new shared_ptr,
+                        // CreateRenderData rebuilds GPU descriptors for the new resource.
+                        if (radarScreenEntity != wi::ecs::INVALID_ENTITY) {
+                            auto* radarMat = scene.materials.GetComponent(radarMaterialEntity);
+                            if (radarMat) {
+                                radarMat->textures[wi::scene::MaterialComponent::EMISSIVEMAP].resource.SetTexture(g_radarTex);
+                                radarMat->CreateRenderData();
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ===== RADAR 3D SCREEN POSITION =====
+            if (radarScreenEntity != wi::ecs::INVALID_ENTITY) {
+                float screenOffX = radarLocalX - 0.02f;
+                float screenOffY = radarLocalY;
+                float screenOffZ = radarLocalZ + 0.08f;
+                float cosH = std::cos(headRad), sinH = std::sin(headRad);
+                float rwx = ownShipX + (screenOffX * cosH + screenOffZ * sinH);
+                float rwy = screenOffY + (ownShipY - ownShipHeightCorr) * 0.3f;
+                float rwz = ownShipZ + (-screenOffX * sinH + screenOffZ * cosH);
+                auto* xform = scene.transforms.GetComponent(radarScreenEntity);
+                if (xform) {
+                    xform->ClearTransform();
+                    xform->Translate(DirectX::XMFLOAT3(rwx, rwy, rwz));
+                    xform->RotateRollPitchYaw(DirectX::XMFLOAT3(0, headRad, 0));
+                    xform->UpdateTransform();
+                }
+            }
+
+            // ===== MAP SCREEN PER-FRAME UPDATE =====
+            if (mapScreenEntity != wi::ecs::INVALID_ENTITY && mapScreen) {
+                // Position map screen to follow ship
+                float mapOffX = mapLocalX;
+                float mapOffY = mapLocalY;
+                float mapOffZ = mapLocalZ;
+                float mCosH = std::cos(headRad), mSinH = std::sin(headRad);
+                float mwx = ownShipX + (mapOffX * mCosH + mapOffZ * mSinH);
+                float mwy = mapOffY + (ownShipY - ownShipHeightCorr) * 0.3f;
+                float mwz = ownShipZ + (-mapOffX * mSinH + mapOffZ * mCosH);
+                auto* mxform = scene.transforms.GetComponent(mapScreenEntity);
+                if (mxform) {
+                    mxform->ClearTransform();
+                    mxform->Translate(DirectX::XMFLOAT3(mwx, mwy, mwz));
+                    float mapYaw = headRad + mapScreenAngle * (float)M_PI / 180.0f;
+                    mxform->RotateRollPitchYaw(DirectX::XMFLOAT3(0, mapYaw, 0));
+                    mxform->UpdateTransform();
+                }
+
+                // Update map every 8th frame (~15Hz at 120fps)
+                static int mapUpdateCounter = 0;
+                if (++mapUpdateCounter >= 8) {
+                    mapUpdateCounter = 0;
+
+                    double ownLat = coords.zToLat(ownShipZ);
+                    double ownLon = coords.xToLong(ownShipX);
+
+                    // Gather AIS contacts from other ships
+                    int nOther = SimBridge::getNumberOfOtherShips();
+                    std::vector<MapScreen::AISContact> contacts(nOther);
+                    for (int ci = 0; ci < nOther; ci++) {
+                        contacts[ci].lat = coords.zToLat(SimBridge::getOtherShipPosZ(ci));
+                        contacts[ci].lon = coords.xToLong(SimBridge::getOtherShipPosX(ci));
+                        contacts[ci].heading = SimBridge::getOtherShipHeading(ci);
+                        contacts[ci].speed = SimBridge::getOtherShipSpeed(ci) * 1.94384f; // m/s to knots
+                    }
+
+                    mapScreen->update(ownLat, ownLon, ownShipHeading,
+                                      contacts.data(), nOther, mapZoom);
+
+                    // Upload pixels to GPU
+                    static wi::graphics::Texture mapGPUTexUpdate;
+                    wi::graphics::TextureDesc mtd;
+                    mtd.width = MAP_TEX_SIZE;
+                    mtd.height = MAP_TEX_SIZE;
+                    mtd.format = wi::graphics::Format::R8G8B8A8_UNORM;
+                    mtd.bind_flags = wi::graphics::BindFlag::SHADER_RESOURCE;
+                    mtd.mip_levels = 1;
+                    mtd.array_size = 1;
+                    wi::graphics::SubresourceData msd;
+                    msd.data_ptr = mapScreen->getPixels();
+                    msd.row_pitch = MAP_TEX_SIZE * 4;
+                    msd.slice_pitch = msd.row_pitch * MAP_TEX_SIZE;
+                    wi::graphics::GetDevice()->CreateTexture(&mtd, &msd, &mapGPUTexUpdate);
+
+                    auto* mapMat = scene.materials.GetComponent(mapMaterialEntity);
+                    if (mapMat) {
+                        mapMat->textures[wi::scene::MaterialComponent::EMISSIVEMAP].resource.SetTexture(mapGPUTexUpdate);
+                        mapMat->SetDirty();
+                    }
+                }
+            }
+
             // Toggle orbit/bridge mode with 'O'
             bool keyODown = (GetAsyncKeyState('O') & 0x8000) != 0;
             if (keyODown && !keyOWasDown) {
@@ -1839,6 +2807,8 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                     // Reset bridge view to forward-looking default
                     camPitch = 0.0f;
                     camYawOffset = 0.0f;
+                    walkLocalX = 0.0f;
+                    walkLocalZ = 0.0f;
                 }
                 // Ship stays visible in both modes: orbit sees it from outside,
                 // bridge mode sees the bridge interior from inside.
@@ -1924,11 +2894,45 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 lookY = camTargetY;
                 lookZ = camTargetZ;
             } else {
-                // Bridge first-person mode
-                // Camera position follows own ship (updated above in ship controls)
-                camX = camPosX;
+                // Bridge first-person mode with WASD walking
+                // Walk direction is relative to camera look (in ship-local frame)
+                float walkYawRad = camYawOffset * (float)M_PI / 180.0f;
+                float walkSpeed = 1.5f * dt; // ~1.5 m/s walk
+                if (GetAsyncKeyState(VK_SHIFT) & 0x8000) walkSpeed = 4.0f * dt;
+
+                if (GetAsyncKeyState('W') & 0x8000) {
+                    walkLocalX += std::sin(walkYawRad) * walkSpeed;
+                    walkLocalZ += std::cos(walkYawRad) * walkSpeed;
+                }
+                if (GetAsyncKeyState('S') & 0x8000) {
+                    walkLocalX -= std::sin(walkYawRad) * walkSpeed;
+                    walkLocalZ -= std::cos(walkYawRad) * walkSpeed;
+                }
+                if (GetAsyncKeyState('A') & 0x8000) {
+                    walkLocalX -= std::cos(walkYawRad) * walkSpeed;
+                    walkLocalZ += std::sin(walkYawRad) * walkSpeed;
+                }
+                if (GetAsyncKeyState('D') & 0x8000) {
+                    walkLocalX += std::cos(walkYawRad) * walkSpeed;
+                    walkLocalZ -= std::sin(walkYawRad) * walkSpeed;
+                }
+
+                // R resets walk position to default bridge view
+                if (GetAsyncKeyState('R') & 0x8000) {
+                    walkLocalX = 0.0f;
+                    walkLocalZ = 0.0f;
+                }
+
+                // Clamp to bridge bounds (rectangular, from view positions)
+                walkLocalX = std::max(-bridgeHalfW, std::min(bridgeHalfW, walkLocalX));
+                walkLocalZ = std::max(-bridgeHalfD, std::min(bridgeHalfD, walkLocalZ));
+
+                // Transform ship-local walk offset to world space and apply
+                float cosH = std::cos(headRad);
+                float sinH = std::sin(headRad);
+                camX = camPosX + walkLocalX * cosH + walkLocalZ * sinH;
                 camY = camPosY;
-                camZ = camPosZ;
+                camZ = camPosZ - walkLocalX * sinH + walkLocalZ * cosH;
 
                 // Look direction from yaw/pitch
                 float pitchRad = camPitch * (float)M_PI / 180.0f;
@@ -1973,14 +2977,8 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
 
             // ===== IMGUI HUD =====
             {
-                // Feed input state to ImGui
-                ImGuiIO& io = ImGui::GetIO();
-                io.DisplaySize = ImVec2((float)width, (float)height);
-                io.DeltaTime = dt > 0 ? dt : 1.0f / 60.0f;
-                io.MousePos = ImVec2((float)mousePos.x, (float)mousePos.y);
-                io.MouseDown[0] = lbDown;
-                io.MouseDown[1] = rbDown;
-
+                // Win32 backend handles DisplaySize, DeltaTime, mouse, keyboard, scroll
+                ImGui_ImplWin32_NewFrame();
                 bc::graphics::wicked::ImGuiNewFrame();
 
                 // Pass current control values to overlay sliders
@@ -2003,6 +3001,52 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 hudData.simulationTime = totalSimTime;
                 overlay.setSimulationData(hudData);
                 overlay.render();
+
+                // --- ESC Menu overlay ---
+                if (showEscMenu) {
+                    // Semi-transparent background
+                    ImGui::SetNextWindowPos(ImVec2(width * 0.5f, height * 0.5f),
+                        ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+                    ImGui::SetNextWindowSize(ImVec2(260, 0), ImGuiCond_Always);
+                    ImGuiWindowFlags menuFlags = ImGuiWindowFlags_NoCollapse |
+                        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                        ImGuiWindowFlags_AlwaysAutoResize;
+                    ImGui::Begin("Paused", nullptr, menuFlags);
+
+                    float btnW = ImGui::GetContentRegionAvail().x;
+                    if (ImGui::Button("Resume", ImVec2(btnW, 40))) {
+                        showEscMenu = false;
+                    }
+                    if (ImGui::Button("Settings", ImVec2(btnW, 40))) {
+                        showSettings = true;
+                    }
+                    if (ImGui::Button("Radar", ImVec2(btnW, 40))) {
+                        showRadarFullscreen = true;
+                        showEscMenu = false;
+                    }
+                    ImGui::Separator();
+                    if (ImGui::Button("Exit", ImVec2(btnW, 40))) {
+                        weLog("Exit pressed from ESC menu");
+                        PostQuitMessage(0);
+                    }
+
+                    ImGui::End();
+                }
+
+                // --- Settings panel ---
+                if (showSettings) {
+                    if (!settingsPanel.render(width, height)) {
+                        showSettings = false;
+                    }
+                }
+
+                // --- Full-screen radar display ---
+                if (showRadarFullscreen) {
+                    ImTextureID radarTexID = g_radarTex.IsValid() ? (ImTextureID)&g_radarTex : nullptr;
+                    if (!radarDisplay.render(width, height, radarTexID, RADAR_TEX_SIZE)) {
+                        showRadarFullscreen = false;
+                    }
+                }
 
                 // Read back control values (may have been modified by GUI sliders)
                 ownShipPortEngine = overlay.getControlPortEngine();
@@ -2076,13 +3120,22 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             {
                 static bool f12WasDown = false;
                 bool f12IsDown = (GetAsyncKeyState(VK_F12) & 0x8000) != 0;
-                bool fileRequest = Utilities::pathExists(screenshotRequestPath);
+                bool fileRequest = false;
+                // Check file every 30 frames to reduce I/O
+                if (frameCount % 30 == 0) {
+                    FILE* fp = fopen(screenshotRequestPath.c_str(), "r");
+                    if (fp) { fclose(fp); fileRequest = true; }
+                }
 
                 if ((f12IsDown && !f12WasDown) || fileRequest) {
+                    weLog("Screenshot triggered (file=" + std::to_string(fileRequest) +
+                          " path=" + screenshotRequestPath + ")");
                     std::string outPath = fileRequest ? screenshotOutputPath : "";
                     std::string result = wi::helper::screenshot(application.swapChain, outPath);
                     if (!result.empty()) {
                         weLog("Screenshot saved: " + result);
+                    } else {
+                        weLog("Screenshot FAILED (empty result)");
                     }
                     if (fileRequest) {
                         std::remove(screenshotRequestPath.c_str());
@@ -2102,6 +3155,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     weLog("Shutting down SimulationBridge...");
     SimBridge::shutdown();
     weLog("Shutting down Wicked Engine...");
+    ImGui_ImplWin32_Shutdown();
     bc::graphics::wicked::ImGuiShutdown();
     g_convertedMeshCache.clear();
     g_sharedPlaceholderMeshes.clear();

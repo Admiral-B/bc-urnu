@@ -241,6 +241,11 @@ SimulationModel::SimulationModel(irr::IrrlichtDevice* dev,
         //Make as big as the maximum screen display size (next power of 2), and then only use as much as is needed to get 1:1 image to screen pixel mapping
         uint32_t radarTextureSize = driver->getScreenSize().Height*0.4; // Optimised for the small radar screen (Where 0.6*screen height is used for the 3d view). We should have a higher resolution for full radar view
         uint32_t largeRadarTextureSize = driver->getScreenSize().Height; // Optimised for the large radar screen
+        // Clamp for headless mode where getScreenSize() returns 0 or garbage
+        if (radarTextureSize < 64) radarTextureSize = 256;
+        if (radarTextureSize > 512) radarTextureSize = 512;
+        if (largeRadarTextureSize < 128) largeRadarTextureSize = 1024;
+        if (largeRadarTextureSize > 1024) largeRadarTextureSize = 1024;
         //Find next power of 2 size
         radarTextureSize = std::pow(2,std::ceil(std::log2(radarTextureSize)));
         largeRadarTextureSize = std::pow(2,std::ceil(std::log2(largeRadarTextureSize)));
@@ -251,6 +256,8 @@ SimulationModel::SimulationModel(irr::IrrlichtDevice* dev,
         radarImageLarge = driver->createImage (irr::video::ECF_A8R8G8B8, irr::core::dimension2d<uint32_t>(largeRadarTextureSize, largeRadarTextureSize)); //Create image for radar calculation to work on
         radarImageOverlaidLarge = driver->createImage (irr::video::ECF_A8R8G8B8, irr::core::dimension2d<uint32_t>(largeRadarTextureSize, largeRadarTextureSize)); //Create image for radar calculation to work on
         //Images will be filled with background colour in RadarCalculation
+        radarImageChosen = radarImage;
+        radarImageOverlaidChosen = radarImageOverlaid;
 
         //make radar camera
 		std::vector<bool> radarViewsLookDown; //Not needed for the radar camera, but needed for compatability
@@ -1274,6 +1281,11 @@ SimulationModel::~SimulationModel()
         radarCalculation.decreaseRange();
     }
 
+    float SimulationModel::getRadarRangeNm() const
+    {
+        return radarCalculation.getRangeNm();
+    }
+
     void SimulationModel::setRadarGain(float value)
     {
         radarCalculation.setGain(value);
@@ -1465,6 +1477,11 @@ SimulationModel::~SimulationModel()
     void SimulationModel::setMouseDown(bool isMouseDown)
     {
         this->isMouseDown = isMouseDown;
+    }
+
+    void SimulationModel::setRadarCursorPosition(irr::core::vector2di pos)
+    {
+        cursorPositionRadar = pos;
     }
 
     void SimulationModel::updateViewport(float aspect)
@@ -1868,7 +1885,7 @@ SimulationModel::~SimulationModel()
         //Declare here, so scope added as part of profiling isn't a problem
         uint32_t lightLevel;
         float elevAngle;
-        irr::core::vector2di cursorPositionRadar;
+        // cursorPositionRadar is now a member variable (set by setRadarCursorPosition)
         std::vector<float> CPAs;
         std::vector<float> TCPAs;
 		std::vector<float> headings;
@@ -1898,7 +1915,12 @@ SimulationModel::~SimulationModel()
 
 
         //Ensure we have the right radar screen resolution
-        if (guiMain) { setRadarDisplayRadius(guiMain->getRadarPixelRadius()); }
+        if (guiMain) {
+            setRadarDisplayRadius(guiMain->getRadarPixelRadius());
+        } else {
+            // Headless mode: fill the large radar image used by WickedEngine
+            setRadarDisplayRadius(radarImageLarge->getDimension().Width / 2);
+        }
 
         }{ IPROF("Update tide");
 
@@ -2034,26 +2056,31 @@ SimulationModel::~SimulationModel()
                 wheelVisual.update(-6.0 * ownShip.getWheel());
             }
         }
-        if (radarCalculation.isRadarOn() && guiMain) {
-            { IPROF("Update radar cursor position");
-            //set radar screen position, and update it with a radar image from the radar calculation
-            cursorPositionRadar = guiMain->getCursorPositionRadar();
-            }{ IPROF("Update radar calculation");
-            //Choose which radar images to use, depending on the size of the display being used
-            if (2*guiMain->getRadarPixelRadius() > radarImage->getDimension().Width) {
+        if (radarCalculation.isRadarOn()) {
+            if (guiMain) {
+                { IPROF("Update radar cursor position");
+                cursorPositionRadar = guiMain->getCursorPositionRadar();
+                }{ IPROF("Update radar calculation");
+                if (2*guiMain->getRadarPixelRadius() > radarImage->getDimension().Width) {
+                    radarImageChosen = radarImageLarge;
+                    radarImageOverlaidChosen = radarImageOverlaidLarge;
+                } else {
+                    radarImageChosen = radarImage;
+                    radarImageOverlaidChosen = radarImageOverlaid;
+                }
+                radarCalculation.update(radarImageChosen,radarImageOverlaidChosen,offsetPosition,terrain,ownShip,buoys,otherShips,weather,rainIntensity,tideHeight,deltaTime,absoluteTime,cursorPositionRadar,isMouseDown);
+                }{ IPROF("Update radar screen");
+                radarScreen.update(radarImageOverlaidChosen);
+                }{ IPROF("Update radar camera");
+                radarCamera.update();
+                }
+            } else {
+                // Headless mode (WickedEngine): use large radar image for full resolution
                 radarImageChosen = radarImageLarge;
                 radarImageOverlaidChosen = radarImageOverlaidLarge;
-            } else {
-                radarImageChosen = radarImage;
-                radarImageOverlaidChosen = radarImageOverlaid;
+                radarCalculation.update(radarImageChosen,radarImageOverlaidChosen,offsetPosition,terrain,ownShip,buoys,otherShips,weather,rainIntensity,tideHeight,deltaTime,absoluteTime,cursorPositionRadar,isMouseDown);
             }
-            radarCalculation.update(radarImageChosen,radarImageOverlaidChosen,offsetPosition,terrain,ownShip,buoys,otherShips,weather,rainIntensity,tideHeight,deltaTime,absoluteTime,cursorPositionRadar,isMouseDown);
-            }{ IPROF("Update radar screen");
-            radarScreen.update(radarImageOverlaidChosen);
-            }{ IPROF("Update radar camera");
-            radarCamera.update();
-            }
-        } else {
+        } else if (guiMain) {
             radarScreen.getSceneNode()->setVisible(false);
         }
         { IPROF("Check if paused ");
