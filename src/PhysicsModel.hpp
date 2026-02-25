@@ -63,6 +63,7 @@ struct ShipDimensions {
     double propellerDiameter = 4.0; // Propeller diameter (m)
     double maxRPM = 120.0;      // Maximum propeller RPM
     bool singleEngine = false;   // True if single engine (vs twin screw)
+    double propellorSpacing = 0.0; // Distance between propellers (m), 0 for single screw
 };
 
 // Abstract physics model interface

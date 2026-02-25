@@ -12,6 +12,7 @@
 #include "gui/ImGuiOverlay.hpp"
 #include "gui/SettingsPanel.hpp"
 #include "gui/RadarDisplay.hpp"
+#include "gui/EcdisDisplay.hpp"
 #include "IrrlichtModelConverter.hpp"
 #include "SimulationBridge.hpp"
 #include "BuildingGenerator.hpp"
@@ -1334,9 +1335,12 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     bool showEscMenu = false;
     bool showSettings = false;
     bool showRadarFullscreen = false;
+    bool showEcdisFullscreen = false;
     bc::gui::SettingsPanel settingsPanel;
     settingsPanel.load(userFolder);
     bc::gui::RadarDisplay radarDisplay;
+    bc::gui::EcdisDisplay ecdisDisplay;
+    ecdisDisplay.init(Utilities::getUserDirBase() + "tilecache/");
     weLog("  ImGui overlay initialized.");
 
     // --- Initialize Sound ---
@@ -1367,6 +1371,8 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     float maxSpeedAhead = 14.0f; // knots, read from boat.ini
     float ownShipBowThruster = 0; // -1.0 to 1.0
     float beaufortScale = 3.0f; // sea state for wave heading disturbance
+    wi::ecs::Entity sunEntity = wi::ecs::INVALID_ENTITY; // directional sun light
+    float sunRise = 6.0f, sunSet = 18.0f; // hours (0-24), persisted for day/night cycle
     float ownShipScaleFactor = 1.0f;
     float ownShipHeightCorr = 0;
     float cameraViewX = 0, cameraViewY = 10.0f, cameraViewZ = 0; // bridge position in world coords
@@ -1434,27 +1440,56 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     // ===== SUN / LIGHTING =====
     pumpMessages(); // Keep window responsive during setup
     weLog("  Setting up sun/lighting...");
-    wi::ecs::Entity sunEntity = scene.Entity_CreateLight("Sun");
+    sunEntity = scene.Entity_CreateLight("Sun");
     wi::scene::LightComponent* sunLight = scene.lights.GetComponent(sunEntity);
     if (sunLight) {
         sunLight->SetType(wi::scene::LightComponent::DIRECTIONAL);
         sunLight->intensity = 8.0f;
         sunLight->SetCastShadow(true);
     }
-    // Position sun based on time of day
-    float timeOfDay = scenarioData.startTime; // hours (0-24)
-    float sunRise = scenarioData.sunRise > 0 ? scenarioData.sunRise : 6.0f;
-    float sunSet = scenarioData.sunSet > 0 ? scenarioData.sunSet : 18.0f;
-    float dayLength = sunSet - sunRise;
-    float sunProgress = (dayLength > 0) ? (timeOfDay - sunRise) / dayLength : 0.5f;
-    sunProgress = std::max(0.0f, std::min(1.0f, sunProgress));
-    float sunElevation = -((float)M_PI * sunProgress); // 0=horizon, -PI/2=zenith
-    float sunAzimuth = 0.3f; // slightly from south
+    // Store sunrise/sunset for dynamic updates
+    sunRise = scenarioData.sunRise > 0 ? scenarioData.sunRise : 6.0f;
+    sunSet  = scenarioData.sunSet  > 0 ? scenarioData.sunSet  : 18.0f;
+    // Position sun based on start time.
+    // WE computes light.direction by transforming (0,1,0) through the world matrix,
+    // so we build a quaternion that maps (0,1,0) to the desired sun direction.
+    {
+        float timeOfDay = scenarioData.startTime; // hours (0-24) in simulation path
+        float dayLength = sunSet - sunRise;
+        float sunProgress = (dayLength > 0) ? (timeOfDay - sunRise) / dayLength : 0.5f;
+        sunProgress = std::max(0.0f, std::min(1.0f, sunProgress));
 
-    wi::scene::TransformComponent* sunTransform = scene.transforms.GetComponent(sunEntity);
-    if (sunTransform) {
-        sunTransform->RotateRollPitchYaw(DirectX::XMFLOAT3(sunElevation, sunAzimuth, 0.0f));
-        sunTransform->UpdateTransform();
+        // Sun traces a semicircle: east horizon -> zenith -> west horizon
+        // X = east/west, Y = up, Z = south bias (northern hemisphere)
+        float sdx = -std::cos((float)M_PI * sunProgress);
+        float sdy =  std::sin((float)M_PI * sunProgress);
+        float sdz = -0.3f; // slight southward arc
+        float slen = std::sqrt(sdx * sdx + sdy * sdy + sdz * sdz);
+        sdx /= slen; sdy /= slen; sdz /= slen;
+
+        // Quaternion from (0,1,0) to (sdx, sdy, sdz) via axis-angle
+        using namespace DirectX;
+        XMVECTOR src = XMVectorSet(0, 1, 0, 0);
+        XMVECTOR dst = XMVectorSet(sdx, sdy, sdz, 0);
+        XMVECTOR axis = XMVector3Cross(src, dst);
+        float axLen = XMVectorGetX(XMVector3Length(axis));
+        XMVECTOR quat;
+        if (axLen < 0.0001f) {
+            quat = XMQuaternionIdentity();
+        } else {
+            axis = XMVector3Normalize(axis);
+            float dot = sdy; // dot((0,1,0), normalized dir)
+            float angle = std::acos(std::max(-1.0f, std::min(1.0f, dot)));
+            quat = XMQuaternionRotationAxis(axis, angle);
+        }
+
+        wi::scene::TransformComponent* sunTransform = scene.transforms.GetComponent(sunEntity);
+        if (sunTransform) {
+            sunTransform->ClearTransform();
+            XMStoreFloat4(&sunTransform->rotation_local, quat);
+            sunTransform->SetDirty();
+            sunTransform->UpdateTransform();
+        }
     }
 
     // ===== ATMOSPHERE / WEATHER =====
@@ -1471,6 +1506,11 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     if (visRange < 5.0f) {
         scene.weather.fogDensity = 0.01f / std::max(visRange, 0.1f);
     }
+
+    // Rain: WE's rain particle emitter crashes (SEH 0xC0000005) when
+    // rain_amount > 0, both at init and mid-gameplay. Disabled for now.
+    // Rain intensity is still used for cloud darkening and radar clutter.
+    scene.weather.rain_amount = 0.0f;
 
     // ===== OCEAN =====
     weLog("  Setting up ocean...");
@@ -1670,8 +1710,9 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
         radarLocalZ = rsz * scaleFactor;
         float screenMetres = radarScreenSize * scaleFactor * 0.5f; // halve to fit model's screen surface
 
-        // Create radar screen quad mesh
-        if (rsx != 0 || rsy != 0 || rsz != 0) {
+        // 3D radar screen disabled: the quad clips through bridge console geometry.
+        // Fullscreen radar overlay (R key) still works via RadarDisplay.
+        if (false && (rsx != 0 || rsy != 0 || rsz != 0)) {
             // Initialize radar pixels to black (will be filled by RadarCalculation)
             memset(radarPixels, 0, sizeof(radarPixels));
             for (int i = 0; i < RADAR_TEX_SIZE * RADAR_TEX_SIZE; i++) {
@@ -1771,7 +1812,9 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             if (mapScreenSizeVal <= 0) mapScreenSizeVal = 0;
             if (mapZoom < 10 || mapZoom > 17) mapZoom = 14;
 
-            if (mapScreenSizeVal > 0 && (msx != 0 || msy != 0 || msz != 0)) {
+            // 3D map screen disabled: clips through bridge console geometry.
+            // Fullscreen ECDIS overlay (M key) still works via EcdisDisplay.
+            if (false && mapScreenSizeVal > 0 && (msx != 0 || msy != 0 || msz != 0)) {
                 mapLocalX = msx * scaleFactor;
                 mapLocalY = msy * scaleFactor + heightCorrection;
                 mapLocalZ = msz * scaleFactor;
@@ -2336,16 +2379,12 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     weLog("  Initializing SimulationBridge (physics/AI)...");
     SimBridge::init(&sound, scenarioData);
     SimBridge::start();
-    // OwnShip sets axialSpd from InitialSpeed but leaves portEngine/stbdEngine at 0.
-    // Compute an initial engine setting from the scenario speed and ship max speed
-    // so the ship doesn't immediately decelerate.
+    // OwnShip's constructor already sets the engine to the correct proportion
+    // for the initial speed (using the quadratic dynamics model). Read it back
+    // so our local engine variables match.
     {
-        float initSpeed = scenarioData.ownShipData.initialSpeed; // knots
-        float engineFraction = (maxSpeedAhead > 0) ? std::min(1.0f, initSpeed / maxSpeedAhead) : 0.0f;
-        ownShipPortEngine = engineFraction;
-        ownShipStbdEngine = engineFraction;
-        SimBridge::setPortEngine(ownShipPortEngine);
-        SimBridge::setStbdEngine(ownShipStbdEngine);
+        ownShipPortEngine = SimBridge::getPortEngine();
+        ownShipStbdEngine = SimBridge::getStbdEngine();
     }
     // Enable ARPA auto-detection so radar contacts can be clicked to track
     SimBridge::setArpaMode(1);
@@ -2419,13 +2458,17 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                       " active=" + std::to_string(application.is_window_active));
             }
 
-            // ESC = toggle pause menu (debounced)
+            // ESC = close overlays first, then toggle pause menu (debounced)
             {
                 static bool escWasDown = false;
                 bool escDown = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
                 if (escDown && !escWasDown) {
                     if (showSettings) {
-                        showSettings = false; // Close settings first
+                        showSettings = false;
+                    } else if (showEcdisFullscreen) {
+                        showEcdisFullscreen = false;
+                    } else if (showRadarFullscreen) {
+                        showRadarFullscreen = false;
                     } else {
                         showEscMenu = !showEscMenu;
                     }
@@ -2434,13 +2477,37 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             }
 
             // R key toggles full-screen radar (debounced)
+            // Closes ECDIS if open (only one fullscreen view at a time)
             {
                 static bool rWasDown = false;
                 bool rDown = (GetAsyncKeyState('R') & 0x8000) != 0;
                 if (rDown && !rWasDown && !showEscMenu && !showSettings) {
-                    showRadarFullscreen = !showRadarFullscreen;
+                    if (showEcdisFullscreen) {
+                        // Switch from ECDIS to radar
+                        showEcdisFullscreen = false;
+                        showRadarFullscreen = true;
+                    } else {
+                        showRadarFullscreen = !showRadarFullscreen;
+                    }
                 }
                 rWasDown = rDown;
+            }
+
+            // M key toggles full-screen ECDIS (debounced)
+            // Closes radar if open (only one fullscreen view at a time)
+            {
+                static bool mWasDown = false;
+                bool mDown = (GetAsyncKeyState('M') & 0x8000) != 0;
+                if (mDown && !mWasDown && !showEscMenu && !showSettings) {
+                    if (showRadarFullscreen) {
+                        // Switch from radar to ECDIS
+                        showRadarFullscreen = false;
+                        showEcdisFullscreen = true;
+                    } else {
+                        showEcdisFullscreen = !showEcdisFullscreen;
+                    }
+                }
+                mWasDown = mDown;
             }
 
             // ===== OWN SHIP CONTROLS =====
@@ -2521,43 +2588,140 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             // actual rudder angle (used for HUD display only).
             beaufortScale = SimBridge::getWeather();
 
+            // ===== DYNAMIC WEATHER & DAY/NIGHT CYCLE =====
+            if (frameCount > 3) {
+                float scenarioTime = SimBridge::getTimeDelta();
+                float hourTime = std::fmod(scenarioTime, SECONDS_IN_DAY) / SECONDS_IN_HOUR;
+                uint32_t lightLevel = SimBridge::getLightLevel();
+                float ll = (float)lightLevel / 255.0f; // 0=dark, 1=bright
+
+                // --- Sun position ---
+                // WE derives light.direction by transforming (0,1,0) through the
+                // world matrix, then copies it to weather.sunDirection for the sky.
+                // We build a quaternion mapping (0,1,0) to the desired sun vector.
+                float dayLen = sunSet - sunRise;
+                float sunProgress = (dayLen > 0) ? (hourTime - sunRise) / dayLen : 0.5f;
+                sunProgress = std::max(0.0f, std::min(1.0f, sunProgress));
+
+                // Sun traces east -> zenith -> west semicircle
+                float sdx = -std::cos((float)M_PI * sunProgress); // east at rise, west at set
+                float sdy =  std::sin((float)M_PI * sunProgress); // up at noon
+                float sdz = -0.3f;                                 // slight south arc
+                float slen = std::sqrt(sdx*sdx + sdy*sdy + sdz*sdz);
+                sdx /= slen; sdy /= slen; sdz /= slen;
+
+                using namespace DirectX;
+                XMVECTOR src = XMVectorSet(0, 1, 0, 0);
+                XMVECTOR dst = XMVectorSet(sdx, sdy, sdz, 0);
+                XMVECTOR axis = XMVector3Cross(src, dst);
+                float axLen = XMVectorGetX(XMVector3Length(axis));
+                XMVECTOR quat;
+                if (axLen < 0.0001f) {
+                    quat = XMQuaternionIdentity();
+                } else {
+                    axis = XMVector3Normalize(axis);
+                    float dot = sdy;
+                    float angle = std::acos(std::max(-1.0f, std::min(1.0f, dot)));
+                    quat = XMQuaternionRotationAxis(axis, angle);
+                }
+
+                auto* st = scene.transforms.GetComponent(sunEntity);
+                if (st) {
+                    st->ClearTransform();
+                    XMStoreFloat4(&st->rotation_local, quat);
+                    st->SetDirty();
+                    st->UpdateTransform();
+                }
+
+                // Sun intensity: fade over 0.5h twilight bands
+                auto* sl = scene.lights.GetComponent(sunEntity);
+                if (sl) {
+                    float twilight = 1.0f;
+                    if (hourTime < sunRise)
+                        twilight = std::max(0.0f, 1.0f - (sunRise - hourTime) / 0.5f);
+                    else if (hourTime > sunSet)
+                        twilight = std::max(0.0f, 1.0f - (hourTime - sunSet) / 0.5f);
+                    sl->intensity = 8.0f * twilight;
+
+                    // Warm color near horizon (sunrise/sunset), white at zenith (noon)
+                    // hFactor: 1.0 at sunrise/sunset, 0.0 at noon
+                    float hFactor = std::min(1.0f, std::abs(sunProgress - 0.5f) * 4.0f);
+                    sl->color = XMFLOAT3(1.0f, 1.0f - 0.3f * hFactor, 1.0f - 0.5f * hFactor);
+                }
+
+                // --- Ambient & stars ---
+                scene.weather.ambient = XMFLOAT3(
+                    0.05f + 0.25f * ll, 0.05f + 0.30f * ll, 0.08f + 0.32f * ll);
+                scene.weather.stars = std::max(0.0f, 1.0f - ll * 2.0f);
+
+                // --- Rain: disabled (WE bug: rain emitter particle buffer creation
+                // crashes with SEH 0xC0000005 on descriptor index -1). ---
+                // Rain value still drives cloud appearance below.
+                float rain = SimBridge::getRain(); // 0-10
+
+                // --- Cloud coverage from Beaufort ---
+                float cloudCoverage = std::min(1.0f, beaufortScale / 8.0f);
+                scene.weather.volumetricCloudParameters.layerFirst.coverageAmount =
+                    0.3f + 0.7f * cloudCoverage;
+                scene.weather.volumetricCloudParameters.layerFirst.rainAmount =
+                    std::min(rain / 10.0f, 1.0f);
+
+                // --- Wind drives clouds & atmosphere ---
+                float windDir = SimBridge::getWindDirection(); // degrees FROM
+                float windSpd = SimBridge::getWindSpeed();     // knots
+                float windMps = windSpd * 0.514444f;
+                float windRad = windDir * (float)M_PI / 180.0f;
+
+                scene.weather.windDirection = XMFLOAT3(
+                    std::sin(windRad), 0.0f, std::cos(windRad));
+                scene.weather.windSpeed = windMps;
+
+                scene.weather.volumetricCloudParameters.layerFirst.windAngle = windRad;
+                scene.weather.volumetricCloudParameters.layerFirst.windSpeed = 10.0f + windMps * 2.0f;
+                scene.weather.volumetricCloudParameters.layerFirst.coverageWindAngle = windRad;
+                scene.weather.volumetricCloudParameters.layerFirst.coverageWindSpeed = 20.0f + windMps * 3.0f;
+
+                // --- Dynamic fog ---
+                float vis = SimBridge::getVisibility(); // nautical miles
+                if (vis <= 0) vis = 10.0f;
+                float fogDist = vis * 1852.0f;
+                scene.weather.fogStart = fogDist * 0.3f;
+                scene.weather.fogDensity = (vis < 5.0f) ? (0.01f / std::max(vis, 0.1f)) : 0.0f;
+
+                // --- Dynamic ocean (wave height, chop, wind direction, foam) ---
+                if (frameCount > 5) {
+                    float tideH = SimBridge::getTideHeight();
+                    ocean.update(tideH,
+                        bc::graphics::Vec3(camPosX, camPosY, camPosZ),
+                        (int)lightLevel, beaufortScale, windSpd, windDir);
+                }
+            }
+
             // Guard against NaN/inf from SimulationModel (propagates to GPU and crashes DX12)
             if (std::isnan(ownShipX) || std::isinf(ownShipX)) { weLogErr("NaN/inf ownShipX"); ownShipX = 0; }
             if (std::isnan(ownShipZ) || std::isinf(ownShipZ)) { weLogErr("NaN/inf ownShipZ"); ownShipZ = 0; }
             if (std::isnan(ownShipHeading) || std::isinf(ownShipHeading)) { weLogErr("NaN/inf heading"); ownShipHeading = 0; }
 
             float headRad = ownShipHeading * (float)M_PI / 180.0f;
-            float ownShipY = SimBridge::getPosY();
-            float rawPitch = SimBridge::getPitch();
-            float rawRoll = SimBridge::getRoll();
 
-            if (std::isnan(ownShipY) || std::isinf(ownShipY)) { weLogErr("NaN/inf ownShipY"); ownShipY = 0; }
-            if (std::isnan(rawPitch) || std::isinf(rawPitch)) { rawPitch = 0; }
-            if (std::isnan(rawRoll) || std::isinf(rawRoll)) { rawRoll = 0; }
+            // Ship sits at tide height + height correction. No wave heave, pitch,
+            // or roll applied -- the bridge view must be rock-solid with zero sway.
+            float tideY = SimBridge::getTideHeight();
+            float ownShipY = ownShipHeightCorr + tideY;
 
-            // Clamp pitch/roll to reasonable values for visual comfort
-            // (large vessels shouldn't pitch/roll more than ~5 degrees in normal seas)
-            float ownShipPitch = std::max(-5.0f, std::min(5.0f, rawPitch));
-            float ownShipRollAngle = std::max(-8.0f, std::min(8.0f, rawRoll));
-
-            // Update own ship entity position (dynamic Y from wave heave + tide)
             if (ownShipEntity != wi::ecs::INVALID_ENTITY) {
                 setEntityTransform(scene, ownShipEntity, ownShipX, ownShipY, ownShipZ,
                                    ownShipHeading, ownShipScaleFactor,
-                                   ownShipPitch, ownShipRollAngle);
+                                   0.0f, 0.0f); // zero pitch/roll
             }
 
-            // Update bridge camera position (follows own ship including wave motion)
-            // ownShipY = heightCorrection + tide + waveHeave; only attenuate dynamic portion
-            float camYAttenuation = 0.3f; // 30% of wave/tide heave to camera
+            // Bridge camera: locked to ship with no wave-induced motion
             if (!camOrbitMode) {
                 float vxScaled = viewLocalX * ownShipScaleFactor;
                 float vzScaled = viewLocalZ * ownShipScaleFactor;
                 camPosX = ownShipX + vxScaled * std::cos(headRad) + vzScaled * std::sin(headRad);
-                float dynamicY = ownShipY - ownShipHeightCorr; // tide + wave only
-                camPosY = ownShipHeightCorr + dynamicY * camYAttenuation + viewLocalY * ownShipScaleFactor;
+                camPosY = ownShipY + viewLocalY * ownShipScaleFactor;
                 camPosZ = ownShipZ - vxScaled * std::sin(headRad) + vzScaled * std::cos(headRad);
-                // Clamp camera above water surface to prevent underwater rendering issues
                 camPosY = std::max(camPosY, 2.0f);
             }
 
@@ -2793,6 +2957,41 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 }
             }
 
+            // ===== ECDIS DATA FEED =====
+            if (showEcdisFullscreen) {
+                bc::gui::EcdisDisplay::OwnShipData ecdisShip;
+                ecdisShip.lat = coords.zToLat(ownShipZ);
+                ecdisShip.lon = coords.xToLong(ownShipX);
+                ecdisShip.heading = SimBridge::getHeading();
+                ecdisShip.cog = SimBridge::getCOG();
+                ecdisShip.sog = SimBridge::getSOG() / KNOTS_TO_MPS;
+                ecdisShip.stw = SimBridge::getSTW() / KNOTS_TO_MPS;
+                ecdisShip.depth = SimBridge::getDepth();
+                ecdisShip.windSpeed = SimBridge::getWindSpeed();
+                ecdisShip.windDirection = SimBridge::getWindDirection();
+                ecdisShip.rudder = SimBridge::getRudder();
+                ecdisShip.simulationTime = totalSimTime;
+                ecdisShip.tidalStreamX = 0; // Phase 4
+                ecdisShip.tidalStreamZ = 0;
+                ecdisDisplay.setOwnShipData(ecdisShip);
+
+                int nOther = SimBridge::getNumberOfOtherShips();
+                std::vector<bc::gui::EcdisDisplay::AISTarget> ecdisAIS(nOther);
+                for (int ci = 0; ci < nOther; ci++) {
+                    ecdisAIS[ci].lat = coords.zToLat(SimBridge::getOtherShipPosZ(ci));
+                    ecdisAIS[ci].lon = coords.xToLong(SimBridge::getOtherShipPosX(ci));
+                    ecdisAIS[ci].heading = SimBridge::getOtherShipHeading(ci);
+                    ecdisAIS[ci].cog = SimBridge::getOtherShipHeading(ci); // COG approx = heading
+                    ecdisAIS[ci].speed = SimBridge::getOtherShipSpeed(ci) * 1.94384f;
+                    ecdisAIS[ci].id = ci + 1;
+                    ecdisAIS[ci].mmsi = SimBridge::getOtherShipMMSI(ci);
+                    ecdisAIS[ci].name = SimBridge::getOtherShipName(ci);
+                    ecdisAIS[ci].length = SimBridge::getOtherShipLength(ci);
+                    ecdisAIS[ci].breadth = SimBridge::getOtherShipBreadth(ci);
+                }
+                ecdisDisplay.setAISTargets(ecdisAIS);
+            }
+
             // Toggle orbit/bridge mode with 'O'
             bool keyODown = (GetAsyncKeyState('O') & 0x8000) != 0;
             if (keyODown && !keyOWasDown) {
@@ -3000,7 +3199,9 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 hudData.windDirection = SimBridge::getWindDirection();
                 hudData.simulationTime = totalSimTime;
                 overlay.setSimulationData(hudData);
-                overlay.render();
+                if (!showRadarFullscreen && !showEcdisFullscreen) {
+                    overlay.render();
+                }
 
                 // --- ESC Menu overlay ---
                 if (showEscMenu) {
@@ -3022,6 +3223,12 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                     }
                     if (ImGui::Button("Radar", ImVec2(btnW, 40))) {
                         showRadarFullscreen = true;
+                        showEcdisFullscreen = false;
+                        showEscMenu = false;
+                    }
+                    if (ImGui::Button("ECDIS", ImVec2(btnW, 40))) {
+                        showEcdisFullscreen = true;
+                        showRadarFullscreen = false;
                         showEscMenu = false;
                     }
                     ImGui::Separator();
@@ -3045,6 +3252,13 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                     ImTextureID radarTexID = g_radarTex.IsValid() ? (ImTextureID)&g_radarTex : nullptr;
                     if (!radarDisplay.render(width, height, radarTexID, RADAR_TEX_SIZE)) {
                         showRadarFullscreen = false;
+                    }
+                }
+
+                // --- Full-screen ECDIS display ---
+                if (showEcdisFullscreen) {
+                    if (!ecdisDisplay.render(width, height)) {
+                        showEcdisFullscreen = false;
                     }
                 }
 

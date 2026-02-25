@@ -54,7 +54,7 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 
 // Layout constants
 static const float TOOLBAR_HEIGHT = 40.0f;
-static const float PROPERTIES_WIDTH = 300.0f;
+static const float PROPERTIES_WIDTH = 380.0f;
 static const float STATUS_BAR_HEIGHT = 26.0f;
 static const float MENU_BAR_HEIGHT = 20.0f;
 
@@ -1576,8 +1576,10 @@ void EditorApp::renderPropertiesPanel(float x, float y, float w, float h) {
         ImGuiWindowFlags_NoMove |
         ImGuiWindowFlags_NoCollapse);
 
+    ImGui::PushItemWidth(-160); // Reserve 160px for labels
+
     if (ImGui::CollapsingHeader("Scenario", ImGuiTreeNodeFlags_DefaultOpen)) {
-        // Scenario name (editable buffer backed by scenarioData)
+        // Scenario name
         static char nameBuf[128] = {};
         static bool nameInit = false;
         if (!nameInit) {
@@ -1594,37 +1596,73 @@ void EditorApp::renderPropertiesPanel(float x, float y, float w, float h) {
             strncpy_s(descBuf, sizeof(descBuf), scenarioData.description.c_str(), _TRUNCATE);
             descInit = true;
         }
-        if (ImGui::InputTextMultiline("Description", descBuf, sizeof(descBuf), ImVec2(-1, 60)))
+        if (ImGui::InputTextMultiline("##desc", descBuf, sizeof(descBuf), ImVec2(-1, 50)))
             scenarioData.description = descBuf;
 
-        // Start time (stored as seconds, edit as hours)
-        float startHours = scenarioData.startTime / 3600.0f;
-        if (ImGui::SliderFloat("Start Time", &startHours, 0.0f, 24.0f, "%.1f hr"))
-            scenarioData.startTime = startHours * 3600.0f;
+        ImGui::Separator();
+
+        // Start time as HH:MM
+        int startTotalSec = (int)scenarioData.startTime;
+        int startHH = (startTotalSec / 3600) % 24;
+        int startMM = (startTotalSec % 3600) / 60;
+        ImGui::Text("Start Time");
+        ImGui::SameLine(110);
+        ImGui::PushItemWidth(50);
+        if (ImGui::InputInt("##stHH", &startHH, 0)) {
+            startHH = std::max(0, std::min(23, startHH));
+            scenarioData.startTime = (float)(startHH * 3600 + startMM * 60);
+        }
+        ImGui::SameLine(0, 2);
+        ImGui::Text(":");
+        ImGui::SameLine(0, 2);
+        if (ImGui::InputInt("##stMM", &startMM, 0)) {
+            startMM = std::max(0, std::min(59, startMM));
+            scenarioData.startTime = (float)(startHH * 3600 + startMM * 60);
+        }
+        ImGui::PopItemWidth();
 
         // Date
         int day = scenarioData.startDay;
         int month = scenarioData.startMonth;
         int year = scenarioData.startYear;
-        ImGui::PushItemWidth(60);
-        if (ImGui::InputInt("Day", &day, 0)) scenarioData.startDay = (uint32_t)std::max(1, std::min(31, day));
-        ImGui::SameLine();
-        if (ImGui::InputInt("Month", &month, 0)) scenarioData.startMonth = (uint32_t)std::max(1, std::min(12, month));
-        ImGui::SameLine();
-        ImGui::PushItemWidth(80);
-        if (ImGui::InputInt("Year", &year, 0)) scenarioData.startYear = (uint32_t)std::max(2000, year);
+        ImGui::Text("Date");
+        ImGui::SameLine(110);
+        ImGui::PushItemWidth(40);
+        if (ImGui::InputInt("##day", &day, 0)) scenarioData.startDay = (uint32_t)std::max(1, std::min(31, day));
+        ImGui::SameLine(0, 2);
+        ImGui::Text("/");
+        ImGui::SameLine(0, 2);
+        if (ImGui::InputInt("##month", &month, 0)) scenarioData.startMonth = (uint32_t)std::max(1, std::min(12, month));
+        ImGui::SameLine(0, 2);
+        ImGui::Text("/");
+        ImGui::SameLine(0, 2);
+        ImGui::PushItemWidth(55);
+        if (ImGui::InputInt("##year", &year, 0)) scenarioData.startYear = (uint32_t)std::max(2000, year);
         ImGui::PopItemWidth();
         ImGui::PopItemWidth();
     }
 
     if (ImGui::CollapsingHeader("Environment", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::SliderFloat("Weather", &scenarioData.weather, 0.0f, 12.0f, "%.1f");
-        ImGui::SliderFloat("Visibility (nm)", &scenarioData.visibilityRange, 0.1f, 30.0f, "%.1f");
-        ImGui::SliderFloat("Wind Dir", &scenarioData.windDirection, 0.0f, 360.0f, "%.0f deg");
-        ImGui::SliderFloat("Wind Speed (kts)", &scenarioData.windSpeed, 0.0f, 60.0f, "%.1f");
-        ImGui::SliderFloat("Rain", &scenarioData.rainIntensity, 0.0f, 1.0f, "%.2f");
-        ImGui::SliderFloat("Sunrise", &scenarioData.sunRise, 0.0f, 12.0f, "%.1f hr");
-        ImGui::SliderFloat("Sunset", &scenarioData.sunSet, 12.0f, 24.0f, "%.1f hr");
+        // Sea state
+        ImGui::SliderFloat("Sea State (Beaufort)", &scenarioData.weather, 0.0f, 12.0f, "%.0f");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("0=Calm  3=Gentle breeze  5=Fresh breeze\n"
+                              "7=Near gale  9=Strong gale  12=Hurricane");
+        }
+        ImGui::SliderFloat("Visibility", &scenarioData.visibilityRange, 0.1f, 30.0f, "%.1f nm");
+        ImGui::SliderFloat("Rain Intensity", &scenarioData.rainIntensity, 0.0f, 10.0f, "%.0f");
+
+        ImGui::Separator();
+
+        // Wind
+        ImGui::SliderFloat("Wind Direction", &scenarioData.windDirection, 0.0f, 360.0f, "%03.0f deg");
+        ImGui::SliderFloat("Wind Speed", &scenarioData.windSpeed, 0.0f, 60.0f, "%.0f kts");
+
+        ImGui::Separator();
+
+        // Sun times
+        ImGui::SliderFloat("Sunrise", &scenarioData.sunRise, 3.0f, 10.0f, "%02.0f:00");
+        ImGui::SliderFloat("Sunset", &scenarioData.sunSet, 15.0f, 22.0f, "%02.0f:00");
     }
 
     if (ImGui::CollapsingHeader("Own Ship", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -1644,7 +1682,7 @@ void EditorApp::renderPropertiesPanel(float x, float y, float w, float h) {
         ImGui::Text("Lat: %.4f  Lon: %.4f",
                     scenarioData.ownShipData.initialLat,
                     scenarioData.ownShipData.initialLong);
-        ImGui::SliderFloat("Bearing##own", &scenarioData.ownShipData.initialBearing, 0.0f, 360.0f, "%.0f deg");
+        ImGui::SliderFloat("Bearing##own", &scenarioData.ownShipData.initialBearing, 0.0f, 360.0f, "%03.0f deg");
         ImGui::InputFloat("Speed (kts)##own", &scenarioData.ownShipData.initialSpeed, 1.0f, 5.0f, "%.1f");
 
         if (ImGui::Button("Place on Map##own")) {
@@ -1701,8 +1739,8 @@ void EditorApp::renderPropertiesPanel(float x, float y, float w, float h) {
                             continue;
                         }
                         ImGui::PushID((int)j);
-                        ImGui::PushItemWidth(60);
-                        ImGui::InputFloat("Brg", &leg.bearing, 0, 0, "%.0f");
+                        ImGui::PushItemWidth(70);
+                        ImGui::InputFloat("Brg", &leg.bearing, 0, 0, "%03.0f");
                         ImGui::SameLine();
                         ImGui::InputFloat("Spd", &leg.speed, 0, 0, "%.1f");
                         ImGui::SameLine();
@@ -1732,6 +1770,7 @@ void EditorApp::renderPropertiesPanel(float x, float y, float w, float h) {
         }
     }
 
+    ImGui::PopItemWidth(); // match PushItemWidth(-160) at top
     ImGui::End();
 }
 
@@ -2360,6 +2399,7 @@ void EditorApp::generateWorldFromArea() {
         std::vector<float> heightGrid(resolution * resolution, -20.0f);
         float actualMaxHeight = 2.0f;
         float actualMaxDepth = 20.0f;
+        std::vector<bool> dockEdgeMask(resolution * resolution, false);
         {
             // Step 1: Land/water classification (binary mask)
             std::vector<bool> landMask(resolution * resolution, false);
@@ -2513,6 +2553,7 @@ void EditorApp::generateWorldFromArea() {
             // OSM land polygons incorrectly include as land.
             // Also saves lock polygons for re-cutting after barrier flood-fill.
             std::vector<WaterPolygon> lockPolygons; // saved for Step 4.1
+            std::vector<bool> dockWaterMask(resolution * resolution, false); // dock/marina water pixels
             {
                 // Stagger to avoid Overpass rate limit
                 generateStatus = "Waiting before water query (rate limit)...";
@@ -2531,6 +2572,7 @@ void EditorApp::generateWorldFromArea() {
                             // Save lock and dock polygons for re-cutting after barrier flood-fill.
                             // Barrier dilation can overwrite these navigable water areas.
                             if (wp.type == "lock" || wp.type == "dock") lockPolygons.push_back(wp);
+                            bool isDock = (wp.type == "dock" || wp.type == "marina");
                             for (int py = 0; py < resolution; py++) {
                                 double lat = maxLat - latRange * py / (resolution - 1);
                                 std::vector<double> crossings;
@@ -2554,6 +2596,7 @@ void EditorApp::generateWorldFromArea() {
                                             heightGrid[idx] = -20.0f;
                                             subtracted++;
                                         }
+                                        if (isDock) dockWaterMask[idx] = true;
                                     }
                                 }
                             }
@@ -2561,6 +2604,36 @@ void EditorApp::generateWorldFromArea() {
                         generateStatus = "Subtracted " + std::to_string(subtracted) +
                             " water pixels from " + std::to_string(waterAreas.size()) + " OSM water areas";
                     }
+                }
+            }
+
+            // Build dock edge mask: land pixels within 3px of dock/marina water.
+            // These get sharp quay wall edges (no beach ramp, no sand, concrete texture).
+            {
+                // Dilate dock water mask by 3px, then intersect with land to get quay edges
+                std::vector<bool> dilated(resolution * resolution, false);
+                for (int py = 0; py < resolution; py++) {
+                    for (int px = 0; px < resolution; px++) {
+                        if (!dockWaterMask[py * resolution + px]) continue;
+                        for (int dy = -3; dy <= 3; dy++) {
+                            for (int dx = -3; dx <= 3; dx++) {
+                                int ny = py + dy, nx = px + dx;
+                                if (ny >= 0 && ny < resolution && nx >= 0 && nx < resolution) {
+                                    dilated[ny * resolution + nx] = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                int dockEdgePixels = 0;
+                for (int i = 0; i < resolution * resolution; i++) {
+                    if (dilated[i] && landMask[i]) {
+                        dockEdgeMask[i] = true;
+                        dockEdgePixels++;
+                    }
+                }
+                if (dockEdgePixels > 0) {
+                    generateStatus = "Dock edge mask: " + std::to_string(dockEdgePixels) + " quay wall pixels";
                 }
             }
 
@@ -2598,13 +2671,13 @@ void EditorApp::generateWorldFromArea() {
                         }
 
                         if (islandMask[i]) {
-                            // Island: DEM usually has no data for tiny islands.
-                            // Only use DEM if it shows real elevation; otherwise
-                            // keep the synthetic island height.
-                            if (elev > 1.0f) {
+                            // Island: DEM is unreliable for tiny islands (low resolution,
+                            // often shows sea level). Only override synthetic height if
+                            // DEM is HIGHER (real cliff/hill data), never lower.
+                            if (elev > heightGrid[i]) {
                                 heightGrid[i] = elev;
                             }
-                            // else: keep existing island height (5m center, tapers to 1m)
+                            // else: keep synthetic island height (dome profile)
                         } else if (landMask[i]) {
                             // Land: use real elevation, minimum 0.5m above sea level
                             heightGrid[i] = std::max(0.5f, elev);
@@ -2701,16 +2774,17 @@ void EditorApp::generateWorldFromArea() {
 
                         // Beach ramp: distance transform from coastline + smoothstep falloff.
                         // Creates gradual beach slopes instead of sharp cliff at land/water boundary.
+                        // Width varies 4-10 pixels (~40-100m) using noise for natural shoreline variety.
                         {
-                            const int beachWidth = 6; // pixels (~60m at 2049 res / 12km)
-                            std::vector<int> coastDist(resolution * resolution, beachWidth + 1);
+                            const int maxBeachWidth = 10; // maximum beach ramp in pixels
+                            std::vector<int> coastDist(resolution * resolution, maxBeachWidth + 1);
 
-                            // Two-pass chamfer distance transform from coastline boundary
+                            // Two-pass chamfer distance transform from coastline boundary.
+                            // Includes island pixels so islands get natural beach transitions.
                             // Forward pass (top-left to bottom-right)
                             for (int py = 0; py < resolution; py++) {
                                 for (int px = 0; px < resolution; px++) {
                                     int ci = py * resolution + px;
-                                    if (islandMask[ci]) continue;
                                     // Is this pixel on a coastline boundary?
                                     bool isLand = landMask[ci];
                                     bool onBoundary = false;
@@ -2734,31 +2808,50 @@ void EditorApp::generateWorldFromArea() {
                             for (int py = resolution - 1; py >= 0; py--) {
                                 for (int px = resolution - 1; px >= 0; px--) {
                                     int ci = py * resolution + px;
-                                    if (islandMask[ci]) continue;
                                     if (py < resolution-1) coastDist[ci] = std::min(coastDist[ci], coastDist[(py+1)*resolution+px] + 1);
                                     if (px < resolution-1) coastDist[ci] = std::min(coastDist[ci], coastDist[py*resolution+px+1] + 1);
                                 }
                             }
 
-                            // Apply beach ramp using smoothstep falloff
-                            for (int i = 0; i < resolution * resolution; i++) {
-                                if (islandMask[i]) continue;
-                                int d = coastDist[i];
-                                if (d >= beachWidth) continue;
+                            // Apply beach ramp using smoothstep falloff with variable width.
+                            // Islands included -- they need natural beach shorelines too.
+                            // Dock edge pixels get a sharp 1px transition (quay walls, not beaches).
+                            for (int py = 0; py < resolution; py++) {
+                                for (int px = 0; px < resolution; px++) {
+                                    int i = py * resolution + px;
+                                    // Dock edges: sharp 1-pixel transition (quay wall)
+                                    if (dockEdgeMask[i]) {
+                                        int d = coastDist[i];
+                                        if (d == 0) {
+                                            // Boundary pixel: set to quay wall height (2m)
+                                            if (landMask[i]) heightGrid[i] = std::max(heightGrid[i], 2.0f);
+                                        }
+                                        continue; // Skip gradual beach ramp
+                                    }
+                                    int d = coastDist[i];
+                                    if (d >= maxBeachWidth) continue;
 
-                                float t = (float)d / (float)beachWidth;
-                                // smoothstep: 3t^2 - 2t^3
-                                float s = t * t * (3.0f - 2.0f * t);
+                                    // Variable beach width via simple hash noise (4-10 pixels)
+                                    uint32_t nh = (uint32_t)(px * 374761393 + py * 668265263);
+                                    nh = (nh ^ (nh >> 13)) * 1274126177;
+                                    float nf = (float)((nh >> 16) & 0xFFFF) / 65535.0f;
+                                    int localWidth = 4 + (int)(nf * 7.0f); // 4-10
+                                    if (d >= localWidth) continue;
 
-                                float h = heightGrid[i];
-                                if (landMask[i]) {
-                                    // Land side: ramp from 0.3m at coastline to full DEM height
-                                    float target = std::max(h, 0.5f);
-                                    heightGrid[i] = 0.3f + (target - 0.3f) * s;
-                                } else {
-                                    // Water side: ramp from -0.2m at coastline to full depth
-                                    float target = std::min(h, -0.5f);
-                                    heightGrid[i] = -0.2f + (target + 0.2f) * s;
+                                    float t = (float)d / (float)localWidth;
+                                    // smoothstep: 3t^2 - 2t^3
+                                    float s = t * t * (3.0f - 2.0f * t);
+
+                                    float h = heightGrid[i];
+                                    if (landMask[i]) {
+                                        // Land side: ramp from 0.3m at coastline to full DEM height
+                                        float target = std::max(h, 0.5f);
+                                        heightGrid[i] = 0.3f + (target - 0.3f) * s;
+                                    } else {
+                                        // Water side: ramp from -0.2m at coastline to full depth
+                                        float target = std::min(h, -0.5f);
+                                        heightGrid[i] = -0.2f + (target + 0.2f) * s;
+                                    }
                                 }
                             }
                         }
@@ -3560,6 +3653,12 @@ void EditorApp::generateWorldFromArea() {
                 generateStatus = "Land use: " + std::to_string(luReader.getPolygons().size()) +
                     " polygons, " + std::to_string(classified) + " classified pixels";
             }
+        }
+
+        // Override land-use for dock/quay edge pixels -> concrete waterfront
+        for (int i = 0; i < resolution * resolution; i++) {
+            if (dockEdgeMask[i] && heightGrid[i] > 0.0f)
+                landUseGrid[i] = static_cast<uint8_t>(LandUseType::Waterfront);
         }
 
         // Download satellite texture

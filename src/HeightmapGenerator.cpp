@@ -28,6 +28,39 @@
 #include <algorithm>
 #include <limits>
 #include <iostream>
+#include <queue>
+
+// ── Noise functions for terrain perturbation ──────────────────────────────
+
+static uint32_t hmHash(int x, int y) {
+    uint32_t h = (uint32_t)(x * 374761393 + y * 668265263);
+    h = (h ^ (h >> 13)) * 1274126177;
+    return h ^ (h >> 16);
+}
+
+static float hmVnoise(float x, float y, int seed) {
+    int ix = (int)std::floor(x), iy = (int)std::floor(y);
+    float fx = x - ix, fy = y - iy;
+    fx = fx * fx * (3.0f - 2.0f * fx); // smoothstep
+    fy = fy * fy * (3.0f - 2.0f * fy);
+    auto h = [&](int a, int b) -> float {
+        return (float)(hmHash(a + seed, b) % 10000) / 10000.0f;
+    };
+    float v00 = h(ix, iy), v10 = h(ix+1, iy), v01 = h(ix, iy+1), v11 = h(ix+1, iy+1);
+    float a = v00 + (v10 - v00) * fx;
+    float b = v01 + (v11 - v01) * fx;
+    return a + (b - a) * fy;
+}
+
+static float hmFbm(float x, float y, int seed, int octaves = 6) {
+    float val = 0.0f, amp = 0.5f, freq = 1.0f;
+    for (int i = 0; i < octaves; i++) {
+        val += hmVnoise(x * freq, y * freq, seed + i * 1000) * amp;
+        amp *= 0.5f;
+        freq *= 2.0f;
+    }
+    return val;
+}
 
 HeightmapGenerator::HeightmapGenerator() : bounds{0,0,0,0} {
 }
@@ -440,7 +473,11 @@ std::vector<std::vector<float>> HeightmapGenerator::generate(
 
             if (isLand(lon, lat)) {
                 if (haveDEM) {
-                    float demHeight = sampleDEM(lon, lat);
+                    // Domain warping: warp DEM sampling coordinates with FBM
+                    // for organic terrain distortion (~7m displacement)
+                    float warpX = (hmFbm((float)(lon * 2000.0), (float)(lat * 2000.0), 12345, 4) - 0.5f) * 0.00006f;
+                    float warpY = (hmFbm((float)(lon * 2000.0), (float)(lat * 2000.0), 54321, 4) - 0.5f) * 0.00006f;
+                    float demHeight = sampleDEM(lon + warpX, lat + warpY);
                     if (!std::isnan(demHeight) && demHeight >= 0.0f) {
                         grid[row][col] = demHeight;
                     } else {
@@ -465,6 +502,157 @@ std::vector<std::vector<float>> HeightmapGenerator::generate(
     // Pass 4: Barrier flood-fill (barrages, dams, breakwaters)
     if (!barrierLines.empty()) {
         applyBarrierFloodFill(grid, b);
+    }
+
+    // Pass 4b: Gentle terrain undulation for inland areas only.
+    // Skips low-elevation coastal land (<5m) to avoid destroying beaches and thin features.
+    // Amplitude scales quadratically with elevation so hills get more variation than flats.
+    {
+        for (int row = 0; row < res; row++) {
+            double lat = b.maxLat - row * latStep;
+            for (int col = 0; col < res; col++) {
+                float baseH = grid[row][col];
+                if (baseH <= 5.0f) continue; // Skip water + low coastal land entirely
+
+                double lon = b.minLon + col * lonStep;
+
+                // Large-scale rolling undulation (~300-500m wavelength)
+                float roll = hmFbm((float)(lon * 1200.0), (float)(lat * 1200.0), 33333, 4);
+                roll = (roll - 0.5f) * 2.0f; // [-1, 1]
+
+                // Amplitude: quadratic ramp from 5m elevation, caps at 4m perturbation
+                float above5 = baseH - 5.0f;
+                float amplitude = std::min(above5 * above5 * 0.008f, 4.0f);
+
+                grid[row][col] += roll * amplitude;
+                if (grid[row][col] < 0.5f) grid[row][col] = 0.5f;
+            }
+        }
+        std::cout << "HeightmapGenerator: Terrain undulation applied" << std::endl;
+    }
+
+    // Pass 5: Coastal fractal noise
+    // Adds irregular coves, rocky points, and natural beach edges
+    // by perturbing heights within ~200m of the coastline.
+    {
+        // BFS distance field from coastline boundary
+        std::vector<int> coastDist(res * res, 999);
+        std::queue<int> bfsQ;
+
+        for (int row = 1; row < res - 1; row++) {
+            for (int col = 1; col < res - 1; col++) {
+                int idx = row * res + col;
+                bool isLandHere = grid[row][col] > 0.0f;
+                bool onBoundary = false;
+                for (int dy = -1; dy <= 1 && !onBoundary; dy++) {
+                    for (int dx = -1; dx <= 1 && !onBoundary; dx++) {
+                        if (dy == 0 && dx == 0) continue;
+                        int nr = row + dy, nc = col + dx;
+                        if (nr >= 0 && nr < res && nc >= 0 && nc < res) {
+                            if ((grid[nr][nc] > 0.0f) != isLandHere) onBoundary = true;
+                        }
+                    }
+                }
+                if (onBoundary) { coastDist[idx] = 0; bfsQ.push(idx); }
+            }
+        }
+
+        const int dx4[] = {-1, 1, 0, 0};
+        const int dy4[] = {0, 0, -1, 1};
+        while (!bfsQ.empty()) {
+            int idx = bfsQ.front(); bfsQ.pop();
+            int cr = idx / res, cc = idx % res;
+            for (int d = 0; d < 4; d++) {
+                int nr = cr + dy4[d], nc = cc + dx4[d];
+                if (nr >= 0 && nr < res && nc >= 0 && nc < res) {
+                    int ni = nr * res + nc;
+                    if (coastDist[ni] > coastDist[idx] + 1) {
+                        coastDist[ni] = coastDist[idx] + 1;
+                        bfsQ.push(ni);
+                    }
+                }
+            }
+        }
+
+        const int maxDistPx = 25; // ~250m at 10m/pixel
+        for (int row = 0; row < res; row++) {
+            double lat = b.maxLat - row * latStep;
+            for (int col = 0; col < res; col++) {
+                double lon = b.minLon + col * lonStep;
+                int d = coastDist[row * res + col];
+                if (d >= maxDistPx) continue;
+
+                float influence = 1.0f - (float)d / (float)maxDistPx;
+                influence *= influence; // Quadratic falloff
+
+                // Multi-octave FBM at geographic scale for natural fractal coastline
+                float noise = hmFbm((float)(lon * 5000.0), (float)(lat * 5000.0), 777777, 6);
+                noise = (noise - 0.5f) * 2.0f; // Range [-1, 1]
+
+                grid[row][col] += noise * influence * 1.5f; // +/- 1.5m max
+            }
+        }
+
+        std::cout << "HeightmapGenerator: Coastal fractal noise + dunes applied" << std::endl;
+    }
+
+    // Pass 6: Thermal erosion
+    // Material slides from steep slopes to adjacent lower cells.
+    // Creates gullies, sediment fans, and smoothed beach profiles.
+    {
+        const int iterations = 80;
+        const float talusAngle = 0.8f; // slope threshold (m/pixel)
+        const float transferRate = 0.3f;
+
+        std::vector<std::vector<float>> delta(res, std::vector<float>(res, 0.0f));
+
+        for (int iter = 0; iter < iterations; iter++) {
+            for (auto& row : delta) std::fill(row.begin(), row.end(), 0.0f);
+
+            for (int row = 1; row < res - 1; row++) {
+                for (int col = 1; col < res - 1; col++) {
+                    if (grid[row][col] <= 0.0f) continue; // Skip water
+
+                    float maxDiff = 0.0f;
+                    int bestDy = 0, bestDx = 0;
+                    for (int dy = -1; dy <= 1; dy++) {
+                        for (int dx = -1; dx <= 1; dx++) {
+                            if (dy == 0 && dx == 0) continue;
+                            float diff = grid[row][col] - grid[row + dy][col + dx];
+                            if (diff > maxDiff) {
+                                maxDiff = diff;
+                                bestDy = dy;
+                                bestDx = dx;
+                            }
+                        }
+                    }
+
+                    if (maxDiff > talusAngle) {
+                        float transfer = (maxDiff - talusAngle) * transferRate;
+                        delta[row][col] -= transfer;
+                        delta[row + bestDy][col + bestDx] += transfer;
+                    }
+                }
+            }
+
+            for (int row = 1; row < res - 1; row++) {
+                for (int col = 1; col < res - 1; col++) {
+                    grid[row][col] += delta[row][col];
+                }
+            }
+        }
+
+        // Recompute height stats after erosion
+        maxHeight = 0;
+        maxDepth = 0;
+        for (int row = 0; row < res; row++) {
+            for (int col = 0; col < res; col++) {
+                if (grid[row][col] > maxHeight) maxHeight = grid[row][col];
+                if (grid[row][col] < -maxDepth) maxDepth = -grid[row][col];
+            }
+        }
+
+        std::cout << "HeightmapGenerator: Thermal erosion applied (" << iterations << " iterations)" << std::endl;
     }
 
     return grid;

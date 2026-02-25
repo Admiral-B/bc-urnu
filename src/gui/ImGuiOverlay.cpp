@@ -178,9 +178,9 @@ void ImGuiOverlay::renderCompass() {
 // -- Speed Display ----------------------------------------------------
 
 void ImGuiOverlay::renderSpeedDisplay() {
-    ImGui::SetNextWindowSize(ImVec2(140, 110), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(210, 130), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(
-        ImVec2(screenWidth_ - 150, 10), ImGuiCond_FirstUseEver);
+        ImVec2(screenWidth_ - 220, 10), ImGuiCond_FirstUseEver);
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar;
     if (layoutLocked_) flags |= ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
@@ -191,15 +191,15 @@ void ImGuiOverlay::renderSpeedDisplay() {
     }
 
     ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1), "SOG");
-    ImGui::SameLine(70);
+    ImGui::SameLine(100);
     ImGui::TextColored(ImVec4(1, 1, 0.3f, 1), "%4.1f kn", data_.speedOverGround);
 
     ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1), "STW");
-    ImGui::SameLine(70);
+    ImGui::SameLine(100);
     ImGui::TextColored(ImVec4(0.3f, 1, 0.3f, 1), "%4.1f kn", data_.speedThroughWater);
 
     ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1), "COG");
-    ImGui::SameLine(70);
+    ImGui::SameLine(100);
     if (data_.speedOverGround >= 0.5f) {
         ImGui::Text("%05.1f", data_.courseOverGround);
     } else {
@@ -212,12 +212,14 @@ void ImGuiOverlay::renderSpeedDisplay() {
 // -- Rudder Angle Display --------------------------------------------
 
 void ImGuiOverlay::renderRudderDisplay() {
-    ImGui::SetNextWindowSize(ImVec2(200, 100), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(500, 75), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(
-        ImVec2(screenWidth_ * 0.5f - 100, screenHeight_ - 110), ImGuiCond_FirstUseEver);
+        ImVec2(screenWidth_ * 0.5f - 250, screenHeight_ - 270), ImGuiCond_FirstUseEver);
 
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar;
-    if (layoutLocked_) flags |= ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse
+        | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoTitleBar;
+    if (layoutLocked_)
+        flags |= ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
 
     if (!ImGui::Begin("Rudder", nullptr, flags)) {
         ImGui::End();
@@ -227,50 +229,86 @@ void ImGuiOverlay::renderRudderDisplay() {
     ImDrawList* draw = ImGui::GetWindowDrawList();
     ImVec2 winPos = ImGui::GetCursorScreenPos();
     float avail = ImGui::GetContentRegionAvail().x;
-    float height = 30;
-    ImVec2 arcCenter(winPos.x + avail * 0.5f, winPos.y + height + 10);
-    float arcRadius = avail * 0.4f;
+    float tapeHeight = 30.0f;
+    float tapeTop = winPos.y;
+    float tapeBot = tapeTop + tapeHeight;
+    float centerX = winPos.x + avail * 0.5f;
 
-    // Arc background
-    float maxAngle = 40.0f; // max rudder angle display
-    draw->PathArcTo(arcCenter, arcRadius,
-        PI + (-maxAngle) * DEG_TO_RAD, PI + maxAngle * DEG_TO_RAD, 40);
-    draw->PathStroke(IM_COL32(60, 60, 60, 255), 0, 4.0f);
+    float maxAngle = 40.0f; // max rudder angle on scale
+    float pxPerDeg = avail / (maxAngle * 2.0f);
 
-    // Port side (red) and starboard side (green) zones
-    float rudderRad = data_.rudderAngle * DEG_TO_RAD;
-    if (data_.rudderAngle < -0.5f) {
-        draw->PathArcTo(arcCenter, arcRadius, PI, PI + rudderRad, 20);
-        draw->PathStroke(IM_COL32(200, 50, 50, 255), 0, 4.0f);
-    } else if (data_.rudderAngle > 0.5f) {
-        draw->PathArcTo(arcCenter, arcRadius, PI, PI + rudderRad, 20);
-        draw->PathStroke(IM_COL32(50, 200, 50, 255), 0, 4.0f);
+    // Background
+    draw->AddRectFilled(
+        ImVec2(winPos.x, tapeTop),
+        ImVec2(winPos.x + avail, tapeBot),
+        IM_COL32(20, 20, 25, 220), 2.0f);
+
+    // Clip to tape area
+    draw->PushClipRect(ImVec2(winPos.x, tapeTop), ImVec2(winPos.x + avail, tapeBot + 16));
+
+    // Port (left, red) and Stbd (right, green) labels
+    ImVec2 portSize = ImGui::CalcTextSize("Port");
+    draw->AddText(ImVec2(winPos.x + 4, tapeTop + 1), IM_COL32(200, 60, 60, 200), "Port");
+    ImVec2 stbdSize = ImGui::CalcTextSize("Stbd");
+    draw->AddText(ImVec2(winPos.x + avail - stbdSize.x - 4, tapeTop + 1),
+                  IM_COL32(60, 200, 60, 200), "Stbd");
+
+    // Draw ticks: major every 10 deg, minor every 5
+    for (int d = -(int)maxAngle; d <= (int)maxAngle; d++) {
+        if (d % 5 != 0) continue;
+        float xPos = centerX + d * pxPerDeg;
+
+        if (d % 10 == 0) {
+            float tickLen = (d == 0) ? tapeHeight * 0.6f : tapeHeight * 0.4f;
+            ImU32 col = (d == 0) ? IM_COL32(255, 255, 255, 255) : IM_COL32(160, 160, 160, 255);
+            draw->AddLine(ImVec2(xPos, tapeBot), ImVec2(xPos, tapeBot - tickLen), col,
+                          (d == 0) ? 2.0f : 1.0f);
+            if (d != 0) {
+                char degStr[8];
+                snprintf(degStr, sizeof(degStr), "%d", std::abs(d));
+                ImVec2 ts = ImGui::CalcTextSize(degStr);
+                draw->AddText(ImVec2(xPos - ts.x * 0.5f, tapeBot - tapeHeight + 1),
+                              IM_COL32(150, 150, 150, 220), degStr);
+            }
+        } else {
+            draw->AddLine(ImVec2(xPos, tapeBot), ImVec2(xPos, tapeBot - tapeHeight * 0.25f),
+                          IM_COL32(100, 100, 100, 200), 1.0f);
+        }
     }
 
-    // Rudder needle
-    float needleAngle = PI + rudderRad;
-    float nx = arcCenter.x + std::cos(needleAngle) * arcRadius;
-    float ny = arcCenter.y + std::sin(needleAngle) * arcRadius;
-    draw->AddLine(arcCenter, ImVec2(nx, ny), IM_COL32(255, 255, 0, 255), 2.0f);
+    // Rudder position indicator (yellow triangle moves with rudder angle)
+    float rudderX = centerX + data_.rudderAngle * pxPerDeg;
+    // Colour by side: red port, green stbd, yellow amidships
+    ImU32 indicatorCol;
+    if (data_.rudderAngle < -0.5f)
+        indicatorCol = IM_COL32(255, 100, 100, 255); // port red
+    else if (data_.rudderAngle > 0.5f)
+        indicatorCol = IM_COL32(100, 255, 100, 255); // stbd green
+    else
+        indicatorCol = IM_COL32(255, 200, 0, 255);   // amidships yellow
 
-    // Center mark
-    draw->AddLine(
-        ImVec2(arcCenter.x, arcCenter.y - arcRadius - 2),
-        ImVec2(arcCenter.x, arcCenter.y - arcRadius + 6),
-        IM_COL32(255, 255, 255, 255), 2.0f);
+    draw->AddTriangleFilled(
+        ImVec2(rudderX, tapeBot + 2),
+        ImVec2(rudderX - 5, tapeBot + 10),
+        ImVec2(rudderX + 5, tapeBot + 10),
+        indicatorCol);
+    draw->AddLine(ImVec2(rudderX, tapeTop), ImVec2(rudderX, tapeBot),
+                  indicatorCol, 2.0f);
 
-    // Numeric readout
-    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + height + 25);
+    draw->PopClipRect();
+
+    // Numeric readout below tape
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + tapeHeight + 12);
     char rudderStr[32];
     snprintf(rudderStr, sizeof(rudderStr), "%+.1f", data_.rudderAngle);
     float textW = ImGui::CalcTextSize(rudderStr).x;
     ImGui::SetCursorPosX((avail - textW) * 0.5f);
 
     ImVec4 rudderColor = (data_.rudderAngle < -0.5f)
-        ? ImVec4(1, 0.3f, 0.3f, 1)   // Port = red
+        ? ImVec4(1, 0.3f, 0.3f, 1)
         : (data_.rudderAngle > 0.5f)
-            ? ImVec4(0.3f, 1, 0.3f, 1)   // Starboard = green
-            : ImVec4(1, 1, 1, 1);         // Center = white
+            ? ImVec4(0.3f, 1, 0.3f, 1)
+            : ImVec4(1, 1, 1, 1);
     ImGui::TextColored(rudderColor, "%s", rudderStr);
 
     ImGui::End();
@@ -416,9 +454,9 @@ void ImGuiOverlay::renderDepthDisplay() {
 // -- Engine Display ---------------------------------------------------
 
 void ImGuiOverlay::renderEngineDisplay() {
-    ImGui::SetNextWindowSize(ImVec2(140, 90), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(210, 110), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(
-        ImVec2(screenWidth_ - 150, 130), ImGuiCond_FirstUseEver);
+        ImVec2(screenWidth_ - 220, 150), ImGuiCond_FirstUseEver);
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar;
     if (layoutLocked_) flags |= ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
@@ -429,7 +467,7 @@ void ImGuiOverlay::renderEngineDisplay() {
     }
 
     ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1), "RPM");
-    ImGui::SameLine(70);
+    ImGui::SameLine(100);
     ImGui::TextColored(ImVec4(0.3f, 1, 0.3f, 1), "%4.0f", data_.engineRPM);
 
     // RPM bar
@@ -438,7 +476,7 @@ void ImGuiOverlay::renderEngineDisplay() {
     ImGui::ProgressBar(rpmFrac, ImVec2(-1, 12), "");
 
     ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1), "Thrust");
-    ImGui::SameLine(70);
+    ImGui::SameLine(100);
     ImGui::Text("%+.0f%%", data_.thrustLever * 100);
 
     ImGui::End();
@@ -499,8 +537,8 @@ void ImGuiOverlay::renderControls() {
 
         float sliderHeight = ImGui::GetContentRegionAvail().y - 20;
         if (sliderHeight < 50) sliderHeight = 50;
-        ImGui::SetCursorPosX((avail - 24) * 0.5f);
-        if (ImGui::VSliderFloat(sliderId, ImVec2(24, sliderHeight), &value, -1.0f, 1.0f, "")) {
+        ImGui::SetCursorPosX((avail - 36) * 0.5f);
+        if (ImGui::VSliderFloat(sliderId, ImVec2(36, sliderHeight), &value, -1.0f, 1.0f, "")) {
             controlActive_ = true;
         }
         if (ImGui::IsItemActive()) controlActive_ = true;
@@ -519,9 +557,9 @@ void ImGuiOverlay::renderControls() {
     };
 
     // Port + Starboard engine sliders side by side
-    ImGui::SetNextWindowSize(ImVec2(140, 260), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(190, 340), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(
-        ImVec2(10, screenHeight_ * 0.5f - 130), ImGuiCond_FirstUseEver);
+        ImVec2(10, screenHeight_ * 0.5f - 170), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin("Engines##ctrl", nullptr, flags)) {
         float avail = ImGui::GetContentRegionAvail().x;
@@ -542,9 +580,9 @@ void ImGuiOverlay::renderControls() {
     ImGui::End();
 
     // Bow thruster - horizontal slider
-    ImGui::SetNextWindowSize(ImVec2(180, 55), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(380, 80), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(
-        ImVec2(10, screenHeight_ * 0.5f + 140), ImGuiCond_FirstUseEver);
+        ImVec2(10, screenHeight_ * 0.5f + 180), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin("Bow Thruster##ctrl", nullptr, flags)) {
         float avail = ImGui::GetContentRegionAvail().x;
@@ -560,9 +598,9 @@ void ImGuiOverlay::renderControls() {
     ImGui::End();
 
     // Steering wheel - horizontal slider at bottom center
-    ImGui::SetNextWindowSize(ImVec2(350, 70), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(500, 85), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(
-        ImVec2(screenWidth_ * 0.5f - 175, screenHeight_ - 80), ImGuiCond_FirstUseEver);
+        ImVec2(screenWidth_ * 0.5f - 250, screenHeight_ - 100), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin("Wheel##ctrl", nullptr, flags)) {
         float avail = ImGui::GetContentRegionAvail().x;

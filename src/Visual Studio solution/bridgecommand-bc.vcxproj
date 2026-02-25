@@ -262,6 +262,7 @@
     <ClCompile Include="..\gui\IniFileRW.cpp" />
     <ClCompile Include="..\gui\SettingsPanel.cpp" />
     <ClCompile Include="..\gui\RadarDisplay.cpp" />
+    <ClCompile Include="..\gui\EcdisDisplay.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\AIS.hpp" />
@@ -360,6 +361,7 @@
     <ClInclude Include="..\gui\IniFileRW.hpp" />
     <ClInclude Include="..\gui\SettingsPanel.hpp" />
     <ClInclude Include="..\gui\RadarDisplay.hpp" />
+    <ClInclude Include="..\gui\EcdisDisplay.hpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="..\icon.rc" />

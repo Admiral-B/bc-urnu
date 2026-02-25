@@ -137,6 +137,9 @@ void ImGuiInit(void* platformWindow) {
     // Dark style suits maritime bridge displays
     ImGui::StyleColorsDark();
 
+    // Scale all text up for bridge readability
+    io.FontGlobalScale = 1.4f;
+
     // Setup renderer backend
     ImGui_Impl_Data* bd = IM_NEW(ImGui_Impl_Data)();
     io.BackendRendererUserData = (void*)bd;

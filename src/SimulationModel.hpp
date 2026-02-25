@@ -227,6 +227,7 @@ public:
     float getWindDirection() const;
     void setWindSpeed(float windSpeed); //Nm/h
     float getWindSpeed() const;
+    float getTideHeight() const;
     void setStreamOverrideDirection(float streamDirection); //Range 0-360.
     float getStreamOverrideDirection() const;
     void setStreamOverrideSpeed(float streamSpeed); //Nm/h

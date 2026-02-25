@@ -594,6 +594,7 @@ void OwnShip::load(OwnShipData ownShipData, Vec3i numberOfContactPoints, float m
         mmgDims.maxSpeed = maxSpeed_mps > 0 ? maxSpeed_mps : 10.0;
         mmgDims.maxEngineForce = maxForce * (singleEngine ? 2.0 : 1.0); // Total max force (maxForce is per-engine)
         mmgDims.singleEngine = singleEngine;
+        mmgDims.propellorSpacing = propellorSpacing;
 
         // Propeller diameter: from boat.ini or estimate from draught
         float propDiameter = IniFile::iniFileTof32(shipIniFilename, "PropellerDiameter");

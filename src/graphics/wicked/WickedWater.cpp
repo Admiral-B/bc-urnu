@@ -25,67 +25,61 @@ void WickedWater::load(wi::scene::Scene* scene, float weather, int /*segments*/)
 
     if (!weScene) return;
 
-    // Enable ocean in the scene's weather component
     weScene->weather.SetOceanEnabled(true);
 
-    // Configure initial ocean parameters
     auto& op = weScene->weather.oceanParameters;
 
-    // WE defaults: patch_length=50, wave_amplitude=1000, wind_speed=600
-    // BC uses 100m tile width - match it
-    op.patch_length = 100.0f;
-
-    // dmap_dim must be power of 2 (WE default 512)
     op.dmap_dim = 512;
-
-    // Time scale controls simulation speed
-    op.time_scale = 0.3f;
-
-    // Choppy wave scale (longitudinal displacement)
-    op.choppy_scale = 1.3f;
-
-    // Surface detail controls mesh vertex count
-    // 4 = default (~230K verts), reduce for lower-spec hardware
+    // patch_length=50 is the only value that produces correct mesh geometry.
+    // WE's adaptive ocean mesh has 2^surfaceDetail subdivisions per patch;
+    // larger patches cause extreme vertex spacing and mesh breakdown.
+    op.patch_length = 50.0f;
+    op.time_scale = 0.3f;          // WE default; looks natural
     op.surfaceDetail = 4;
+    op.surfaceDisplacementTolerance = 2.0f;
 
-    // Water color matching BC's existing aesthetic
-    // BC pixel shader: vec3(0.18, 0.29, 0.31)
-    op.waterColor = XMFLOAT4(0.18f, 0.29f, 0.31f, 0.6f);
-    op.extinctionColor = XMFLOAT4(0.0f, 0.6f, 0.8f, 1.0f);
+    op.waterColor = XMFLOAT4(0.02f, 0.05f, 0.04f, 0.5f);
+    op.extinctionColor = XMFLOAT4(0.05f, 0.6f, 0.85f, 1.0f);
 
-    // Water height will be set by tide in update()
     op.waterHeight = 0.0f;
 
     // Beaufort-to-wind mapping (midpoint of each Beaufort range in knots)
-    // B0=0, B1=2, B2=5, B3=8.5, B4=13, B5=19, B6=24, B7=30, B8=37, B9=44, B10=52, B11=60, B12=68
     static const float beaufortToKnots[] = {0,2,5,8.5f,13,19,24,30,37,44,52,60,68};
     int bi = std::max(0, std::min(12, (int)weather));
     float frac = weather - bi;
     float nextKts = (bi < 12) ? beaufortToKnots[bi + 1] : beaufortToKnots[12];
     float approxWindKts = beaufortToKnots[bi] + frac * (nextKts - beaufortToKnots[bi]);
-
     float windMps = approxWindKts * 0.5144f;
-    float Hs = 0.0246f * windMps * windMps;
-    if (Hs < 0.001f) Hs = 0.001f;
-    if (Hs > 15.0f) Hs = 15.0f;
 
-    // WE wave_amplitude: Phillips spectrum constant. Linear scaling with Hs.
-    // Calibration: Hs=2.0m (Beaufort 5) → amplitude=1000 (moderate seas)
-    op.wave_amplitude = 500.0f * Hs;
-    if (op.wave_amplitude < 1.0f) op.wave_amplitude = 1.0f;
-    if (op.wave_amplitude > 50000.0f) op.wave_amplitude = 50000.0f;
+    // Beaufort-scaled wave_amplitude. Keep low for calm scenarios --
+    // visual detail comes from the 512x512 gradient/normal map in the shader,
+    // not from mesh displacement. From a ferry bridge at 30m, even B5 (2m Hs)
+    // looks almost flat; only geometry displacement at high Beaufort matters.
+    static const float beaufortAmplitude[] = {
+    //  B0 B1  B2  B3   B4   B5   B6   B7    B8    B9   B10   B11   B12
+        2,  8, 20, 40, 100, 200, 350, 500,  800, 1200, 1800, 2500, 3500
+    };
+    float nextAmp = (bi < 12) ? beaufortAmplitude[bi + 1] : beaufortAmplitude[12];
+    op.wave_amplitude = beaufortAmplitude[bi] + frac * (nextAmp - beaufortAmplitude[bi]);
 
-    // Default wind direction (north)
-    op.wind_dir = XMFLOAT2(0.0f, 1.0f);
-    op.wind_speed = std::max(10.0f, windMps * 100.0f);
-    op.wind_dependency = 0.07f;
+    // choppy_scale drives Jacobian fold -> foam. WE default is 1.3.
+    // Safe at low Beaufort because amplitude is small (no mesh fold-over).
+    op.choppy_scale = 0.8f + weather * 0.1f;
 
-    // Create the ocean with these parameters
+    // WE wind_speed is in cm/s (gravity = 981 cm/s^2 in Phillips spectrum)
+    op.wind_speed = std::max(30.0f, windMps * 100.0f);
+    op.wind_dir = XMFLOAT2(0.0f, 1.0f); // default north, updated by update()
+    // 0.35 spreads energy to opposing wind directions, breaking up regularity.
+    op.wind_dependency = 0.35f;
+
+    lastWindSpeedMps_ = windMps;
+    lastWindDirRad_ = 0.0f;
+
     weScene->ocean.Create(op);
 
     std::cout << "WickedWater: Initialized (patch=" << op.patch_length
-              << "m, dmap=" << op.dmap_dim
-              << ", detail=" << op.surfaceDetail << ")" << std::endl;
+              << "m, amp=" << op.wave_amplitude
+              << ", wind=" << op.wind_speed << "cm/s)" << std::endl;
 }
 
 void WickedWater::update(float tideHeight, const Vec3& /*viewPosition*/,
@@ -98,50 +92,44 @@ void WickedWater::update(float tideHeight, const Vec3& /*viewPosition*/,
 
     auto& op = weScene->weather.oceanParameters;
 
-    // Update water height for tide
     op.waterHeight = tideHeight;
 
-    // Convert wind speed from knots to m/s
     float windMps = windSpeedKts * 0.5144f;
 
-    // Significant wave height from fully-developed sea (Pierson-Moskowitz)
-    float Hs = 0.0246f * windMps * windMps;
-    if (Hs < 0.01f) Hs = 0.01f;
-    if (Hs > 15.0f) Hs = 15.0f;
-
-    // Map Hs to WE wave_amplitude (linear scaling)
-    // Calibration: Hs=2.0m (Beaufort 5) → amplitude=1000
-    op.wave_amplitude = 500.0f * Hs;
-    if (op.wave_amplitude < 1.0f) op.wave_amplitude = 1.0f;
-    if (op.wave_amplitude > 50000.0f) op.wave_amplitude = 50000.0f;
-
-    // Wind direction: BC uses meteorological convention (where wind blows FROM)
-    // Waves propagate WITH the wind, so add 180 degrees
+    // Wind direction: BC meteorological convention (FROM) -> wave propagation (WITH)
     float windRad = (windDirectionDeg + 180.0f) * 3.14159265f / 180.0f;
     float dirX = std::sin(windRad);
     float dirZ = std::cos(windRad);
-    // Minimum wind to avoid zero-vector
-    if (windMps < 0.5f) {
-        dirX = 0.0f;
-        dirZ = 1.0f;
-    }
+    if (windMps < 0.3f) { dirX = 0.0f; dirZ = 1.0f; }
     op.wind_dir = XMFLOAT2(dirX, dirZ);
 
-    // WE wind_speed is in cm/s scale (empirically)
-    op.wind_speed = std::max(100.0f, windMps * 100.0f);
+    // WE wind_speed is in cm/s
+    op.wind_speed = std::max(30.0f, windMps * 100.0f);
 
-    // Choppy scale: increase with sea state
-    op.choppy_scale = 1.0f + (Hs / 5.0f) * 0.5f;
-    if (op.choppy_scale > 2.0f) op.choppy_scale = 2.0f;
+    // Beaufort-scaled wave_amplitude and choppy_scale (must match load() table)
+    static const float beaufortAmplitude[] = {
+    //  B0 B1  B2  B3   B4   B5   B6   B7    B8    B9   B10   B11   B12
+        2,  8, 20, 40, 100, 200, 350, 500,  800, 1200, 1800, 2500, 3500
+    };
+    int bi = std::max(0, std::min(12, (int)weather));
+    float frac = weather - bi;
+    float nextAmp = (bi < 12) ? beaufortAmplitude[bi + 1] : beaufortAmplitude[12];
+    op.wave_amplitude = beaufortAmplitude[bi] + frac * (nextAmp - beaufortAmplitude[bi]);
+    op.choppy_scale = 0.8f + weather * 0.1f;
+    op.surfaceDisplacementTolerance = 2.0f;
 
-    // Recreate ocean if parameters changed significantly
-    // WE's Ocean::Create() re-initializes the spectrum
-    // Only recreate when wind changes significantly to avoid visual pops
-    static float lastWindSpeed = -1.0f;
-    float windDelta = std::abs(windMps - lastWindSpeed);
-    if (lastWindSpeed < 0 || windDelta > 1.0f) {
+    // Only recreate spectrum when wind changes significantly.
+    // Create() regenerates H(0) with new random numbers, causing a visual pop.
+    float speedRatio = (lastWindSpeedMps_ > 0.5f)
+        ? std::abs(windMps - lastWindSpeedMps_) / lastWindSpeedMps_
+        : (windMps > 0.5f ? 1.0f : 0.0f);
+    float dirDelta = std::abs(windRad - lastWindDirRad_);
+    if (dirDelta > 3.14159f) dirDelta = 6.28318f - dirDelta; // wrap
+
+    if (speedRatio > 0.3f || dirDelta > 0.52f) { // >30% speed or >30 degrees
         weScene->ocean.Create(op);
-        lastWindSpeed = windMps;
+        lastWindSpeedMps_ = windMps;
+        lastWindDirRad_ = windRad;
     }
 }
 

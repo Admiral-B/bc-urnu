@@ -27,6 +27,7 @@ enum class LandUseType : uint8_t {
     Mud,            // 16: natural=mud
     Shingle,        // 17: natural=shingle
     TidalFlat,      // 18: natural=tidal_flat
+    Waterfront,     // 19: man-made quay/dock edge (set by EditorApp from dock water polygons)
     COUNT
 };
 

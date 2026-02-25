@@ -23,6 +23,8 @@ static irr::scene::ISceneManager* g_smgr = nullptr;
 static SimulationModel* g_model = nullptr;
 static Network* g_network = nullptr;
 static OperatingMode::Mode g_mode = OperatingMode::Normal;
+static float g_sunRise = 6.0f;
+static float g_sunSet = 18.0f;
 
 // Create headless Irrlicht device (shared by init and initNetwork)
 static void ensureDevice() {
@@ -162,6 +164,10 @@ void init(ISound* sound, const ScenarioData& scenarioData, int operatingMode) {
             mp.secondaryControlSternThruster = true;
     }
 
+    // Store sunrise/sunset for weather system
+    g_sunRise = scenarioData.sunRise > 0 ? scenarioData.sunRise : 6.0f;
+    g_sunSet  = scenarioData.sunSet  > 0 ? scenarioData.sunSet  : 18.0f;
+
     // Construct SimulationModel (loads terrain, ships, buoys, etc.)
     g_model = new SimulationModel(g_device, g_smgr, nullptr /*gui*/, sound,
                                   scenarioData, mp);
@@ -256,6 +262,9 @@ float getRateOfTurn()     { return g_model ? g_model->getRateOfTurn() : 0; }
 float getWeather()        { return g_model ? g_model->getWeather() : 3; }
 float getWindSpeed()      { return g_model ? g_model->getWindSpeed() : 0; }
 float getWindDirection()  { return g_model ? g_model->getWindDirection() : 0; }
+float getRain()           { return g_model ? g_model->getRain() : 0; }
+float getVisibility()     { return g_model ? g_model->getVisibility() : 10; }
+float getTideHeight()     { return g_model ? g_model->getTideHeight() : 0; }
 
 // Other ships
 int getNumberOfOtherShips() {
@@ -265,6 +274,10 @@ float getOtherShipPosX(int i)    { return g_model ? g_model->getOtherShipPosX(i)
 float getOtherShipPosZ(int i)    { return g_model ? g_model->getOtherShipPosZ(i) : 0; }
 float getOtherShipHeading(int i) { return g_model ? g_model->getOtherShipHeading(i) : 0; }
 float getOtherShipSpeed(int i)   { return g_model ? g_model->getOtherShipSpeed(i) : 0; }
+std::string getOtherShipName(int i) { return g_model ? g_model->getOtherShipName(i) : ""; }
+uint32_t getOtherShipMMSI(int i) { return g_model ? g_model->getOtherShipMMSI(i) : 0; }
+float getOtherShipLength(int i)  { return g_model ? g_model->getOtherShipLength(i) : 0; }
+float getOtherShipBreadth(int i) { return g_model ? g_model->getOtherShipBreadth(i) : 0; }
 
 // Buoys
 int getNumberOfBuoys() {
@@ -276,6 +289,8 @@ float getBuoyPosZ(int i) { return g_model ? g_model->getBuoyPosZ(i) : 0; }
 // Time & lighting
 float getTimeDelta()      { return g_model ? g_model->getTimeDelta() : 0; }
 uint32_t getLightLevel()  { return g_model ? g_model->getLightLevel() : 200; }
+float getSunRise()        { return g_sunRise; }
+float getSunSet()         { return g_sunSet; }
 
 // Radar display
 bool getRadarImage(uint8_t* outBuf, int maxSize) {

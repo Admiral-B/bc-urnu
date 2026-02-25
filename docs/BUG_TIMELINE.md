@@ -4,6 +4,44 @@ Tracks bugs found during testing, root causes, and fixes.
 
 ---
 
+## 2026-02-25 (Round 6): Terrain Realism, Island Fix, Dock Waterfront
+
+### FIX: Terrain undulation destroying narrow coastal features
+
+- **Symptom**: Deep parallel ridges/grooves on breakwaters, spits, narrow land strips
+- **Root cause**: Undulation pass had 1m minimum amplitude applied to 0.3m beach ramp features
+- **Fix**: Skip land <5m elevation entirely, quadratic amplitude ramp (`above5^2 * 0.008`), max 4m. No minimum floor.
+- **File**: `src/HeightmapGenerator.cpp` (Pass 4b)
+
+### FIX: Lighthouse island bowl/crater shape
+
+- **Symptom**: Synthetic lighthouse islands appeared as bowls instead of domes
+- **Root cause**: DEM override `if (elev > 1.0f)` replaced synthetic 5m dome with lower DEM values (1-2m) since DEM lacks data for tiny islands
+- **Fix**: Changed to `if (elev > heightGrid[i])` -- only override when DEM is HIGHER than existing height. Also removed islandMask skip from beach ramp so islands get natural beach transitions.
+- **File**: `src/editor/EditorApp.cpp` (Step 3 DEM merge + Step 3.5 beach ramp)
+
+### FIX: Dune bumps creating parallel ridges
+
+- **Symptom**: Visible banding at fixed distances from coast
+- **Root cause**: `sin(d * 0.9)` where d = distance from coast created periodic ridges
+- **Fix**: Removed dune bumps entirely.
+- **File**: `src/HeightmapGenerator.cpp`
+
+### FIX: Dock/quay walls appearing as organic sandy slopes
+
+- **Symptom**: Roath Dock walls looked like natural beach instead of straight concrete edges
+- **Root cause**: Beach ramp + sand texture + coastal noise applied uniformly to all coastline including man-made waterfronts
+- **Fix**: New dock waterfront mask system. OSM dock/marina water dilated 3px, intersected with land -> `dockEdgeMask`. These pixels skip beach ramp, get sharp 1px transition, concrete texture (Waterfront type 19), roughness 0.50.
+- **Files**: `EditorApp.cpp`, `TerrainTextureBlender.cpp`, `OSMLandUseReader.hpp`
+
+### FIX: Procedural terrain texture too green / overpowering satellite
+
+- **Symptom**: Terrain looked unnaturally green, satellite imagery barely visible
+- **Fix**: Muted grass colours (r:55->70, g:110->95), reduced blend alpha (unclassified 0.55->0.30, land-use 0.65->0.45), wider sand transition (30m fixed -> 40-80m noise-modulated)
+- **File**: `src/editor/TerrainTextureBlender.cpp`
+
+---
+
 ## 2026-02-23 (Round 5): glTF Importer, Beach Ramps, Structure Fixes
 
 ### FIX: glTF/GLB model importer ported from WickedEngine Editor

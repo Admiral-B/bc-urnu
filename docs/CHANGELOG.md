@@ -117,6 +117,11 @@ Editor no-chart path (OpenSeaMap):
 - Terrain PBR: Sobel normal map, per-land-use roughness map, 6-octave FBM detail textures
 - Building PBR: procedural wall normal maps, roughness maps, weathered roof atlas
 - Default resolution 2049, elevation zoom 14, satellite zoom 19, terrain mesh limit 1024
+- Variable beach ramp (4-10px hash noise), dock waterfront mask (concrete texture at quay walls)
+- 19 land-use types including Waterfront, Wetland, Mud, Shingle, TidalFlat
+- Reduced procedural blend alpha (satellite imagery dominant), muted grass, wider sand transition
+- Terrain undulation, coastal fractal noise, thermal erosion (chart converter path)
+- Height-priority texture blending, macro variation anti-tiling, wet sand zone
 
 ---
 

@@ -23,9 +23,9 @@ namespace bc { namespace graphics { namespace wicked {
 const WickedMultiCascadeOcean::CascadeConfig
 WickedMultiCascadeOcean::DEFAULT_CONFIGS[NUM_CASCADES] = {
     // patchLength, fftRes, waveAmp, choppy, minDist, maxDist
-    { 2000.0f, 256, 2000.0f, 0.8f,  200.0f, 5000.0f },  // Far swells
-    {  100.0f, 512, 1000.0f, 1.3f,    0.0f, 1000.0f },  // Primary wind waves
-    {   20.0f, 256,  200.0f, 1.5f,    0.0f,  200.0f },  // Near ripples
+    {   50.0f, 256,   300.0f, 0.4f,  200.0f, 5000.0f },  // Far swells
+    {   50.0f, 512,   300.0f, 0.5f,    0.0f, 1000.0f },  // Primary wind waves
+    {   50.0f, 256,   300.0f, 0.6f,    0.0f,  200.0f },  // Near ripples
 };
 
 WickedMultiCascadeOcean::WickedMultiCascadeOcean() {
@@ -62,10 +62,10 @@ void WickedMultiCascadeOcean::init(wi::scene::Scene* scene,
     op.dmap_dim = configs[1].fftResolution;
     op.wave_amplitude = configs[1].waveAmplitude;
     op.choppy_scale = configs[1].choppyScale;
-    op.time_scale = 0.3f;
+    op.time_scale = 1.0f; // Real-time wave periods
     op.waterHeight = waterHeight_;
-    op.waterColor = XMFLOAT4(0.18f, 0.29f, 0.31f, 0.6f);
-    op.extinctionColor = XMFLOAT4(0.0f, 0.6f, 0.8f, 1.0f);
+    op.waterColor = XMFLOAT4(0.02f, 0.05f, 0.04f, 0.5f);
+    op.extinctionColor = XMFLOAT4(0.05f, 0.6f, 0.85f, 1.0f);
     op.surfaceDetail = 4;
     op.surfaceDisplacementTolerance = 2.0f;
 
@@ -73,7 +73,7 @@ void WickedMultiCascadeOcean::init(wi::scene::Scene* scene,
     float dirX = std::sin(windDirRad);
     float dirZ = std::cos(windDirRad);
     op.wind_dir = XMFLOAT2(dirX, dirZ);
-    op.wind_speed = std::max(100.0f, windSpeedMps * 100.0f);
+    op.wind_speed = std::max(30.0f, windSpeedMps * 100.0f);
     op.wind_dependency = 0.07f;
 
     // Create the primary ocean
@@ -136,22 +136,10 @@ void WickedMultiCascadeOcean::updateWind(float windSpeedMps, float windDirRad) {
     float dirX = std::sin(windDirRad);
     float dirZ = std::cos(windDirRad);
     op.wind_dir = XMFLOAT2(dirX, dirZ);
-    op.wind_speed = std::max(100.0f, windSpeedMps * 100.0f);
+    op.wind_speed = std::max(30.0f, windSpeedMps * 100.0f);
 
-    // Scale wave amplitude with wind speed (Pierson-Moskowitz relationship)
-    float Hs = 0.0246f * windSpeedMps * windSpeedMps;
-    if (Hs < 0.01f) Hs = 0.01f;
-    if (Hs > 15.0f) Hs = 15.0f;
-
-    // Scale each cascade's amplitude proportionally
-    float baseAmp = configs[1].waveAmplitude;
-    float ampScale = (Hs * Hs) / (0.5f * 0.5f); // Normalized to Hs=0.5m baseline
-    op.wave_amplitude = baseAmp * ampScale;
-    if (op.wave_amplitude < 10.0f) op.wave_amplitude = 10.0f;
-    if (op.wave_amplitude > 50000.0f) op.wave_amplitude = 50000.0f;
-
-    op.choppy_scale = configs[1].choppyScale * (1.0f + Hs / 10.0f);
-    if (op.choppy_scale > 2.5f) op.choppy_scale = 2.5f;
+    op.choppy_scale = configs[1].choppyScale;
+    op.surfaceDisplacementTolerance = 2.0f;
 
     // Recreate the primary ocean with new spectrum
     weScene->ocean.Create(op);

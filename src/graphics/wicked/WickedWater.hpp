@@ -69,6 +69,8 @@ private:
     float tideHeight_ = 0.0f;
     float currentWeather_ = 0.0f;
     bool visible_ = true;
+    float lastWindSpeedMps_ = -1.0f; // for Create() threshold
+    float lastWindDirRad_ = 0.0f;
 
     // Sampling offset for finite-difference normals (meters)
     static constexpr float NORMAL_SAMPLE_OFFSET = 1.0f;

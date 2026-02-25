@@ -57,6 +57,9 @@ float getRateOfTurn();   // degrees/min
 float getWeather();      // Beaufort 0-12
 float getWindSpeed();    // knots
 float getWindDirection(); // degrees
+float getRain();         // 0-10 intensity
+float getVisibility();   // nautical miles
+float getTideHeight();   // metres
 
 // Other ships
 int getNumberOfOtherShips();
@@ -64,6 +67,10 @@ float getOtherShipPosX(int i);
 float getOtherShipPosZ(int i);
 float getOtherShipHeading(int i);
 float getOtherShipSpeed(int i);  // m/s
+std::string getOtherShipName(int i);
+uint32_t getOtherShipMMSI(int i);
+float getOtherShipLength(int i);
+float getOtherShipBreadth(int i);
 
 // Buoys
 int getNumberOfBuoys();
@@ -73,6 +80,8 @@ float getBuoyPosZ(int i);
 // Time & lighting
 float getTimeDelta();      // scenario time in seconds since midnight day 1
 uint32_t getLightLevel();  // ambient light 0-255 (0=dark, 255=bright day)
+float getSunRise();        // hours (0-24)
+float getSunSet();         // hours (0-24)
 
 // Radar display -- copies the overlaid radar image (ARGB->RGBA) into outBuf.
 // Downsamples to maxSize x maxSize if source is larger.

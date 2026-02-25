@@ -405,9 +405,18 @@ void MMGPhysicsModel::step(double dt, const PhysicsInput& input, PhysicsState& s
     double r_rad = state.yawRate * DEG_TO_RAD; // Convert to rad/s
     double heading_rad = state.heading * DEG_TO_RAD;
 
-    // Engine setting (average if twin screw for simplified model)
+    // Engine setting (average for propulsion force; differential handled separately)
     double engine = dims.singleEngine ? input.portEngine
                                        : (input.portEngine + input.stbdEngine) / 2.0;
+
+    // Differential thrust yaw moment (twin screw only)
+    // Each engine produces half of maxEngineForce; moment arm is propellorSpacing/2
+    double N_diff = 0.0;
+    if (!dims.singleEngine && dims.propellorSpacing > 0) {
+        double portForce = input.portEngine * dims.maxEngineForce * 0.5;
+        double stbdForce = input.stbdEngine * dims.maxEngineForce * 0.5;
+        N_diff = (portForce - stbdForce) * dims.propellorSpacing * 0.5;
+    }
 
     // Shallow water correction factor
     double hT_ratio = (input.waterDepth + dims.draught) / dims.draught; // Total depth / draught
@@ -436,10 +445,10 @@ void MMGPhysicsModel::step(double dt, const PhysicsInput& input, PhysicsState& s
                       input.superstructureAft,
                       Xw, Yw, Nw);
 
-    // Total forces
+    // Total forces (N_diff adds differential thrust yaw moment for twin screw)
     double Fx = Xh + Xp + Xr + Xw;
     double Fy = Yh + Yr + Yb + Yw;
-    double Mz = Nh + Nr + Nb + Nw;
+    double Mz = Nh + Nr + Nb + Nw + N_diff;
 
     // Mass with added mass
     double mx = getMassX();
@@ -477,7 +486,7 @@ void MMGPhysicsModel::step(double dt, const PhysicsInput& input, PhysicsState& s
 
     Fx = Xh + Xp + Xr + Xw;
     Fy = Yh + Yr + Yb + Yw;
-    Mz = Nh + Nr + Nb + Nw;
+    Mz = Nh + Nr + Nb + Nw + N_diff;
 
     du_dt = (Fx + (m + m_y_add) * v_mid * r_mid) / mx;
     dv_dt = (Fy - (m + m_x_add) * u_mid * r_mid) / my;

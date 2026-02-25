@@ -316,24 +316,31 @@ The key check is `!isClosed`: only open-way dams/breakwaters become barriers. Cl
 
 The generation pipeline processes in this order -- later steps can overwrite earlier ones:
 
-```
+```text
 Step 1:   Land classification (OSM land polygons or NE coastlines)
 Step 1+:  Island polygon rasterization (place=island/islet, natural=rock)
 Step 1.4: Synthetic lighthouse islands (50m radius circles, protected by islandMask)
 Step 1.5: Water polygon subtraction (skips islandMask pixels)
+          Dock/marina water flagged in dockWaterMask
+Step 1.6: Dock edge mask (dockWaterMask dilated 3px, intersected with land)
 Step 2:   DEM elevation download (AWS Terrain Tiles)
-Step 3:   Merge (land=max(0.5,DEM), islands=keep if DEM<1m, water=min(-0.5,DEM))
+Step 3:   Merge (land=max(0.5,DEM), islands=keep if DEM<existing, water=min(-0.5,DEM))
 Step 3+:  3-pass smoothing (skips islandMask and thin features)
-Step 3.5: Beach ramp (chamfer distance transform + smoothstep, 6px width)
+Step 3.5: Beach ramp (chamfer distance + smoothstep, 4-10px variable width)
+          Dock edge pixels skipped (sharp 1px quay wall transition)
 Step 4:   Barrier flood-fill (raises barrier polylines to 5m)
 Step 4.1: Lock channel re-cutting (-3m depth, 2px dilation)
-```text
+Step 5:   Land-use query + rasterize (OSMLandUseReader, 19 types)
+          Dock edge pixels overridden to Waterfront (type 19)
+Step 6:   Satellite texture download + TerrainTextureBlender
+```
 
 Key invariants:
 
 - `islandMask` pixels survive all subsequent steps
 - Thin features (barrier, narrow channels) skip smoothing
 - Lock channels are always re-cut AFTER barrier flood-fill
+- Dock edge pixels get concrete texture, no beach ramp
 
 ## File Map
 

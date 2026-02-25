@@ -1098,6 +1098,11 @@ SimulationModel::~SimulationModel()
         return windSpeed;
     }
 
+    float SimulationModel::getTideHeight() const
+    {
+        return tideHeight;
+    }
+
     void SimulationModel::setStreamOverrideDirection(float streamDirection) //Range 0-360.
     {
         this->streamOverrideDirection = streamDirection;

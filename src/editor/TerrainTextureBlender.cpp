@@ -63,10 +63,10 @@ struct TerrainColor { uint8_t r, g, b; };
 static TerrainColor grassColor(float nx, float ny, int seed) {
     float n = fbm(nx * 0.8f, ny * 0.8f, seed, 3);
     float n2 = vnoise(nx * 3.0f, ny * 3.0f, seed + 500);
-    // Richer, more saturated green
-    int r = 55 + (int)(n * 35) + (int)(n2 * 12);
-    int g = 110 + (int)(n * 55) + (int)(n2 * 22);
-    int b = 35 + (int)(n * 20) + (int)(n2 * 8);
+    // Muted, natural green (less saturated to let satellite show through)
+    int r = 70 + (int)(n * 30) + (int)(n2 * 10);
+    int g = 95 + (int)(n * 40) + (int)(n2 * 15);
+    int b = 50 + (int)(n * 20) + (int)(n2 * 8);
     return { (uint8_t)std::clamp(r, 0, 255),
              (uint8_t)std::clamp(g, 0, 255),
              (uint8_t)std::clamp(b, 0, 255) };
@@ -401,12 +401,21 @@ void TerrainTextureBlender::blend(uint8_t* textureRGB, int texW, int texH,
             // Water proximity: sand/beach only for unclassified land or OSM Beach type.
             // Don't put sand next to docks, marinas, or residential waterfront.
             bool allowSand = (luType == 0 || luType == 8); // unclassified or Beach
-            if (allowSand && wDistM < 30.0f) {
-                float sandW = 1.0f - wDistM / 30.0f;
-                wSand = sandW * (1.0f - slopeNorm); // sand only on flat areas
-            } else if (luType == 0 && wDistM < 100.0f) {
-                float t = (wDistM - 30.0f) / 70.0f;
-                wDirt = (1.0f - t) * 0.5f * (1.0f - slopeNorm);
+            if (allowSand && wDistM < 80.0f) {
+                // Noise-modulated sand boundary for organic edge
+                float sandEdgeNoise = vnoise((float)tx * 0.05f, (float)ty * 0.05f, 77777);
+                float sandRange = 40.0f + sandEdgeNoise * 40.0f; // 40-80m variable width
+                if (wDistM < sandRange) {
+                    float sandW = 1.0f - wDistM / sandRange;
+                    sandW *= sandW; // Quadratic falloff for natural gradient
+                    wSand = sandW * (1.0f - slopeNorm); // sand only on flat areas
+                }
+                // Dirt transition zone between sand and grass
+                if (wDistM > sandRange * 0.5f && wDistM < sandRange * 1.5f) {
+                    float dirtT = (wDistM - sandRange * 0.5f) / sandRange;
+                    dirtT = 1.0f - std::abs(dirtT - 0.5f) * 2.0f; // peak at boundary
+                    wDirt = dirtT * 0.4f * (1.0f - slopeNorm);
+                }
             }
 
             // Remaining weight goes to grass
@@ -506,6 +515,9 @@ void TerrainTextureBlender::blend(uint8_t* textureRGB, int texW, int texH,
                     case 18: // Tidal flat
                         c = tidalFlatColor(tileX, tileY, 6600);
                         break;
+                    case 19: // Waterfront (dock/quay edge)
+                        c = concreteColor(tileX, tileY, 6700);
+                        break;
                     default:
                         c = grassColor(tileX, tileY, 1000);
                         break;
@@ -522,24 +534,74 @@ void TerrainTextureBlender::blend(uint8_t* textureRGB, int texW, int texH,
                 dg = c.g * (1.0f - slopeMix) + cRock.g * slopeMix;
                 db = c.b * (1.0f - slopeMix) + cRock.b * slopeMix;
             } else {
-                // Topographic-only: original weight-based blending
+                // Height-priority blending: each material has a "height" that determines
+                // which material wins at micro scale. Sand fills cracks, rock dominates peaks.
                 TerrainColor cGrass = grassColor(tileX, tileY, 1000);
                 TerrainColor cRock = rockColor(tileX, tileY, 2000);
                 TerrainColor cSand = sandColor(tileX, tileY, 3000);
                 TerrainColor cDirt = dirtColor(tileX, tileY, 4000);
 
-                dr = cGrass.r * wGrass + cRock.r * wRock + cSand.r * wSand + cDirt.r * wDirt;
-                dg = cGrass.g * wGrass + cRock.g * wRock + cSand.g * wSand + cDirt.g * wDirt;
-                db = cGrass.b * wGrass + cRock.b * wRock + cSand.b * wSand + cDirt.b * wDirt;
+                // Per-material height from noise (0-1 range)
+                float hGrass = vnoise(tileX * 2.0f, tileY * 2.0f, 8100) * 0.3f;
+                float hRock  = vnoise(tileX * 1.5f, tileY * 1.5f, 8200) * 0.5f + 0.2f;
+                float hSand  = vnoise(tileX * 3.0f, tileY * 3.0f, 8300) * 0.1f;
+                float hDirt  = vnoise(tileX * 2.5f, tileY * 2.5f, 8400) * 0.2f + 0.1f;
+
+                // Height + weight = priority
+                float pGrass = hGrass + wGrass * 2.0f;
+                float pRock  = hRock  + wRock  * 2.0f;
+                float pSand  = hSand  + wSand  * 2.0f;
+                float pDirt  = hDirt  + wDirt  * 2.0f;
+
+                float maxP = std::max({pGrass, pRock, pSand, pDirt});
+                float blendDepth = 0.3f; // transition sharpness
+                float ma = maxP - blendDepth;
+
+                float bGrass = std::max(pGrass - ma, 0.0f);
+                float bRock  = std::max(pRock  - ma, 0.0f);
+                float bSand  = std::max(pSand  - ma, 0.0f);
+                float bDirt  = std::max(pDirt  - ma, 0.0f);
+                float bTotal = bGrass + bRock + bSand + bDirt;
+                if (bTotal > 0.001f) {
+                    bGrass /= bTotal; bRock /= bTotal;
+                    bSand /= bTotal; bDirt /= bTotal;
+                }
+
+                dr = cGrass.r * bGrass + cRock.r * bRock + cSand.r * bSand + cDirt.r * bDirt;
+                dg = cGrass.g * bGrass + cRock.g * bRock + cSand.g * bSand + cDirt.g * bDirt;
+                db = cGrass.b * bGrass + cRock.b * bRock + cSand.b * bSand + cDirt.b * bDirt;
+            }
+
+            // Macro variation: large-scale color modulation breaks up tiling (~100-200m)
+            {
+                float macroN = fbm((float)tx * 0.01f, (float)ty * 0.01f, 99999, 3);
+                float macroShift = (macroN - 0.5f) * 30.0f; // +/- 15 RGB
+                dr += macroShift;
+                dg += macroShift * 0.8f;
+                db += macroShift * 0.6f;
+            }
+
+            // Wet sand zone: darken near waterline (physically-based wet surface)
+            // Wet surfaces: reduce albedo ~30-35%, increase color saturation slightly
+            if (wDistM < 15.0f) {
+                float wetness = 1.0f - wDistM / 15.0f;
+                wetness *= wetness; // quadratic falloff
+                // Noise breakup for organic wet patches
+                float wetNoise = vnoise((float)tx * 0.3f, (float)ty * 0.3f, 88888);
+                wetness *= (0.5f + wetNoise);
+                wetness = std::clamp(wetness, 0.0f, 1.0f);
+                dr *= (1.0f - wetness * 0.35f);
+                dg *= (1.0f - wetness * 0.30f);
+                db *= (1.0f - wetness * 0.25f);
             }
 
             // Blend with satellite: lerp(satellite, detail, alpha)
-            // Higher alpha = more procedural detail visible over satellite imagery.
-            // Land-use-classified areas get stronger blend (we have confident surface info).
-            float alpha = (luType > 0) ? 0.65f : 0.55f;
-            // Add noise modulation to alpha
+            // Lower alpha = more satellite imagery visible (which provides real-world colors).
+            // Procedural detail adds noise/variation but satellite provides ground truth.
+            float alpha = (luType > 0) ? 0.45f : 0.30f;
+            // Add noise modulation to alpha for organic variation
             alpha *= (0.7f + fbm(noiseX * 0.5f, noiseY * 0.5f, noiseSeed + 999, 2) * 0.6f);
-            alpha = std::clamp(alpha, 0.25f, 0.80f);
+            alpha = std::clamp(alpha, 0.15f, 0.55f);
 
             int pixIdx = (ty * texW + tx) * 3;
             float sr = textureRGB[pixIdx], sg = textureRGB[pixIdx + 1], sb = textureRGB[pixIdx + 2];
@@ -590,6 +652,26 @@ void TerrainTextureBlender::generateRoughnessMap(uint8_t* outRGB, const float* h
     if (!outRGB || !heightGrid || resolution <= 0) return;
     int res = resolution;
 
+    // Water distance BFS for wet sand roughness
+    std::vector<int> waterDist(res * res, -1);
+    std::queue<int> bfsQ;
+    for (int i = 0; i < res * res; i++) {
+        if (heightGrid[i] <= 0.0f) { waterDist[i] = 0; bfsQ.push(i); }
+    }
+    const int dx4[] = {-1, 1, 0, 0};
+    const int dy4[] = {0, 0, -1, 1};
+    while (!bfsQ.empty()) {
+        int idx = bfsQ.front(); bfsQ.pop();
+        int cr = idx / res, cc = idx % res;
+        for (int d = 0; d < 4; d++) {
+            int nr = cr + dy4[d], nc = cc + dx4[d];
+            if (nr >= 0 && nr < res && nc >= 0 && nc < res) {
+                int ni = nr * res + nc;
+                if (waterDist[ni] < 0) { waterDist[ni] = waterDist[idx] + 1; bfsQ.push(ni); }
+            }
+        }
+    }
+
     for (int r = 0; r < res; r++) {
         for (int c = 0; c < res; c++) {
             int i = r * res + c;
@@ -622,8 +704,18 @@ void TerrainTextureBlender::generateRoughnessMap(uint8_t* outRGB, const float* h
                         case 16: rough = 0.45f; break; // Mud (wet/shiny)
                         case 17: rough = 0.78f; break; // Shingle
                         case 18: rough = 0.40f; break; // Tidal flat (wet)
+                        case 19: rough = 0.50f; break; // Waterfront (concrete)
                         default: break;
                     }
+                }
+
+                // Wet sand: reduce roughness near water (more reflective when wet)
+                float wDistPx = (waterDist[i] >= 0) ? (float)waterDist[i] : 999.0f;
+                float wDistM = wDistPx * 10.0f; // ~10m/pixel estimate
+                if (wDistM < 15.0f) {
+                    float wetness = 1.0f - wDistM / 15.0f;
+                    wetness *= wetness;
+                    rough *= (1.0f - wetness * 0.5f); // up to 50% roughness reduction
                 }
             }
             uint8_t rv = (uint8_t)std::clamp((int)(rough * 255.0f), 0, 255);
