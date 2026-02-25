@@ -8,6 +8,7 @@
 #ifdef WITH_WICKED_ENGINE
 
 #include "WickedMultiCascadeOcean.hpp"
+#include "../../OceanMath.hpp"
 #include "WickedEngine.h"
 #include <cmath>
 #include <iostream>
@@ -38,6 +39,73 @@ WickedMultiCascadeOcean::~WickedMultiCascadeOcean() {
     shutdown();
 }
 
+void WickedMultiCascadeOcean::load(wi::scene::Scene* scene, float weather, int /*segments*/) {
+    using namespace bc::OceanMath;
+    currentWeather_ = weather;
+
+    // Convert Beaufort to wind parameters for init
+    auto p = beaufortToOceanParams(weather, 0.0f, 0.0f);
+
+    // Set amplitudes on cascade configs before init
+    configs[0].waveAmplitude = p.waveAmplitude * 0.3f;  // swells: 30% of primary
+    configs[1].waveAmplitude = p.waveAmplitude;          // primary wind waves
+    configs[2].waveAmplitude = p.waveAmplitude * 0.15f;  // ripples: 15% of primary
+
+    configs[0].choppyScale = p.choppyScale * 0.6f;
+    configs[1].choppyScale = p.choppyScale;
+    configs[2].choppyScale = p.choppyScale * 1.2f;
+
+    float windDirRad = std::atan2(p.windDirX, p.windDirZ);
+    init(scene, p.windSpeedMps, windDirRad);
+}
+
+void WickedMultiCascadeOcean::update(float tideHeight, const Vec3& /*viewPosition*/,
+                                      int /*lightLevel*/, float weather,
+                                      float windSpeedKts, float windDirectionDeg) {
+    if (!weScene) return;
+    using namespace bc::OceanMath;
+
+    currentWeather_ = weather;
+    setWaterHeight(tideHeight);
+
+    // Map Beaufort + wind to ocean parameters using shared math
+    auto p = beaufortToOceanParams(weather, windSpeedKts, windDirectionDeg);
+
+    // Update primary cascade amplitude/choppiness from Beaufort
+    auto& op = weScene->weather.oceanParameters;
+    op.waterHeight = tideHeight;
+    op.wave_amplitude = p.waveAmplitude;
+    op.choppy_scale = p.choppyScale;
+    op.surfaceDisplacementTolerance = 2.0f;
+
+    // Check if wind changed enough to regenerate spectrum
+    float windDirRad = std::atan2(p.windDirX, p.windDirZ);
+    float speedRatio = (lastWindSpeed_ > 0.5f)
+        ? std::abs(p.windSpeedMps - lastWindSpeed_) / lastWindSpeed_
+        : (p.windSpeedMps > 0.5f ? 1.0f : 0.0f);
+    float dirDelta = std::abs(windDirRad - lastWindDir_);
+    if (dirDelta > 3.14159f) dirDelta = 6.28318f - dirDelta;
+
+    if (speedRatio > 0.3f || dirDelta > 0.52f) {
+        op.wind_dir = XMFLOAT2(p.windDirX, p.windDirZ);
+        op.wind_speed = p.windSpeedCmps;
+        weScene->ocean.Create(op);
+        lastWindSpeed_ = p.windSpeedMps;
+        lastWindDir_ = windDirRad;
+    }
+}
+
+Vec3 WickedMultiCascadeOcean::getPosition() const {
+    return Vec3(0.0f, waterHeight_, 0.0f);
+}
+
+void WickedMultiCascadeOcean::setVisible(bool visible) {
+    visible_ = visible;
+    if (weScene) {
+        weScene->weather.SetOceanEnabled(visible);
+    }
+}
+
 void WickedMultiCascadeOcean::setCascadeConfig(int index, const CascadeConfig& config) {
     if (index < 0 || index >= NUM_CASCADES) return;
     configs[index] = config;
@@ -61,8 +129,8 @@ void WickedMultiCascadeOcean::init(wi::scene::Scene* scene,
     op.patch_length = configs[1].patchLength;
     op.dmap_dim = configs[1].fftResolution;
     op.wave_amplitude = configs[1].waveAmplitude;
-    op.choppy_scale = configs[1].choppyScale;
-    op.time_scale = 1.0f; // Real-time wave periods
+    op.choppy_scale = std::min(configs[1].choppyScale, 1.5f); // cap to prevent universal foam
+    op.time_scale = 0.3f; // Wave animation speed (0.3 = natural period for 50m patch)
     op.waterHeight = waterHeight_;
     op.waterColor = XMFLOAT4(0.02f, 0.05f, 0.04f, 0.5f);
     op.extinctionColor = XMFLOAT4(0.05f, 0.6f, 0.85f, 1.0f);
@@ -74,7 +142,7 @@ void WickedMultiCascadeOcean::init(wi::scene::Scene* scene,
     float dirZ = std::cos(windDirRad);
     op.wind_dir = XMFLOAT2(dirX, dirZ);
     op.wind_speed = std::max(30.0f, windSpeedMps * 100.0f);
-    op.wind_dependency = 0.07f;
+    op.wind_dependency = 0.35f; // 0.35 spreads energy to opposing wind directions
 
     // Create the primary ocean
     weScene->ocean.Create(op);

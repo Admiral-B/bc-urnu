@@ -51,6 +51,7 @@ set(BC_TEST_SOURCES
     test_building_generator.cpp
     test_osm_water_reader.cpp
     test_ini_file_rw.cpp
+    test_ocean_math.cpp
 )
 
 # Conditionally add chart/world generation if GDAL is available

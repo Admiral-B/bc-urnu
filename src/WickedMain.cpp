@@ -5,7 +5,7 @@
 // WickedEngine must be included before any Irrlicht headers
 #include "WickedEngine.h"
 
-#include "graphics/wicked/WickedWater.hpp"
+#include "graphics/wicked/WickedMultiCascadeOcean.hpp"
 #include "graphics/wicked/WickedTerrainNode.hpp"
 #include "graphics/wicked/WickedModelImporter.hpp"
 #include "graphics/wicked/WickedImGui.hpp"
@@ -1361,7 +1361,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     // Declare variables needed after scene setup (outside try block)
     CoordConverter coords;
     std::unique_ptr<bc::graphics::wicked::WickedTerrainNode> terrainNode;
-    bc::graphics::wicked::WickedWater ocean;
+    bc::graphics::wicked::WickedMultiCascadeOcean ocean;
     float ownShipX = 0, ownShipZ = 0;
     float ownShipHeading = scenarioData.ownShipData.initialBearing;
     float ownShipSpeed = scenarioData.ownShipData.initialSpeed; // knots

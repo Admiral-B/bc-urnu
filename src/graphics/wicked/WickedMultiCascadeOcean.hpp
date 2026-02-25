@@ -58,7 +58,18 @@ public:
     WickedMultiCascadeOcean();
     ~WickedMultiCascadeOcean();
 
-    /// Initialize with a scene and wind parameters.
+    /// Initialize ocean (drop-in replacement for WickedWater::load).
+    /// @param scene  WE scene
+    /// @param weather  Initial Beaufort scale (0-12)
+    /// @param segments  Unused (WE manages mesh resolution)
+    void load(wi::scene::Scene* scene, float weather, int segments = 0);
+
+    /// Per-frame update (drop-in replacement for WickedWater::update).
+    void update(float tideHeight, const Vec3& viewPosition,
+                int lightLevel, float weather,
+                float windSpeedKts, float windDirectionDeg);
+
+    /// Initialize with a scene and wind parameters (low-level).
     void init(wi::scene::Scene* scene, float windSpeedMps, float windDirRad);
 
     /// Set cascade configuration (call before or after init).
@@ -69,6 +80,12 @@ public:
 
     /// Update tide/water height.
     void setWaterHeight(float height);
+
+    /// Get current ocean surface base position.
+    Vec3 getPosition() const;
+
+    /// Show/hide ocean rendering.
+    void setVisible(bool visible);
 
     /// Get blended wave height at world position (sum of all cascades).
     float getWaveHeight(float worldX, float worldZ) const;
@@ -99,8 +116,10 @@ private:
 
     CascadeConfig configs[NUM_CASCADES];
     float waterHeight_ = 0.0f;
+    float currentWeather_ = 0.0f;
     float lastWindSpeed_ = -1.0f;
     float lastWindDir_ = 0.0f;
+    bool visible_ = true;
 
     // We store cascade ocean instances as indices into the scene's weather
     // and use the scene's built-in ocean. For additional cascades we create
