@@ -129,11 +129,15 @@ void WickedMultiCascadeOcean::init(wi::scene::Scene* scene,
     op.patch_length = configs[1].patchLength;
     op.dmap_dim = configs[1].fftResolution;
     op.wave_amplitude = configs[1].waveAmplitude;
-    op.choppy_scale = std::min(configs[1].choppyScale, 1.5f); // cap to prevent universal foam
+    op.choppy_scale = configs[1].choppyScale;
     op.time_scale = 0.3f; // Wave animation speed (0.3 = natural period for 50m patch)
     op.waterHeight = waterHeight_;
-    op.waterColor = XMFLOAT4(0.02f, 0.05f, 0.04f, 0.5f);
-    op.extinctionColor = XMFLOAT4(0.05f, 0.6f, 0.85f, 1.0f);
+
+    // Water appearance: dark murky green-grey (North Sea/Atlantic look).
+    // Lower alpha = more light penetrates = less mirror-like reflection.
+    op.waterColor = XMFLOAT4(0.01f, 0.03f, 0.025f, 0.25f);
+    // Extinction: muted blue-green, not vivid blue. Controls subsurface color.
+    op.extinctionColor = XMFLOAT4(0.12f, 0.35f, 0.28f, 1.0f);
     op.surfaceDetail = 4;
     op.surfaceDisplacementTolerance = 2.0f;
 
@@ -141,8 +145,9 @@ void WickedMultiCascadeOcean::init(wi::scene::Scene* scene,
     float dirX = std::sin(windDirRad);
     float dirZ = std::cos(windDirRad);
     op.wind_dir = XMFLOAT2(dirX, dirZ);
-    op.wind_speed = std::max(30.0f, windSpeedMps * 100.0f);
-    op.wind_dependency = 0.35f; // 0.35 spreads energy to opposing wind directions
+    // Wind speed capped to match OceanMath (prevents Phillips spectrum aliasing)
+    op.wind_speed = std::max(30.0f, std::min(windSpeedMps * 100.0f, 1500.0f));
+    op.wind_dependency = 0.07f; // Lower = more directional waves, less grid pattern
 
     // Create the primary ocean
     weScene->ocean.Create(op);
@@ -204,7 +209,7 @@ void WickedMultiCascadeOcean::updateWind(float windSpeedMps, float windDirRad) {
     float dirX = std::sin(windDirRad);
     float dirZ = std::cos(windDirRad);
     op.wind_dir = XMFLOAT2(dirX, dirZ);
-    op.wind_speed = std::max(30.0f, windSpeedMps * 100.0f);
+    op.wind_speed = std::max(30.0f, std::min(windSpeedMps * 100.0f, 1500.0f));
 
     op.choppy_scale = configs[1].choppyScale;
     op.surfaceDisplacementTolerance = 2.0f;

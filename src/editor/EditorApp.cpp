@@ -1650,6 +1650,10 @@ void EditorApp::renderPropertiesPanel(float x, float y, float w, float h) {
                               "7=Near gale  9=Strong gale  12=Hurricane");
         }
         ImGui::SliderFloat("Visibility", &scenarioData.visibilityRange, 0.1f, 30.0f, "%.1f nm");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Below 8nm also increases cloud cover (overcast).\n"
+                              "3-5nm = typical British grey day");
+        }
         ImGui::SliderFloat("Rain Intensity", &scenarioData.rainIntensity, 0.0f, 10.0f, "%.0f");
 
         ImGui::Separator();

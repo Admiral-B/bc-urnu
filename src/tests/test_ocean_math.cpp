@@ -12,7 +12,7 @@ using namespace bc::OceanMath;
 TEST_CASE("Beaufort 0 gives minimal waves", "[ocean][beaufort]") {
     auto p = beaufortToOceanParams(0.0f, 0.0f, 0.0f);
     REQUIRE(p.waveAmplitude == Approx(2.0f));
-    REQUIRE(p.choppyScale == Approx(0.5f));
+    REQUIRE(p.choppyScale == Approx(0.4f));
     // Calm: wind direction defaults to north
     REQUIRE(p.windDirZ == Approx(1.0f).margin(0.01f));
 }
@@ -20,8 +20,8 @@ TEST_CASE("Beaufort 0 gives minimal waves", "[ocean][beaufort]") {
 TEST_CASE("Beaufort 12 gives maximum waves", "[ocean][beaufort]") {
     auto p = beaufortToOceanParams(12.0f, 68.0f, 180.0f);
     REQUIRE(p.waveAmplitude == Approx(410.0f));
-    REQUIRE(p.choppyScale == Approx(1.1f));  // grows to 1.1 for whitecaps
-    REQUIRE(p.windSpeedCmps > 3000.0f);
+    REQUIRE(p.choppyScale == Approx(0.8f));  // capped to prevent foam carpet
+    REQUIRE(p.windSpeedCmps == Approx(1500.0f));  // capped for Phillips spectrum
 }
 
 TEST_CASE("Beaufort interpolation is linear between steps", "[ocean][beaufort]") {

@@ -2116,6 +2116,8 @@ void OwnShip::update(float deltaTime, float scenarioTime, float tideHeight, floa
             mmgInput.waterDepth = std::max(0.1f, getDepth()); // Depth below keel (m)
             mmgInput.windSpeed = windSpeed;  // m/s (already converted above)
             mmgInput.windDirection = windDirection; // degrees, FROM direction
+            mmgInput.currentSurge = axialStream;    // body-frame tidal stream (m/s)
+            mmgInput.currentSway = lateralStream;   // body-frame tidal stream (m/s)
 
             physicsAccumulator += deltaTime;
             while (physicsAccumulator >= PHYSICS_DT) {
@@ -2474,6 +2476,21 @@ void OwnShip::update(float deltaTime, float scenarioTime, float tideHeight, floa
     if (rollPeriod > 0)
     {
         roll = weather * rollAngle * sin(scenarioTime * 2 * PI / rollPeriod);
+    }
+
+    // Apply Barras squat (MMG only): bodily sinkage + trim
+    if (useMMG && mmgModel) {
+        float depth = getDepth();
+        float hT_ratio = (depth + draught) / std::max(0.1f, draught);
+        float stwKnots = std::abs(speedThroughWater) / 0.5144f;
+        float squat = (float)mmgModel->computeSquat(stwKnots, hT_ratio);
+        yPos -= squat;
+
+        // Trim: bow-down for full-form (Cb > 0.7), stern-down for fine-form
+        float Cb = (float)mmgModel->getDimensions().blockCoefficient;
+        float L = (float)mmgModel->getDimensions().length;
+        float trimSign = (Cb > 0.7f) ? 1.0f : -1.0f;
+        pitch += trimSign * std::atan2(squat * 0.7f, L * 0.5f) * irr::core::RADTODEG;
     }
 
     // Set position & angles

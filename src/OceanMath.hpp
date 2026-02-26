@@ -67,12 +67,11 @@ namespace OceanMath {
         float nextAmp = (bi < 12) ? BEAUFORT_AMPLITUDE[bi + 1] : BEAUFORT_AMPLITUDE[12];
         p.waveAmplitude = BEAUFORT_AMPLITUDE[bi] + frac * (nextAmp - BEAUFORT_AMPLITUDE[bi]);
 
-        // Choppy scale: lateral displacement multiplier. Higher values create
-        // sharper wave peaks and trigger Jacobian folds (foam/whitecaps).
-        // Starts at 0.5 (original WickedWater baseline), grows to 1.1 at B12.
-        // This produces scattered whitecaps from B4+ without the foam carpet
-        // that occurred at 1.5+.
-        p.choppyScale = std::min(0.5f + beaufort * 0.05f, 1.1f);
+        // Choppy scale: lateral displacement multiplier. Controls Jacobian folds
+        // (foam/whitecaps). Conservative range because the 50m FFT patch creates
+        // repeating grid foam at higher values. Real whitecap detail requires
+        // multi-cascade (Phase 1.1c).
+        p.choppyScale = std::min(0.4f + beaufort * 0.035f, 0.8f);
 
         // Wind speed: use actual wind if given, else estimate from Beaufort
         float windMps;
@@ -84,7 +83,11 @@ namespace OceanMath {
             windMps = approxKts * KTS_TO_MPS;
         }
         p.windSpeedMps = windMps;
-        p.windSpeedCmps = std::max(30.0f, windMps * 100.0f);  // floor at 30 cm/s
+        // WE wind speed for Phillips spectrum. Capped at 1500 cm/s (15 m/s)
+        // so the dominant Phillips wavelength (~23m) fits within the 50m FFT
+        // patch without aliasing into standing waves. Visual wave size at high
+        // Beaufort is still controlled by wave_amplitude above.
+        p.windSpeedCmps = std::max(30.0f, std::min(windMps * 100.0f, 1500.0f));
 
         // Wind direction: meteorological FROM -> wave propagation WITH (+180 deg)
         float windRad = (windDirectionDeg + 180.0f) * PI / 180.0f;

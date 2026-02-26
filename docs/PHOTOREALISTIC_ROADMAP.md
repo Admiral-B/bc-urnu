@@ -27,21 +27,40 @@ Goal: transform Bridge Command into a photorealistic maritime simulator with acc
 
 The ocean is 80% of what the user sees. This is the highest-impact work.
 
+### Phase 1 Status -- BLOCKED on shader work, pivoting to Phase 2
+
+**Completed:**
+- `WickedMultiCascadeOcean` wired into game loop, replacing `WickedWater` (2-line swap in WickedMain.cpp)
+- `OceanMath.hpp` extracted: pure-math Beaufort mapping, JONSWAP/TMA/Phillips spectra, cascade weights (26 tests, 69 assertions)
+- Beaufort-to-ocean parameter mapping with amplitude table, choppy scale, wind direction conversion
+- Water color tuned for North Sea/Atlantic look (dark murky green-grey, reduced reflectivity)
+
+**Key findings from parameter tuning (4 iterations):**
+- WE has a **hard `patch_length=50` limit** -- crashes at other values
+- Single 50m FFT cascade creates **visible tiling every 50m** that no parameter combination can hide
+- Phillips spectrum wind_speed must be **capped at 1500 cm/s** (15 m/s) to prevent aliasing (dominant wavelength must fit in 50m patch)
+- Choppy_scale above ~0.8 creates **repeating grid foam** from tiled Jacobian folds
+- Choppy_scale below ~0.6 produces **no whitecaps at all**
+- There is no sweet spot -- the fundamental issue is the 50m tile repetition
+
+**What's needed to fix ocean (requires WE shader work):**
+1. **JONSWAP H(0) override** (Phase 1.2) -- fork `wiOcean.cpp` H(0) init, replace Phillips with JONSWAP per frequency bin. Changes wave *shape* not just size. Medium effort.
+2. **Normal map overlay** -- bind a large-scale (500m+) tiling normal map to the ocean surface shader, breaking up the 50m repetition. Low-medium effort.
+3. **Multi-cascade shader blending** (Phase 1.1c) -- run auxiliary `wi::Ocean` instances at 50m patch but with different spectrum parameters, blend displacement textures in a custom ocean pixel shader. High effort.
+
 ### 1.1 Multi-Cascade Ocean
 
 Wire `WickedMultiCascadeOcean` into `WickedMain.cpp` game loop, replacing the single `WickedWater` instance.
 
 | Cascade | Patch | FFT | Content |
 |---------|-------|-----|---------|
-| 0 (far) | 1000m | 256x256 | Long-period swells |
+| 0 (far) | 50m | 256x256 | Long-period swells (different spectrum seed) |
 | 1 (mid) | 50m | 512x512 | Wind waves (current system) |
-| 2 (near) | 5m | 256x256 | Capillary ripples, chop |
+| 2 (near) | 50m | 256x256 | Capillary ripples (different spectrum seed) |
 
-**Approach:** Each cascade is a separate `wi::Ocean` instance. The existing WE ocean becomes cascade 1. Cascades 0 and 2 are additional instances with different `OceanParameters`. Displacement textures are additively blended in the ocean surface shader. This eliminates the tiling artifacts visible at medium distances.
+**UPDATED:** All cascades must use 50m patch (WE hard limit). Tiling breakup comes from different spectrum parameters and random seeds per cascade, not different patch sizes. Requires custom ocean pixel shader to sample and blend all 3 displacement/gradient textures.
 
-**Key risk:** WE's `patch_length=50` constraint. Test whether separate `wi::Ocean` instances can use different patch lengths (likely yes since each gets its own FFT buffers). If not, implement cascade 0/2 as custom compute shaders writing to displacement textures that are additively sampled in the existing ocean shader.
-
-**Files:** `WickedMultiCascadeOcean.hpp/cpp`, `WickedWater.cpp`, `WickedMain.cpp`
+**Files:** `WickedMultiCascadeOcean.hpp/cpp`, `WickedMain.cpp`, custom ocean shader (HLSL)
 
 ### 1.2 JONSWAP Spectrum Integration
 
@@ -553,12 +572,12 @@ This ordering maximizes visual impact per unit of effort:
 
 | Priority | Item | Phase | Impact | Effort |
 |----------|------|-------|--------|--------|
-| 1 | Multi-cascade ocean | 1.1 | Huge | Medium |
-| 2 | JONSWAP spectrum | 1.2 | High | Low |
-| 3 | Volumetric atmosphere + sun | 2.1 | Huge | Medium |
-| 4 | Volumetric clouds | 2.2 | High | Medium |
-| 5 | 6-DOF seakeeping | 3.1 | Huge | High |
-| 6 | Foam enhancement | 1.3 | High | Medium |
+| 1 | Volumetric atmosphere + sun | 2.1 | Huge | Medium |
+| 2 | Volumetric clouds | 2.2 | High | Medium |
+| 3 | Volumetric fog | 2.3 | High | Medium |
+| 4 | JONSWAP H(0) override | 1.2 | High | Medium (shader) |
+| 5 | Ocean normal map overlay | 1.1+ | High | Low-Medium (shader) |
+| 6 | Multi-cascade shader blending | 1.1c | Huge | High (shader) |
 | 7 | Volumetric fog | 2.3 | High | Medium |
 | 8 | PBR terrain splatting | 4.1 | High | High |
 | 9 | Kelvin wakes | 1.4 | Medium | Low |
@@ -580,7 +599,7 @@ This ordering maximizes visual impact per unit of effort:
 
 | Risk | Mitigation |
 |------|-----------|
-| WE `patch_length` constraint for multi-cascade | Test separate `wi::Ocean` instances with different patch lengths first. Fallback: custom compute shader. |
+| WE `patch_length` hard limit at 50m | **CONFIRMED.** Crashes at other values. Multi-cascade must use same patch size with different spectrum seeds. Custom shader required to blend. |
 | H(0) spectrum override requires WE source modification | Fork `wiOcean.cpp` H(0) init. Minimal change (replace Phillips call with JONSWAP). |
 | 6-DOF stability with large waves | RK2 at 50Hz should handle wave periods >5s. Add implicit damping if needed. Cap heave/roll/pitch rates. |
 | Multi-swapchain on varied hardware | Test on Intel/NVIDIA/AMD. Fallback to single-framebuffer split via display driver. |

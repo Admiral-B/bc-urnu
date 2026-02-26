@@ -248,9 +248,10 @@ static wi::ecs::Entity createProceduralLighthouse(wi::scene::Scene& scene,
     if (!mesh) return wi::ecs::INVALID_ENTITY;
 
     // Lambda: add a cylinder/cone section with optional top cap
+    int sectionIdx = 0;
     auto addSection = [&](float yBot, float yTop, float rBot, float rTop,
                           float cr, float cg, float cb, float rough, bool cap) {
-        wi::ecs::Entity matEntity = scene.Entity_CreateMaterial(name + "_lh_mat");
+        wi::ecs::Entity matEntity = scene.Entity_CreateMaterial(name + "_lh_mat" + std::to_string(sectionIdx++));
         auto* mat = scene.materials.GetComponent(matEntity);
         if (mat) {
             mat->baseColor = DirectX::XMFLOAT4(cr, cg, cb, 1.0f);
@@ -409,6 +410,89 @@ static wi::ecs::Entity createPlaceholderBox(wi::scene::Scene& scene, const std::
     wi::ecs::Entity entity = scene.Entity_CreateObject(name);
     auto* object = scene.objects.GetComponent(entity);
     if (object) object->meshID = sharedMesh;
+    return entity;
+}
+
+// ===== Emissive light marker: tiny bright mesh visible at distance via bloom =====
+// Each unique RGB color gets a shared octahedron mesh+material. Individual lights
+// create Object instances referencing it, toggled via SetRenderable().
+struct LightMarkerKey {
+    int ri, gi, bi;
+    bool operator==(const LightMarkerKey& o) const { return ri == o.ri && gi == o.gi && bi == o.bi; }
+};
+struct LightMarkerKeyHash {
+    size_t operator()(const LightMarkerKey& k) const {
+        return std::hash<int>()(k.ri * 100000 + k.gi * 1000 + k.bi);
+    }
+};
+static std::unordered_map<LightMarkerKey, wi::ecs::Entity, LightMarkerKeyHash> g_lightMarkerMeshes;
+
+static wi::ecs::Entity getSharedLightMarkerMesh(wi::scene::Scene& scene,
+                                                  float r, float g, float b) {
+    LightMarkerKey key = {(int)(r * 255), (int)(g * 255), (int)(b * 255)};
+    auto it = g_lightMarkerMeshes.find(key);
+    if (it != g_lightMarkerMeshes.end()) return it->second;
+
+    wi::ecs::Entity meshEntity = scene.Entity_CreateMesh("LightMarker_mesh");
+    auto* mesh = scene.meshes.GetComponent(meshEntity);
+    if (!mesh) return wi::ecs::INVALID_ENTITY;
+
+    wi::ecs::Entity matEntity = scene.Entity_CreateMaterial("LightMarker_mat");
+    auto* mat = scene.materials.GetComponent(matEntity);
+    if (mat) {
+        mat->baseColor = DirectX::XMFLOAT4(r * 0.3f, g * 0.3f, b * 0.3f, 1.0f); // tinted base for close-range color
+        mat->emissiveColor = DirectX::XMFLOAT4(r, g, b, 80.0f); // moderate emissive preserves color in bloom
+        mat->roughness = 1.0f;
+        mat->metalness = 0.0f;
+        mat->SetDoubleSided(true);
+        mat->CreateRenderData();
+    }
+
+    // UV sphere: realistic nav light lantern size.
+    // 0.1m radius (20cm diameter); distance-scaled to stay ~1-2 pixels at long range.
+    const float radius = 0.1f;
+    const int stacks = 6, slices = 8;
+    mesh->subsets.push_back(wi::scene::MeshComponent::MeshSubset());
+    mesh->subsets.back().materialID = matEntity;
+    mesh->subsets.back().indexOffset = 0;
+    for (int st = 0; st <= stacks; st++) {
+        float phi = (float)M_PI * (float)st / (float)stacks;
+        float sinP = std::sin(phi), cosP = std::cos(phi);
+        for (int sl = 0; sl <= slices; sl++) {
+            float theta = 2.0f * (float)M_PI * (float)sl / (float)slices;
+            float nx = sinP * std::cos(theta), ny = cosP, nz = sinP * std::sin(theta);
+            mesh->vertex_positions.push_back(DirectX::XMFLOAT3(nx * radius, ny * radius, nz * radius));
+            mesh->vertex_normals.push_back(DirectX::XMFLOAT3(nx, ny, nz));
+            mesh->vertex_uvset_0.push_back(DirectX::XMFLOAT2((float)sl / slices, (float)st / stacks));
+        }
+    }
+    for (int st = 0; st < stacks; st++) {
+        for (int sl = 0; sl < slices; sl++) {
+            int a = st * (slices + 1) + sl;
+            int b = a + slices + 1;
+            mesh->indices.push_back(a); mesh->indices.push_back(b); mesh->indices.push_back(a + 1);
+            mesh->indices.push_back(a + 1); mesh->indices.push_back(b); mesh->indices.push_back(b + 1);
+        }
+    }
+    mesh->subsets.back().indexCount = (uint32_t)mesh->indices.size();
+    mesh->CreateRenderData();
+
+    g_lightMarkerMeshes[key] = meshEntity;
+    return meshEntity;
+}
+
+static wi::ecs::Entity createLightMarker(wi::scene::Scene& scene, const std::string& name,
+                                          float r, float g, float b) {
+    wi::ecs::Entity sharedMesh = getSharedLightMarkerMesh(scene, r, g, b);
+    if (sharedMesh == wi::ecs::INVALID_ENTITY) return wi::ecs::INVALID_ENTITY;
+
+    // Entity_CreateObject already creates transform + layer + object components
+    wi::ecs::Entity entity = scene.Entity_CreateObject(name);
+    auto* obj = scene.objects.GetComponent(entity);
+    if (obj) {
+        obj->meshID = sharedMesh;
+        obj->SetRenderable(false); // start hidden, update loop controls
+    }
     return entity;
 }
 
@@ -1421,17 +1505,19 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     };
     std::vector<BuoyState> buoyStates;
 
-    // Navigation light on another ship (WE emissive point)
+    // Navigation light: WE point light (close-range glow) + emissive marker (long-range dot)
     struct WENavLight {
-        wi::ecs::Entity entity = wi::ecs::INVALID_ENTITY;
-        int shipIndex;           // index into otherShipStates
-        float localX, localY, localZ; // position relative to ship model origin
-        float r, g, b;          // color (0-1)
-        float startAngle, endAngle; // directional arc (degrees)
-        float range;             // visibility range (metres)
+        wi::ecs::Entity entity = wi::ecs::INVALID_ENTITY;       // point light
+        wi::ecs::Entity markerEntity = wi::ecs::INVALID_ENTITY;  // emissive mesh marker
+        int shipIndex = -1;      // index into otherShipStates, -1 for own ship, -2 for fixed/buoy
+        int buoyIndex = -1;      // >= 0: buoyStates index (light attached to buoy)
+        float localX = 0, localY = 0, localZ = 0; // ship-relative pos OR world pos (if fixed)
+        float r = 1, g = 1, b = 1; // color (0-1)
+        float startAngle = 0, endAngle = 360; // directional arc (degrees)
+        float range = 5000;      // visibility range (metres)
         std::string sequence;    // flash pattern ('D' = dark)
-        float charTime;          // seconds per sequence character
-        float timeOffset;        // random phase offset
+        float charTime = 0.25f;  // seconds per sequence character
+        float timeOffset = 0;    // random phase offset
     };
     std::vector<WENavLight> navLights;
 
@@ -1495,14 +1581,35 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     // ===== ATMOSPHERE / WEATHER =====
     scene.weather.SetRealisticSky(true);
     scene.weather.SetVolumetricClouds(true);
+    scene.weather.SetRealisticSkyAerialPerspective(true);
+    scene.weather.SetHeightFog(true);
+    scene.weather.SetVolumetricCloudsCastShadow(true);
+    scene.weather.SetRealisticSkyReceiveShadow(true);
     scene.weather.ambient = DirectX::XMFLOAT3(0.3f, 0.35f, 0.4f);
+    scene.weather.skyExposure = 1.2f;
 
-    // Fog from visibility range
+    // Maritime atmosphere: ocean is dark (~0.06 albedo), more Mie scattering
+    // from sea spray aerosols, and forward-scattering haze near the horizon.
+    auto& atmo = scene.weather.atmosphereParameters;
+    atmo.groundAlbedo = XMFLOAT3(0.06f, 0.08f, 0.10f); // dark ocean, slight blue-green
+    // Baseline maritime Mie: ~2x continental due to sea salt aerosols
+    float beaufortInit = std::max(0.0f, scenarioData.weather);
+    float mieFactor = 1.0f + beaufortInit / 12.0f; // 1.0 at B0, 2.0 at B12
+    float mieBase = 0.006f * mieFactor;
+    atmo.mieScattering = XMFLOAT3(mieBase, mieBase, mieBase);
+    float mieExt = mieBase * 1.11f; // extinction slightly > scattering (absorption)
+    atmo.mieExtinction = XMFLOAT3(mieExt, mieExt, mieExt);
+    float mieAbs = mieExt - mieBase;
+    atmo.mieAbsorption = XMFLOAT3(mieAbs, mieAbs, mieAbs);
+    atmo.aerialPerspectiveScale = 1.5f + beaufortInit * 0.1f; // more haze in rough weather
+
+    // Height fog: maritime sea-level fog, hugs surface
     float visRange = scenarioData.visibilityRange;
     if (visRange <= 0) visRange = 10.0f; // default 10 nm
+    scene.weather.fogHeightStart = 0.0f;  // sea level
+    scene.weather.fogHeightEnd = 30.0f + (10.0f - std::min(visRange, 10.0f)) * 20.0f; // 30-230m
     float fogDistMeters = visRange * 1852.0f; // nm to meters
     scene.weather.fogStart = fogDistMeters * 0.3f;
-    // WE uses fogDensity instead of fogEnd; higher density = thicker fog
     if (visRange < 5.0f) {
         scene.weather.fogDensity = 0.01f / std::max(visRange, 0.1f);
     }
@@ -1511,6 +1618,115 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     // rain_amount > 0, both at init and mid-gameplay. Disabled for now.
     // Rain intensity is still used for cloud darkening and radar clutter.
     scene.weather.rain_amount = 0.0f;
+
+    // ===== VOLUMETRIC CLOUDS =====
+    // Maritime cloud setup. Two drivers for coverage:
+    //   1. Beaufort (wind-driven convective clouds)
+    //   2. Low visibility (overcast stratus -- typical British grey day)
+    // This decouples cloud cover from wind, so B3 + 3nm vis = full overcast.
+    {
+        auto& vc = scene.weather.volumetricCloudParameters;
+
+        // Visibility-driven overcast: vis < 8nm implies cloud cover
+        float visCoverage = std::max(0.0f, 1.0f - visRange / 8.0f); // 1.0 at 0nm, 0 at 8nm
+        float beaufortCoverage = std::min(1.0f, beaufortInit / 8.0f);
+        float overcastFactor = std::max(visCoverage, beaufortCoverage);
+        bool isOvercast = visCoverage > beaufortCoverage; // vis driving clouds, not wind
+
+        // Cloud base: overcast stratus sits low (~300-600m), convective cumulus higher
+        if (isOvercast) {
+            vc.cloudStartHeight = 600.0f - visCoverage * 300.0f; // 600m -> 300m
+            vc.cloudThickness = 1500.0f + visCoverage * 1000.0f; // thin stratus layer
+        } else {
+            vc.cloudStartHeight = 1500.0f - beaufortInit * 75.0f; // 1500m -> 600m
+            vc.cloudThickness = 4000.0f + beaufortInit * 500.0f;  // taller with wind
+        }
+
+        // Phase functions: forward scattering for silver lining effect
+        vc.phaseG = 0.6f;
+        vc.phaseG2 = -0.3f;
+        vc.phaseBlend = 0.3f;
+
+        // Multi-scattering for realistic cloud lighting
+        vc.multiScatteringScattering = 1.0f;
+        vc.multiScatteringExtinction = 0.1f;
+        vc.multiScatteringEccentricity = 0.2f;
+
+        // Ambient ground contribution: higher for overcast (light filters through)
+        vc.ambientGroundMultiplier = isOvercast ? 0.75f : 0.6f;
+
+        // Horizon blending for distant cloud-sky merge
+        vc.horizonBlendAmount = 0.0000125f;
+        vc.horizonBlendPower = 2.0f;
+
+        // Shadow from clouds onto scene
+        vc.shadowStepLength = 3000.0f;
+
+        // Primary cloud layer
+        auto& L1 = vc.layerFirst;
+
+        // Coverage: WE default is 1.0 which gives scattered clouds.
+        // For overcast, we need well above 1.0 plus a high minimum floor
+        // to eliminate clear patches. coverageAmount drives the weather noise
+        // threshold -- higher = more area passes = more cloud fill.
+        if (isOvercast) {
+            L1.coverageAmount = 1.5f + visCoverage * 0.5f;   // 1.5 to 2.0
+            L1.coverageMinimum = 0.5f + visCoverage * 0.3f;  // 0.5 to 0.8 floor
+        } else {
+            L1.coverageAmount = 0.5f + beaufortCoverage * 1.0f; // 0.5 to 1.5
+            L1.coverageMinimum = 0.0f;
+        }
+
+        // Cloud type: overcast = small flat stratus, storm = large cumulonimbus
+        // Only push to large type at B7+, otherwise keep flat
+        if (beaufortInit > 7.0f) {
+            L1.typeAmount = std::min(1.0f, (beaufortInit - 7.0f) / 5.0f);
+        } else {
+            L1.typeAmount = 0.0f; // flat stratus/stratocumulus
+        }
+        L1.typeMinimum = 0.0f;
+
+        // Albedo: overcast stays light grey, only darken in storms (B6+)
+        float stormDarken = std::max(0.0f, (beaufortInit - 6.0f) / 6.0f);
+        float cloudAlbedo = 0.9f - 0.15f * stormDarken;
+        L1.albedo = XMFLOAT3(cloudAlbedo, cloudAlbedo, cloudAlbedo);
+
+        // Extinction: thin for overcast stratus, denser for storm clouds
+        float ext = isOvercast ? 0.05f : (0.071f + 0.03f * stormDarken);
+        L1.extinctionCoefficient = XMFLOAT3(0.71f * ext, 0.86f * ext, 1.0f * ext);
+
+        // Noise scales: overcast needs smoother coverage with fewer gaps
+        if (isOvercast) {
+            L1.totalNoiseScale = 0.0003f;   // smoother uniform sheet
+            L1.weatherScale = 0.000005f;     // reduce large-scale gaps
+        } else {
+            L1.totalNoiseScale = 0.0005f;    // WE-like scattered
+            L1.weatherScale = 0.00002f;      // default
+        }
+        L1.curlScale = 0.3f;
+        L1.curlNoiseHeightFraction = 5.0f;
+        L1.curlNoiseModifier = 500.0f;
+        L1.detailScale = 4.0f;
+        L1.detailNoiseHeightFraction = 10.0f;
+        L1.detailNoiseModifier = isOvercast ? 0.15f : 0.3f; // less detail erosion for overcast
+
+        // Gradients: shape profiles for cloud types
+        // Small: flat fair-weather cumulus
+        L1.gradientSmall = XMFLOAT4(0.01f, 0.1f, 0.11f, 0.2f);
+        // Medium: standard cumulus
+        L1.gradientMedium = XMFLOAT4(0.01f, 0.08f, 0.3f, 0.4f);
+        // Large: towering cumulus / cumulonimbus
+        L1.gradientLarge = XMFLOAT4(0.01f, 0.06f, 0.75f, 0.95f);
+
+        // Anvil deformation for cumulonimbus tops
+        L1.anvilDeformationSmall = XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f);
+        L1.anvilDeformationMedium = XMFLOAT4(15.0f, 0.1f, 15.0f, 0.1f);
+        L1.anvilDeformationLarge = XMFLOAT4(5.0f, 0.25f, 5.0f, 0.15f);
+
+        // Wind animation
+        L1.skewAlongWindDirection = 700.0f;
+        L1.skewAlongCoverageWindDirection = 2500.0f;
+    }
 
     // ===== OCEAN =====
     weLog("  Setting up ocean...");
@@ -1902,6 +2118,85 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                   " zoom=" + std::to_string(mapZoom));
             }
         }
+
+        // Load own ship navigation lights from boat.ini
+        {
+            // Try ownship boat.ini first, then fall back to Othership boat.ini
+            std::string lightIni = boatIni;
+            uint32_t numLights = IniFile::iniFileTou32(lightIni, "NumberOfLights");
+            if (numLights == 0) {
+                std::string otherPath = resolveModelPath("Models/Othership/" + shipName + "/",
+                                                          userFolder, "");
+                std::string otherBoatIni = otherPath + "boat.ini";
+                uint32_t otherLights = IniFile::iniFileTou32(otherBoatIni, "NumberOfLights");
+                if (otherLights > 0) {
+                    lightIni = otherBoatIni;
+                    numLights = otherLights;
+                    weLog("  Own ship: using Othership light defs (" + std::to_string(numLights) + ")");
+                }
+            }
+
+            // Helper lambda to create a nav light entity and push to navLights
+            auto addOwnLight = [&](float lx, float ly, float lz,
+                                   float r, float g, float b,
+                                   float sa, float ea, float rangeNM,
+                                   const std::string& seq, float tOff, int idx) {
+                WENavLight nlt;
+                nlt.shipIndex = -1;
+                nlt.localX = lx; nlt.localY = ly; nlt.localZ = lz;
+                nlt.r = r; nlt.g = g; nlt.b = b;
+                nlt.startAngle = sa; nlt.endAngle = ea;
+                while (nlt.startAngle < 0) { nlt.startAngle += 360; nlt.endAngle += 360; }
+                nlt.range = rangeNM * (float)M_IN_NM;
+                nlt.sequence = seq;
+                nlt.charTime = 0.25f;
+                nlt.timeOffset = tOff;
+                std::string lightName = "OwnNavLight_" + std::to_string(idx);
+                nlt.entity = scene.Entity_CreateLight(lightName);
+                auto* lc = scene.lights.GetComponent(nlt.entity);
+                if (lc) {
+                    lc->SetType(wi::scene::LightComponent::POINT);
+                    lc->color = DirectX::XMFLOAT3(r, g, b);
+                    lc->intensity = 0.0f;
+                    lc->range = 500.0f;
+                    lc->SetCastShadow(false);
+                    lc->SetVolumetricsEnabled(true);
+                }
+                nlt.markerEntity = createLightMarker(scene, lightName + "_mk", r, g, b);
+                navLights.push_back(nlt);
+            };
+
+            if (numLights > 0) {
+                for (uint32_t nl = 1; nl <= numLights; nl++) {
+                    float lx = IniFile::iniFileTof32(lightIni, IniFile::enumerate1("LightX", nl));
+                    float ly = IniFile::iniFileTof32(lightIni, IniFile::enumerate1("LightY", nl));
+                    float lz = IniFile::iniFileTof32(lightIni, IniFile::enumerate1("LightZ", nl));
+                    float lr = IniFile::iniFileTof32(lightIni, IniFile::enumerate1("LightRed", nl)) / 255.0f;
+                    float lg = IniFile::iniFileTof32(lightIni, IniFile::enumerate1("LightGreen", nl)) / 255.0f;
+                    float lb = IniFile::iniFileTof32(lightIni, IniFile::enumerate1("LightBlue", nl)) / 255.0f;
+                    float sa = IniFile::iniFileTof32(lightIni, IniFile::enumerate1("LightStartAngle", nl));
+                    float ea = IniFile::iniFileTof32(lightIni, IniFile::enumerate1("LightEndAngle", nl));
+                    float rng = IniFile::iniFileTof32(lightIni, IniFile::enumerate1("LightRange", nl));
+                    std::string seq = IniFile::iniFileToString(lightIni, IniFile::enumerate1("Sequence", nl));
+                    uint32_t ps = IniFile::iniFileTou32(lightIni, IniFile::enumerate1("PhaseStart", nl));
+                    float tOff = (ps == 0) ? (60.0f * ((float)rand() / RAND_MAX)) : ((ps - 1) * 0.25f);
+                    addOwnLight(lx, ly, lz, lr, lg, lb, sa, ea, rng, seq, tOff, (int)nl);
+                }
+                weLog("  Own ship: " + std::to_string(numLights) + " nav lights");
+            } else if (viewLocalY > 0) {
+                // Generate default COLREG lights from bridge view position
+                float vy = viewLocalY, vz = viewLocalZ;
+                if (vz < 1.0f) vz = vy; // fallback if no Z view data
+                //                     X              Y          Z      R G B  StartAngle EndAngle Range
+                addOwnLight( vy*0.3f,  vy*0.95f, vz*0.7f,  0,1,0, 359,112.5f, 3, "", 0, 1); // green stbd
+                addOwnLight(-vy*0.3f,  vy*0.95f, vz*0.7f,  1,0,0, 247.5f,361, 3, "", 0, 2); // red port
+                addOwnLight( 0,        vy*1.3f,  vz*0.8f,  1,1,1, 247.5f,472.5f, 5, "", 0, 3); // masthead fwd
+                addOwnLight( 0,        vy*0.5f, -vz*0.8f,  1,1,1, 112.5f,247.5f, 3, "", 0, 4); // stern
+                addOwnLight( 0,        vy*1.2f,  vz,       1,1,1, 247.5f,472.5f, 5, "", 0, 5); // masthead aft
+                weLog("  Own ship: generated 5 default COLREG nav lights (viewY=" +
+                      std::to_string(vy) + " viewZ=" + std::to_string(vz) + ")");
+            }
+        }
     }
 
     // ===== OTHER SHIPS =====
@@ -1990,10 +2285,12 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             if (lightComp) {
                 lightComp->SetType(wi::scene::LightComponent::POINT);
                 lightComp->color = DirectX::XMFLOAT3(lightR, lightG, lightB);
-                lightComp->intensity = 5.0f;
-                lightComp->range = 50.0f; // visual glow radius in WE units
+                lightComp->intensity = 0.0f; // update loop controls
+                lightComp->range = 500.0f;
                 lightComp->SetCastShadow(false);
+                lightComp->SetVolumetricsEnabled(true);
             }
+            nlt.markerEntity = createLightMarker(scene, lightName + "_mk", lightR, lightG, lightB);
 
             navLights.push_back(nlt);
         }
@@ -2100,6 +2397,178 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             setEntityTransform(scene, loEntity, ox, objY, oz, rotation, loScale);
         }
         weLog("  Loaded " + std::to_string(numLandObjs) + " land objects");
+    }
+
+    // ===== BUOY & LAND LIGHTS (from light.ini) =====
+    pumpMessages();
+    weLog("  Setting up navigation lights from light.ini...");
+    {
+        std::string lightIniFile = worldPath + "light.ini";
+        if (Utilities::pathExists(lightIniFile)) {
+            uint32_t numSceneLights = IniFile::iniFileTou32(lightIniFile, "Number");
+            weLog("  Found " + std::to_string(numSceneLights) + " lights in light.ini");
+            int createdCount = 0;
+
+            for (uint32_t li = 1; li <= numSceneLights; li++) {
+                uint32_t buoyRef = IniFile::iniFileTou32(lightIniFile, IniFile::enumerate1("Buoy", li));
+                float lightR = IniFile::iniFileTof32(lightIniFile, IniFile::enumerate1("Red", li)) / 255.0f;
+                float lightG = IniFile::iniFileTof32(lightIniFile, IniFile::enumerate1("Green", li)) / 255.0f;
+                float lightB = IniFile::iniFileTof32(lightIniFile, IniFile::enumerate1("Blue", li)) / 255.0f;
+                float lightRange = IniFile::iniFileTof32(lightIniFile, IniFile::enumerate1("Range", li));
+                if (lightRange <= 0) lightRange = 5.0f;
+                float lightHeight = IniFile::iniFileTof32(lightIniFile, IniFile::enumerate1("Height", li));
+                if (lightHeight <= 0) lightHeight = 5.0f;
+                uint32_t absolute = IniFile::iniFileTou32(lightIniFile, IniFile::enumerate1("Absolute", li));
+                float startAngle = IniFile::iniFileTof32(lightIniFile, IniFile::enumerate1("StartAngle", li));
+                float endAngle = IniFile::iniFileTof32(lightIniFile, IniFile::enumerate1("EndAngle", li));
+                if (startAngle == 0 && endAngle == 0) endAngle = 360.0f;
+                std::string sequence = IniFile::iniFileToString(lightIniFile, IniFile::enumerate1("Sequence", li));
+                uint32_t phaseStart = IniFile::iniFileTou32(lightIniFile, IniFile::enumerate1("PhaseStart", li));
+                if (phaseStart < 1) phaseStart = 1;
+
+                WENavLight nlt;
+                nlt.r = lightR;
+                nlt.g = lightG;
+                nlt.b = lightB;
+                nlt.startAngle = startAngle;
+                nlt.endAngle = endAngle;
+                nlt.range = lightRange * 1852.0f; // nm to metres
+                nlt.sequence = sequence;
+                nlt.charTime = 0.25f; // standard quarter-second per character
+                nlt.timeOffset = (float)(phaseStart - 1) * nlt.charTime;
+
+                if (buoyRef > 0 && buoyRef <= (uint32_t)buoyStates.size()) {
+                    // Buoy-attached light: position resolved per-frame from buoyStates
+                    nlt.shipIndex = -2;
+                    nlt.buoyIndex = (int)(buoyRef - 1); // light.ini is 1-based
+                    nlt.localY = lightHeight; // height above buoy base
+                } else {
+                    // Fixed land light (lighthouse, shore mark, etc.)
+                    float lLon = IniFile::iniFileTof32(lightIniFile, IniFile::enumerate1("Long", li));
+                    float lLat = IniFile::iniFileTof32(lightIniFile, IniFile::enumerate1("Lat", li));
+                    if (lLon == 0 && lLat == 0 && buoyRef > 0) continue; // invalid buoy ref, skip
+
+                    float lx = coords.longToX(lLon);
+                    float lz = coords.latToZ(lLat);
+                    float ly = lightHeight;
+                    if (absolute == 0 && terrainNode) {
+                        ly += terrainNode->getHeightAt(lx, lz) + terrainNode->getPosition().y;
+                    } else if (absolute == 2 && terrainNode) {
+                        ly += std::max(0.0f, terrainNode->getHeightAt(lx, lz) + terrainNode->getPosition().y);
+                    }
+                    // absolute == 1: ly = lightHeight (absolute above sea level)
+
+                    nlt.shipIndex = -2;
+                    nlt.buoyIndex = -1;
+                    nlt.localX = lx;  // world X (repurposed for fixed lights)
+                    nlt.localY = ly;  // world Y
+                    nlt.localZ = lz;  // world Z
+                }
+
+                // Create WE point light entity
+                std::string lightName = "SceneLight_" + std::to_string(li);
+                nlt.entity = scene.Entity_CreateLight(lightName);
+                auto* lightComp = scene.lights.GetComponent(nlt.entity);
+                if (lightComp) {
+                    lightComp->SetType(wi::scene::LightComponent::POINT);
+                    lightComp->color = XMFLOAT3(nlt.r, nlt.g, nlt.b);
+                    lightComp->intensity = 0.0f;
+                    lightComp->range = 500.0f;
+                    lightComp->SetCastShadow(false);
+                    lightComp->SetVolumetricsEnabled(true);
+                }
+                nlt.markerEntity = createLightMarker(scene, lightName + "_mk", nlt.r, nlt.g, nlt.b);
+
+                navLights.push_back(nlt);
+                createdCount++;
+
+                weLog("    Light " + std::to_string(li) + ": pos=(" +
+                      std::to_string(nlt.localX) + "," + std::to_string(nlt.localY) + "," +
+                      std::to_string(nlt.localZ) + ") arc=" + std::to_string(nlt.startAngle) +
+                      "-" + std::to_string(nlt.endAngle) + " rgb=(" +
+                      std::to_string(nlt.r) + "," + std::to_string(nlt.g) + "," +
+                      std::to_string(nlt.b) + ") buoy=" + std::to_string(nlt.buoyIndex));
+            }
+            weLog("  Created " + std::to_string(createdCount) + " scene lights (buoy + land)");
+        }
+    }
+
+    // ===== AUTO-GENERATE BUOY LIGHTS (for buoys without light.ini entries) =====
+    {
+        // Find which buoys already have lights from light.ini
+        std::vector<bool> buoyHasLight(buoyStates.size(), false);
+        for (const auto& nlt : navLights) {
+            if (nlt.buoyIndex >= 0 && nlt.buoyIndex < (int)buoyHasLight.size())
+                buoyHasLight[nlt.buoyIndex] = true;
+        }
+        int autoLightCount = 0;
+        for (uint32_t b = 0; b < buoyStates.size(); b++) {
+            if (buoyHasLight[b]) continue;
+            std::string buoyIniFile = worldPath + "buoy.ini";
+            std::string colours = IniFile::iniFileToString(buoyIniFile, IniFile::enumerate1("Colours", b + 1));
+            std::string colourPattern = IniFile::iniFileToString(buoyIniFile, IniFile::enumerate1("ColourPattern", b + 1));
+            if (colours.empty()) continue; // no colour info, skip
+
+            // Determine light colour and sequence from buoy colours
+            float lr = 1, lg = 1, lb = 1;
+            std::string seq = "LLLLDDDDDDDDDDDD"; // default Fl 4s
+            bool isCardinal = false;
+
+            if (colours.find("green") != std::string::npos && colours.find("red") == std::string::npos) {
+                lr = 0; lg = 1; lb = 0; // green
+            } else if (colours.find("red") != std::string::npos && colours.find("green") == std::string::npos) {
+                lr = 1; lg = 0; lb = 0; // red
+            } else if (colourPattern == "horizontal" &&
+                       (colours.find("yellow") != std::string::npos || colours.find("black") != std::string::npos)) {
+                // Cardinal mark: white light with Q or VQ pattern
+                lr = 1; lg = 1; lb = 1;
+                isCardinal = true;
+                // Determine cardinal direction from colour pattern
+                if (colours.find("black;yellow") == 0) {
+                    // North cardinal: black over yellow → Q continuous
+                    seq = "LDLDLDLDLDLDLDLD";
+                } else if (colours.find("yellow;black;yellow") == 0) {
+                    // West cardinal: yellow/black/yellow → VQ(9) 10s
+                    seq = "LDLDLDLDLDLDLDLDLDDDDDDDDDDDDDDDDDDDDD";
+                } else if (colours.find("yellow;black") == 0) {
+                    // South cardinal: yellow over black → VQ(6)+LFl 10s
+                    seq = "LDLDLDLDLDLDDDDDDDDDLLLLLLDDDDDDDDDDDD";
+                } else if (colours.find("black;yellow;black") == 0) {
+                    // East cardinal: black/yellow/black → VQ(3) 5s
+                    seq = "LDLDLDDDDDDDDDDDDDDD";
+                } else {
+                    seq = "LDLDLDLDLDLDLDLD"; // default Q
+                }
+            }
+
+            WENavLight nlt;
+            nlt.shipIndex = -2;
+            nlt.buoyIndex = (int)b;
+            nlt.localY = 3.0f; // light 3m above buoy base
+            nlt.r = lr; nlt.g = lg; nlt.b = lb;
+            nlt.startAngle = 0; nlt.endAngle = 360; // all-round
+            nlt.range = (isCardinal ? 5.0f : 3.0f) * 1852.0f; // 3-5 nm
+            nlt.sequence = seq;
+            nlt.charTime = 0.25f;
+            nlt.timeOffset = (float)(b % 20) * 0.25f; // stagger phase
+
+            std::string lightName = "BuoyAutoLight_" + std::to_string(b);
+            nlt.entity = scene.Entity_CreateLight(lightName);
+            auto* lightComp = scene.lights.GetComponent(nlt.entity);
+            if (lightComp) {
+                lightComp->SetType(wi::scene::LightComponent::POINT);
+                lightComp->color = XMFLOAT3(lr, lg, lb);
+                lightComp->intensity = 0.0f;
+                lightComp->range = 500.0f;
+                lightComp->SetCastShadow(false);
+                lightComp->SetVolumetricsEnabled(true);
+            }
+            nlt.markerEntity = createLightMarker(scene, lightName + "_mk", lr, lg, lb);
+            navLights.push_back(nlt);
+            autoLightCount++;
+        }
+        if (autoLightCount > 0)
+            weLog("  Auto-generated " + std::to_string(autoLightCount) + " buoy lights");
     }
 
     // ===== OSM BUILDINGS (procedural or pre-baked) =====
@@ -2654,17 +3123,81 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                     0.05f + 0.25f * ll, 0.05f + 0.30f * ll, 0.08f + 0.32f * ll);
                 scene.weather.stars = std::max(0.0f, 1.0f - ll * 2.0f);
 
+                // --- Dynamic atmosphere: Mie scattering scales with Beaufort ---
+                // More sea spray and aerosols in rough weather = more haze
+                {
+                    auto& atmo = scene.weather.atmosphereParameters;
+                    float mieFactor = 1.0f + beaufortScale / 12.0f;
+                    float mieBase = 0.006f * mieFactor;
+                    atmo.mieScattering = XMFLOAT3(mieBase, mieBase, mieBase);
+                    float mieExt = mieBase * 1.11f;
+                    atmo.mieExtinction = XMFLOAT3(mieExt, mieExt, mieExt);
+                    float mieAbs = mieExt - mieBase;
+                    atmo.mieAbsorption = XMFLOAT3(mieAbs, mieAbs, mieAbs);
+                    atmo.aerialPerspectiveScale = 1.5f + beaufortScale * 0.1f;
+                }
+
                 // --- Rain: disabled (WE bug: rain emitter particle buffer creation
                 // crashes with SEH 0xC0000005 on descriptor index -1). ---
                 // Rain value still drives cloud appearance below.
                 float rain = SimBridge::getRain(); // 0-10
 
-                // --- Cloud coverage from Beaufort ---
-                float cloudCoverage = std::min(1.0f, beaufortScale / 8.0f);
-                scene.weather.volumetricCloudParameters.layerFirst.coverageAmount =
-                    0.3f + 0.7f * cloudCoverage;
-                scene.weather.volumetricCloudParameters.layerFirst.rainAmount =
-                    std::min(rain / 10.0f, 1.0f);
+                // --- Visibility (needed by both clouds and fog) ---
+                float vis = SimBridge::getVisibility(); // nautical miles
+                if (vis <= 0) vis = 10.0f;
+
+                // --- Dynamic clouds from Beaufort + visibility ---
+                {
+                    auto& vc = scene.weather.volumetricCloudParameters;
+                    auto& L1 = vc.layerFirst;
+
+                    // Two drivers: wind (Beaufort) and visibility (overcast)
+                    float visCoverage = std::max(0.0f, 1.0f - vis / 8.0f);
+                    float beaufortCoverage = std::min(1.0f, beaufortScale / 8.0f);
+                    float overcastFactor = std::max(visCoverage, beaufortCoverage);
+                    bool isOvercast = visCoverage > beaufortCoverage;
+
+                    // Cloud base and thickness
+                    if (isOvercast) {
+                        vc.cloudStartHeight = 600.0f - visCoverage * 300.0f;
+                        vc.cloudThickness = 1500.0f + visCoverage * 1000.0f;
+                    } else {
+                        vc.cloudStartHeight = 1500.0f - beaufortScale * 75.0f;
+                        vc.cloudThickness = 4000.0f + beaufortScale * 500.0f;
+                    }
+
+                    // Coverage: overcast needs values well above WE default (1.0)
+                    if (isOvercast) {
+                        L1.coverageAmount = 1.5f + visCoverage * 0.5f;
+                        L1.coverageMinimum = 0.5f + visCoverage * 0.3f;
+                        L1.totalNoiseScale = 0.0003f;
+                        L1.weatherScale = 0.000005f;
+                        L1.detailNoiseModifier = 0.15f;
+                    } else {
+                        L1.coverageAmount = 0.5f + beaufortCoverage * 1.0f;
+                        L1.coverageMinimum = 0.0f;
+                        L1.totalNoiseScale = 0.0005f;
+                        L1.weatherScale = 0.00002f;
+                        L1.detailNoiseModifier = 0.3f;
+                    }
+                    L1.rainAmount = std::min(rain / 10.0f, 1.0f);
+
+                    // Cloud type: flat stratus unless B7+ storms
+                    if (beaufortScale > 7.0f) {
+                        L1.typeAmount = std::min(1.0f, (beaufortScale - 7.0f) / 5.0f);
+                    } else {
+                        L1.typeAmount = 0.0f;
+                    }
+
+                    // Darken only in storms, overcast stays light grey
+                    float stormDarken = std::max(0.0f, (beaufortScale - 6.0f) / 6.0f);
+                    float cloudAlbedo = 0.9f - 0.15f * stormDarken;
+                    L1.albedo = XMFLOAT3(cloudAlbedo, cloudAlbedo, cloudAlbedo);
+                    float ext = isOvercast ? 0.05f : (0.071f + 0.03f * stormDarken);
+                    L1.extinctionCoefficient = XMFLOAT3(0.71f * ext, 0.86f * ext, 1.0f * ext);
+
+                    vc.ambientGroundMultiplier = isOvercast ? 0.75f : 0.6f;
+                }
 
                 // --- Wind drives clouds & atmosphere ---
                 float windDir = SimBridge::getWindDirection(); // degrees FROM
@@ -2681,12 +3214,12 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 scene.weather.volumetricCloudParameters.layerFirst.coverageWindAngle = windRad;
                 scene.weather.volumetricCloudParameters.layerFirst.coverageWindSpeed = 20.0f + windMps * 3.0f;
 
-                // --- Dynamic fog ---
-                float vis = SimBridge::getVisibility(); // nautical miles
-                if (vis <= 0) vis = 10.0f;
+                // --- Dynamic fog with height fog ---
                 float fogDist = vis * 1852.0f;
                 scene.weather.fogStart = fogDist * 0.3f;
                 scene.weather.fogDensity = (vis < 5.0f) ? (0.01f / std::max(vis, 0.1f)) : 0.0f;
+                scene.weather.fogHeightStart = 0.0f;
+                scene.weather.fogHeightEnd = 30.0f + (10.0f - std::min(vis, 10.0f)) * 20.0f;
 
                 // --- Dynamic ocean (wave height, chop, wind direction, foam) ---
                 if (frameCount > 5) {
@@ -2750,7 +3283,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 }
             }
 
-            // ===== NAVIGATION LIGHTS (on other ships) =====
+            // ===== NAVIGATION LIGHTS (own ship, other ships, buoys, land) =====
             {
                 float scenarioTime = SimBridge::getTimeDelta();
                 uint32_t lightLevel = SimBridge::getLightLevel();
@@ -2758,62 +3291,108 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
 
                 for (auto& nlt : navLights) {
                     if (nlt.entity == wi::ecs::INVALID_ENTITY) continue;
-                    if (nlt.shipIndex < 0 || nlt.shipIndex >= (int)otherShipStates.size()) continue;
 
-                    const auto& ship = otherShipStates[nlt.shipIndex];
-                    float sf = ship.scaleFactor;
-                    float headRad = ship.heading * (float)M_PI / 180.0f;
-                    float cosH = std::cos(headRad), sinH = std::sin(headRad);
+                    float wx, wy, wz;
+                    float bearingRef = 0; // heading for sector checks (0 = true north for buoy/land)
 
-                    // Transform local light position to world space
-                    float wx = ship.x + (nlt.localX * cosH + nlt.localZ * sinH) * sf;
-                    float wy = ship.heightCorr + nlt.localY * sf;
-                    float wz = ship.z + (-nlt.localX * sinH + nlt.localZ * cosH) * sf;
+                    if (nlt.buoyIndex >= 0 && nlt.buoyIndex < (int)buoyStates.size()) {
+                        // Buoy-attached light: get buoy position + height offset
+                        wx = SimBridge::getBuoyPosX(nlt.buoyIndex);
+                        wz = SimBridge::getBuoyPosZ(nlt.buoyIndex);
+                        wy = buoyStates[nlt.buoyIndex].heightCorr + nlt.localY;
+                        bearingRef = 0; // sectors relative to true north
+                    } else if (nlt.shipIndex == -2) {
+                        // Fixed land light: world coords stored in localX/Y/Z
+                        wx = nlt.localX;
+                        wy = nlt.localY;
+                        wz = nlt.localZ;
+                        bearingRef = 0; // sectors relative to true north
+                    } else if (nlt.shipIndex == -1) {
+                        // Own ship
+                        float headRad = ownShipHeading * (float)M_PI / 180.0f;
+                        float cosH = std::cos(headRad), sinH = std::sin(headRad);
+                        wx = ownShipX + (nlt.localX * cosH + nlt.localZ * sinH) * ownShipScaleFactor;
+                        wy = ownShipHeightCorr + nlt.localY * ownShipScaleFactor;
+                        wz = ownShipZ + (-nlt.localX * sinH + nlt.localZ * cosH) * ownShipScaleFactor;
+                        bearingRef = ownShipHeading;
+                    } else {
+                        // Other ship
+                        if (nlt.shipIndex >= (int)otherShipStates.size()) continue;
+                        const auto& ship = otherShipStates[nlt.shipIndex];
+                        float headRad = ship.heading * (float)M_PI / 180.0f;
+                        float cosH = std::cos(headRad), sinH = std::sin(headRad);
+                        wx = ship.x + (nlt.localX * cosH + nlt.localZ * sinH) * ship.scaleFactor;
+                        wy = ship.heightCorr + nlt.localY * ship.scaleFactor;
+                        wz = ship.z + (-nlt.localX * sinH + nlt.localZ * cosH) * ship.scaleFactor;
+                        bearingRef = ship.heading;
+                    }
 
-                    // Check visibility: range
+                    // Distance and basic night check
                     float dx = wx - camPosX, dz = wz - camPosZ, dy = wy - camPosY;
                     float dist = std::sqrt(dx*dx + dy*dy + dz*dz);
-                    bool visible = (dist <= nlt.range) && (lightAlpha > 0.05f);
+                    bool inRange = (dist <= nlt.range) && (lightAlpha > 0.05f);
 
-                    // Check visibility: directional arc
-                    if (visible) {
-                        // Angle from light to camera in world coords
-                        float angleToCamera = std::atan2(dx, dz) * 180.0f / (float)M_PI; // degrees
-                        // Convert to angle relative to ship heading
-                        float localAngle = angleToCamera - ship.heading;
-                        // Normalize to 0-360
+                    // Arc visibility (for marker dot -- can the observer SEE the light source?)
+                    bool arcVisible = true;
+                    if (inRange && !(nlt.startAngle == 0 && nlt.endAngle == 360)) {
+                        // Bearing FROM light TO observer (compass: 0=N, 90=E)
+                        float angleToCamera = std::atan2(-dx, -dz) * 180.0f / (float)M_PI;
+                        float localAngle = angleToCamera - bearingRef;
                         while (localAngle < 0) localAngle += 360;
                         while (localAngle >= 360) localAngle -= 360;
-                        // Check if within arc
                         float sa = nlt.startAngle, ea = nlt.endAngle;
-                        while (sa < 0) { sa += 360; ea += 360; }
-                        while (sa >= 360) { sa -= 360; ea -= 360; }
-                        if (ea <= 360) {
-                            visible = (localAngle >= sa && localAngle <= ea);
+                        while (sa < 0) sa += 360;
+                        while (sa >= 360) sa -= 360;
+                        while (ea < 0) ea += 360;
+                        while (ea >= 360) ea -= 360;
+                        if (sa == ea) {
+                            arcVisible = false;
+                        } else if (sa < ea) {
+                            arcVisible = (localAngle >= sa && localAngle <= ea);
                         } else {
-                            float normEnd = ea;
-                            while (normEnd >= 360) normEnd -= 360;
-                            visible = (localAngle >= sa || localAngle <= normEnd);
+                            arcVisible = (localAngle >= sa || localAngle <= ea);
                         }
                     }
 
-                    // Check visibility: flash sequence
-                    if (visible && !nlt.sequence.empty()) {
+                    // Flash sequence check
+                    bool flashOn = true;
+                    if (!nlt.sequence.empty()) {
                         size_t seqLen = nlt.sequence.length();
                         float timeInSeq = std::fmod((scenarioTime + nlt.timeOffset) / nlt.charTime, (float)seqLen);
                         size_t pos = (size_t)timeInSeq;
                         if (pos >= seqLen) pos = seqLen - 1;
                         if (nlt.sequence[pos] == 'D' || nlt.sequence[pos] == 'd')
-                            visible = false;
+                            flashOn = false;
+                    }
+
+                    // Marker visible = in range + correct arc + flash on
+                    bool markerVisible = inRange && arcVisible && flashOn;
+
+                    // Point light: own ship lights always illuminate the hull (glow on bow)
+                    // regardless of arc -- you see red/green glow on your own ship from the bridge.
+                    // Other ships/buoys/land: respect arc check.
+                    bool pointLightOn = inRange && flashOn;
+                    if (nlt.shipIndex != -1) {
+                        // Not own ship: gate by arc too
+                        pointLightOn = pointLightOn && arcVisible;
                     }
 
                     // Position the point light
                     setEntityTransform(scene, nlt.entity, wx, wy, wz);
 
-                    // Control intensity: bright at night, off during day
                     auto* lightComp = scene.lights.GetComponent(nlt.entity);
                     if (lightComp) {
-                        lightComp->intensity = visible ? (lightAlpha * 8.0f) : 0.0f;
+                        lightComp->intensity = pointLightOn ? (lightAlpha * 3000.0f) : 0.0f;
+                    }
+
+                    // Emissive marker: ~1-2 pixels at any distance, color-preserving bloom
+                    if (nlt.markerEntity != wi::ecs::INVALID_ENTITY) {
+                        float markerScale = std::max(1.0f, dist * 0.002f);
+                        setEntityTransform(scene, nlt.markerEntity, wx, wy, wz, 0, markerScale);
+                        auto* markerObj = scene.objects.GetComponent(nlt.markerEntity);
+                        if (markerObj) {
+                            markerObj->SetRenderable(markerVisible);
+                        }
                     }
                 }
             }

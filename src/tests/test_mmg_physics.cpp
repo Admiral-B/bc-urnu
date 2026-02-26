@@ -923,7 +923,7 @@ TEST_CASE("Default PhysicsInput has deep water and no banks", "[mmg]") {
 }
 
 TEST_CASE("Existing deep-water tests unaffected by new inputs", "[mmg]") {
-    // Verify that the new PhysicsInput fields (waterDepth, bank, wind)
+    // Verify that the new PhysicsInput fields (waterDepth, bank, wind, current)
     // with default values don't change deep-water behavior
     auto model = createSmallVessel();
     PhysicsState state;
@@ -936,4 +936,137 @@ TEST_CASE("Existing deep-water tests unaffected by new inputs", "[mmg]") {
     REQUIRE(state.surge > 0.5);
     REQUIRE(fabs(state.sway) < 0.5);
     REQUIRE(state.posZ > 10.0);
+}
+
+// ── Barras squat tests ──────────────────────────────────────────────────────
+
+TEST_CASE("Squat is zero in deep water", "[mmg][squat]") {
+    auto model = createKVLCC2();
+    REQUIRE(model.computeSquat(10.0, 5.0) == Approx(0.0));
+    REQUIRE(model.computeSquat(15.0, 10.0) == Approx(0.0));
+}
+
+TEST_CASE("Squat is zero at low speed", "[mmg][squat]") {
+    auto model = createKVLCC2();
+    REQUIRE(model.computeSquat(0.3, 1.5) == Approx(0.0));
+    REQUIRE(model.computeSquat(0.0, 2.0) == Approx(0.0));
+}
+
+TEST_CASE("Squat increases with speed", "[mmg][squat]") {
+    auto model = createKVLCC2();
+    double hT = 2.0; // moderate shallow water
+    double s5 = model.computeSquat(5.0, hT);
+    double s10 = model.computeSquat(10.0, hT);
+    double s15 = model.computeSquat(15.0, hT);
+
+    REQUIRE(s5 > 0.0);
+    REQUIRE(s10 > s5);
+    REQUIRE(s15 > s10);
+}
+
+TEST_CASE("Squat increases in shallower water", "[mmg][squat]") {
+    auto model = createKVLCC2();
+    double speed = 10.0; // knots
+    double s_deep = model.computeSquat(speed, 3.5);
+    double s_mid = model.computeSquat(speed, 2.0);
+    double s_shallow = model.computeSquat(speed, 1.2);
+
+    REQUIRE(s_shallow > s_mid);
+    REQUIRE(s_mid > s_deep);
+}
+
+TEST_CASE("Squat scales with block coefficient", "[mmg][squat]") {
+    // Full-form tanker (Cb=0.81) squats more than fine-form ferry (Cb=0.55)
+    ShipDimensions tanker;
+    tanker.blockCoefficient = 0.81;
+    MMGPhysicsModel tankerModel(tanker);
+
+    ShipDimensions ferry;
+    ferry.blockCoefficient = 0.55;
+    MMGPhysicsModel ferryModel(ferry);
+
+    REQUIRE(tankerModel.computeSquat(10.0, 2.0) > ferryModel.computeSquat(10.0, 2.0));
+}
+
+TEST_CASE("Squat is physically reasonable magnitude", "[mmg][squat]") {
+    // KVLCC2 at 10 knots in h/T=2.0 should be roughly 0.5-2.0m
+    auto model = createKVLCC2();
+    double squat = model.computeSquat(10.0, 2.0);
+    REQUIRE(squat > 0.3);
+    REQUIRE(squat < 3.0);
+}
+
+// ── Tidal current force tests ───────────────────────────────────────────────
+
+TEST_CASE("Following current reduces drag", "[mmg][current]") {
+    auto model = createSmallVessel();
+    PhysicsInput input;
+    input.portEngine = 0.5;
+
+    // No current
+    PhysicsState stateNoCurrent;
+    stateNoCurrent = simulate(model, input, stateNoCurrent, 120.0);
+
+    // 1 m/s following current (same direction as ship travel)
+    PhysicsState stateCurrent;
+    PhysicsInput inputCurrent = input;
+    inputCurrent.currentSurge = 1.0; // current flowing in surge direction
+    stateCurrent = simulate(model, inputCurrent, stateCurrent, 120.0);
+
+    // With following current, ship reaches higher speed over ground
+    REQUIRE(stateCurrent.surge > stateNoCurrent.surge);
+}
+
+TEST_CASE("Head current increases drag", "[mmg][current]") {
+    auto model = createSmallVessel();
+    PhysicsInput input;
+    input.portEngine = 0.5;
+
+    // No current
+    PhysicsState stateNoCurrent;
+    stateNoCurrent = simulate(model, input, stateNoCurrent, 120.0);
+
+    // 1 m/s head current (opposing ship)
+    PhysicsState stateCurrent;
+    PhysicsInput inputCurrent = input;
+    inputCurrent.currentSurge = -1.0;
+    stateCurrent = simulate(model, inputCurrent, stateCurrent, 120.0);
+
+    // With head current, ship is slower
+    REQUIRE(stateCurrent.surge < stateNoCurrent.surge);
+}
+
+TEST_CASE("Beam current causes drift", "[mmg][current]") {
+    auto model = createSmallVessel();
+    PhysicsInput input;
+    input.portEngine = 0.5;
+    input.currentSway = 0.5; // current pushing to starboard
+
+    PhysicsState state;
+    state = simulate(model, input, state, 120.0);
+
+    // Ship should have lateral drift (nonzero sway or off-track position)
+    // posX increases with starboard drift (heading north = +Z, stbd = +X)
+    REQUIRE(state.posX > 1.0);
+}
+
+TEST_CASE("Zero current gives same result as no current", "[mmg][current]") {
+    auto model = createSmallVessel();
+    PhysicsInput input;
+    input.portEngine = 0.5;
+    input.currentSurge = 0.0;
+    input.currentSway = 0.0;
+
+    PhysicsState state1;
+    state1 = simulate(model, input, state1, 60.0);
+
+    PhysicsInput inputDefault;
+    inputDefault.portEngine = 0.5;
+    // currentSurge/currentSway default to 0.0
+
+    PhysicsState state2;
+    state2 = simulate(model, inputDefault, state2, 60.0);
+
+    REQUIRE(state1.surge == Approx(state2.surge).margin(0.001));
+    REQUIRE(state1.posZ == Approx(state2.posZ).margin(0.01));
 }

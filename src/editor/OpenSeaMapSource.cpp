@@ -520,7 +520,8 @@ bool OpenSeaMapSource::parseResponse(const std::string& jsonStr) {
         // Lights can be standalone or on the same node as a buoy.
         // Ways are needed for lighthouses mapped as building outlines.
         if (seamarkType == "light" || seamarkType == "light_major" || seamarkType == "light_minor" ||
-            tags.contains("seamark:light:character") || tags.contains("seamark:light:1:character")) {
+            tags.contains("seamark:light:character") || tags.contains("seamark:light:colour") ||
+            tags.contains("seamark:light:1:character") || tags.contains("seamark:light:1:colour")) {
 
             // Handle numbered light sectors (seamark:light:1:, seamark:light:2:, ...)
             // Also handle unnumbered (seamark:light:)

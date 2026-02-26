@@ -405,6 +405,12 @@ void MMGPhysicsModel::step(double dt, const PhysicsInput& input, PhysicsState& s
     double r_rad = state.yawRate * DEG_TO_RAD; // Convert to rad/s
     double heading_rad = state.heading * DEG_TO_RAD;
 
+    // Relative velocity (water flow past hull, accounting for current)
+    // All hydrodynamic forces use u_rel/v_rel so that current produces
+    // proper drift, crab angle, and current-induced yaw moment.
+    double u_rel = u - input.currentSurge;
+    double v_rel = v - input.currentSway;
+
     // Engine setting (average for propulsion force; differential handled separately)
     double engine = dims.singleEngine ? input.portEngine
                                        : (input.portEngine + input.stbdEngine) / 2.0;
@@ -423,18 +429,19 @@ void MMGPhysicsModel::step(double dt, const PhysicsInput& input, PhysicsState& s
     double swFactor = shallowWaterFactor(hT_ratio);
 
     // ── Compute forces at current state ──
+    // Hull, propeller, rudder, bank use relative velocity (water flow past hull)
     double Xh, Yh, Nh;
-    computeHullForces(u, v, r_rad, swFactor, Xh, Yh, Nh);
+    computeHullForces(u_rel, v_rel, r_rad, swFactor, Xh, Yh, Nh);
 
     double Xp;
-    computePropellerForce(u, engine, Xp);
+    computePropellerForce(u_rel, engine, Xp);
 
     double Xr, Yr, Nr;
-    computeRudderForces(u, v, r_rad, input.rudderAngle, engine, Xr, Yr, Nr);
+    computeRudderForces(u_rel, v_rel, r_rad, input.rudderAngle, engine, Xr, Yr, Nr);
 
-    // Bank effects
+    // Bank effects (use relative velocity - bank effect is hydrodynamic)
     double Yb = 0, Nb = 0;
-    computeBankForces(u, dims.length, dims.draught,
+    computeBankForces(u_rel, dims.length, dims.draught,
                       input.bankDistancePort, input.bankDistanceStbd, Yb, Nb);
 
     // Wind forces (Isherwood)
@@ -472,11 +479,13 @@ void MMGPhysicsModel::step(double dt, const PhysicsInput& input, PhysicsState& s
     double v_mid = v + 0.5 * dt * dv_dt;
     double r_mid = r_rad + 0.5 * dt * dr_dt;
 
-    // Recompute forces at midpoint
-    computeHullForces(u_mid, v_mid, r_mid, swFactor, Xh, Yh, Nh);
-    computePropellerForce(u_mid, engine, Xp);
-    computeRudderForces(u_mid, v_mid, r_mid, input.rudderAngle, engine, Xr, Yr, Nr);
-    computeBankForces(u_mid, dims.length, dims.draught,
+    // Recompute forces at midpoint (hydrodynamic forces use relative velocity)
+    double u_mid_rel = u_mid - input.currentSurge;
+    double v_mid_rel = v_mid - input.currentSway;
+    computeHullForces(u_mid_rel, v_mid_rel, r_mid, swFactor, Xh, Yh, Nh);
+    computePropellerForce(u_mid_rel, engine, Xp);
+    computeRudderForces(u_mid_rel, v_mid_rel, r_mid, input.rudderAngle, engine, Xr, Yr, Nr);
+    computeBankForces(u_mid_rel, dims.length, dims.draught,
                       input.bankDistancePort, input.bankDistanceStbd, Yb, Nb);
     computeWindForces(input.windSpeed, input.windDirection, state.heading, u_mid, v_mid,
                       dims.length, dims.beam, dims.draught,

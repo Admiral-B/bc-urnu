@@ -38,8 +38,10 @@ struct PhysicsInput {
     double stbdEngine = 0.0;     // Starboard engine setting (-1 to +1)
     double windSpeed = 0.0;      // True wind speed (m/s)
     double windDirection = 0.0;  // True wind direction (degrees, from)
-    double currentSpeed = 0.0;   // Water current speed (m/s)
-    double currentDirection = 0.0; // Water current direction (degrees, towards)
+    double currentSpeed = 0.0;   // Water current speed (m/s) [unused, use body-frame below]
+    double currentDirection = 0.0; // Water current direction (degrees, towards) [unused]
+    double currentSurge = 0.0;   // Current in surge direction (m/s, body frame, +ve = ahead)
+    double currentSway = 0.0;    // Current in sway direction (m/s, body frame, +ve = starboard)
     double waveHeight = 0.0;     // Significant wave height (m)
     double waterDepth = 100.0;   // Water depth below keel (m, 100 = deep water default)
     double bankDistancePort = 1000.0;  // Distance to bank on port side (m, 1000 = no effect)
