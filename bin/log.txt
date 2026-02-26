@@ -1,0 +1,80 @@
+Created GraphicsDevice_DX12 (1844 ms)
+Adapter: NVIDIA GeForce RTX 4060 Laptop GPU
+
+[wi::initializer] Initializing Wicked Engine, please wait...
+Version: 0.72.38
+Platform: Windows
+Compiler: MSVC
+
+CPU: AMD Ryzen 7 7840HS w/ Radeon 780M Graphics     
+	Features available: SSE; SSE 2; SSE 3; SSE 4.1; SSE 4.2; AVX; FMA3; F16C; AVX 2; AVX 512; 
+	Features used: SSE; SSE 2; SSE 3; SSE 4.1; AVX; FMA3; F16C; 
+
+RAM: 31.2 GB
+
+No embedded shaders found, shaders will be compiled at runtime if needed.
+	Shader source path: C:/Users/PB/source/bc-urnu/bin/../../WickedEngine/WickedEngine/shaders/
+	Shader binary path: ../../WickedEngine/WickedEngine/shaders/
+
+wi::jobsystem Initialized with 16 cores in 3.24 ms
+	High priority threads: 15
+	Low priority threads: 14
+	Streaming threads: 1
+
+wi::input Initialized (0 ms)
+wi::physics Initialized [Jolt Physics 5.4.0] (0 ms)
+wi::lua Initialized [Lua 5.4.8] (2 ms)
+wi::texturehelper Initialized (5 ms)
+wi::TrailRenderer Initialized (16 ms)
+wi::image Initialized (40 ms)
+wi::GPUBVH Initialized (51 ms)
+wi::gpusortlib Initialized (55 ms)
+wi::Ocean Initialized (111 ms)
+wi::HairParticleSystem Initialized (129 ms)
+wi::EmittedParticleSystem Initialized (184 ms)
+wi::renderer Initialized (248 ms)
+wi::audio Initialized [XAudio2] (733 ms)
+wi::font Initialized (5 ms)
+
+[wi::initializer] Wicked Engine Initialized (744 ms)
+Created envprobe depth buffer for request
+	Resolution = 64 * 64 * 6
+	Sample Count = 1
+	Mip Levels = 1
+	Format = D16_UNORM
+	Memory = 48.0 KB
+
+Created envprobe render target for request
+	Resolution = 64 * 64 * 6
+	Sample Count = 1
+	Mip Levels = 3
+	Format = R11G11B10_FLOAT
+	Memory = 126.0 KB
+
+Created envprobe filtering target for request
+	Resolution = 64 * 64 * 6
+	Sample Count = 1
+	Mip Levels = 3
+	Format = R11G11B10_FLOAT
+	Memory = 126.0 KB
+
+BlockCompress created a new raw block texture to fit request: BC6H_UF16 (64, 64)
+	Format = R32G32B32A32_UINT
+	Resolution = 64 * 64
+	Array Size = 6
+	Memory = 384.0 KB
+
+SuballocateGPUBuffer created buffer block with size: 256.0 MB, with page size: 64.0 KB, page count: 4096
+Created volumetric cloud map: 1.1 MB
+BlockCompress created a new raw block texture to fit request: BC1_UNORM (1024, 1024)
+	Format = R32G32_UINT
+	Resolution = 256 * 256
+	Array Size = 1
+	Memory = 512.0 KB
+
+BlockCompress created a new raw block texture to fit request: BC5_UNORM (1024, 1024)
+	Format = R32G32B32A32_UINT
+	Resolution = 256 * 256
+	Array Size = 1
+	Memory = 1.0 MB
+
