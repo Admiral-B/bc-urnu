@@ -18,6 +18,8 @@
 namespace wi {
     namespace scene { struct Scene; }
 }
+// Need full Texture definition for member storage
+#include "wiGraphics.h"
 
 namespace bc { namespace graphics { namespace wicked {
 
@@ -37,12 +39,12 @@ namespace bc { namespace graphics { namespace wicked {
 class WickedKelvinWake {
 public:
     struct WakeParams {
-        float maxLength = 200.0f;       // Maximum wake trail length (meters)
-        float width = 40.0f;            // Wake width at widest point (meters)
-        float fadeStartDist = 50.0f;    // Distance where fade begins
+        float maxLength = 150.0f;       // Maximum wake trail length (meters)
+        float width = 12.0f;            // Wake width at widest point (meters)
+        float fadeStartDist = 30.0f;    // Distance where fade begins
         float speedThreshold = 0.5f;    // Minimum speed to show wake (m/s)
-        float foamIntensity = 0.8f;     // Center foam brightness (0-1)
-        int numSegments = 32;           // Trail segments for smooth curve
+        float foamIntensity = 0.5f;     // Center foam brightness (0-1)
+        int numSegments = 48;           // Trail segments for smooth curve
     };
 
     WickedKelvinWake();
@@ -76,6 +78,7 @@ private:
     wi::scene::Scene* weScene = nullptr;
     WakeParams params_;
     bool visible_ = true;
+    wi::graphics::Texture foamTexture_;
 
     /// Trail point for wake history
     struct TrailPoint {
@@ -101,6 +104,7 @@ private:
     ShipWake& getOrCreateWake(int shipId);
     void rebuildWakeMesh(ShipWake& wake);
     void removeWakeEntities(ShipWake& wake);
+    void generateFoamTexture();
 };
 
 }}} // namespace bc::graphics::wicked

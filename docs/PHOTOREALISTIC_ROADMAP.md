@@ -87,18 +87,13 @@ Current foam uses Jacobian fold detection (single threshold). Upgrade to two-lay
 
 **Files:** Custom water pixel shader override, foam texture assets
 
-### 1.4 Kelvin Wake Integration
+### 1.4 Kelvin Wake Integration -- IN PROGRESS
 
-Wire `WickedKelvinWake` into the ship update loop. For each ship (own + others), call `wake.update(shipId, pos, heading, speed, dt)` every frame.
+**Approach:** Shader-based. Ship wake data (position, heading, speed) is passed to the ocean constant buffer (`OceanCB`). The ocean pixel shader (`oceanSurfacePS.hlsl`) computes Kelvin V-pattern foam analytically per-pixel, integrated into the existing 3-layer foam system (shore/shallow/whitecap). Foam renders ON the ocean surface, moves with waves, uses same noise/lighting. No separate mesh or render pass.
 
-**Visual approach:**
-- Trail of quad segments following ship path, UV-scrolled wake texture
-- Alpha fades from 1.0 at stern to 0.0 at `maxLength` (200m)
-- Width expands at 19.47 deg half-angle (Kelvin angle)
-- Foam intensity proportional to speed squared
-- Propeller wash: additional narrow foam strip along centerline extending 30-50m astern
+Previous mesh-based approach (`WickedKelvinWake` class) abandoned -- flat polygons above the ocean cannot look realistic regardless of material/blending.
 
-**Files:** `WickedKelvinWake.cpp` (implement `rebuildWakeMesh`), `WickedMain.cpp` (add update call)
+**Files:** `ShaderInterop_Ocean.h` (wake struct in CB), `wiOcean.h/cpp` (OceanParameters extension), `oceanSurfacePS.hlsl` (foam_wake computation), `WickedMain.cpp` (per-frame ship data)
 
 ### 1.5 Underwater Rendering
 
@@ -116,53 +111,17 @@ This is lower priority but completes the water system.
 
 Weather is the second most important visual system for a maritime simulator. Real mariners train in fog, rain, and heavy seas.
 
-### 2.1 Volumetric Atmosphere (Sky)
+### 2.1 Volumetric Atmosphere (Sky) -- COMPLETE
 
-WE has a `WeatherComponent` with atmosphere rendering. Currently barely configured. Set up:
+Realistic sky with Rayleigh + Mie scattering configured. Sun position from scenario time-of-day. Mie scattering scales dynamically with Beaufort. Aerial perspective enabled. All in `WickedMain.cpp` init (lines 1614-1660) and per-frame update (lines 3164-3258).
 
-1. **Rayleigh + Mie scattering** via WE's atmosphere system (already in engine, just needs correct parameters for maritime latitude)
-2. **Sun position** from scenario time-of-day (SunRise/SunSet in environment.ini). Compute solar azimuth/elevation from lat/lon/date/time. Feed as directional light direction.
-3. **Moon** as secondary directional light at low intensity (0.01-0.05x sun). Compute position from date.
-4. **Stars** via WE skybox cubemap with star field, visible when sun below horizon.
+### 2.2 Volumetric Clouds -- COMPLETE
 
-**Parameters:**
-- Atmospheric turbidity: 2.0 (clear) to 10.0 (hazy), mapped from BC `VisibilityRange`
-- Mie scattering coefficient: higher in fog/rain for orange-tinted sun near horizon
-- Ozone absorption: subtle for blue hour rendering
+Cloud coverage, wind-driven motion, and shadow casting configured. Coverage and cloud base scale with Beaufort. Wind angle/speed drives cloud movement. All in `WickedMain.cpp`.
 
-**Files:** `WickedMain.cpp` (atmosphere setup), new `SkyModel.hpp/cpp`
+### 2.3 Volumetric Fog and Visibility -- COMPLETE
 
-### 2.2 Volumetric Clouds
-
-WE has volumetric cloud shaders (`volumetricCloud_renderCS.hlsl`). Configure:
-
-1. **Cloud coverage** mapped from weather Beaufort scale:
-   - B0-2: 0.1-0.3 coverage (fair weather cumulus)
-   - B3-5: 0.3-0.6 (broken cumulus, some stratocumulus)
-   - B6-8: 0.6-0.8 (overcast stratocumulus)
-   - B9-12: 0.9-1.0 (nimbostratus, storm clouds)
-
-2. **Cloud type** altitude: base 1000-2000m, top 3000-5000m for cumulus. Lower bases (500m) in high Beaufort. WE's volumetric clouds use 3D noise textures for shape/detail/curl.
-
-3. **Wind-driven motion:** Cloud layer moves with wind direction at 50% wind speed. Gives sense of weather movement.
-
-4. **Lighting:** Clouds lit by sun with silver lining, dark underbelly in overcast. Multiple scattering approximation (WE default).
-
-**Files:** `WickedMain.cpp` (WeatherComponent cloud config), new `WeatherController.hpp/cpp`
-
-### 2.3 Volumetric Fog and Visibility
-
-Maritime fog is critical for training. Implement via WE's volumetric fog system:
-
-1. **Exponential height fog:** density = `baseExtinction * exp(-heightFalloff * y)`. Sea-level fog thick, thins with altitude. Map BC `VisibilityRange` to extinction coefficient: `extinction = 3.0 / visibilityRange`.
-
-2. **Fog color:** Blend between grey (day) and dark blue-grey (night) based on `lightLevel`. At sunrise/sunset, warm orange tint.
-
-3. **Patchy fog (stretch goal):** 3D noise field modulating fog density. Gives realistic uneven visibility. Compute shader generates 64x64x32 3D noise texture, scrolled with wind.
-
-4. **Integration with lighting:** Fog scatters directional light (god rays through fog). WE's light shafts + volumetric fog gives this automatically.
-
-**Files:** New `FogController.hpp/cpp`, `WeatherController.hpp/cpp`
+Fog density mapped from BC `VisibilityRange` (`0.01 / vis`). Fog start at 30% of visibility range. Disabled when visibility > 5km. Per-frame update in `WickedMain.cpp`.
 
 ### 2.4 Rain and Spray Particles
 
@@ -251,38 +210,17 @@ This gives:
 
 **Files:** New `BuoyancySampler.hpp/cpp`, modify `SeakeepingModel.cpp`
 
-### 3.3 Applied Squat
+### 3.3 Applied Squat -- COMPLETE
 
-The Barras squat formula is already computed in `MMGPhysicsModel::computeSquat()` but never applied. Wire it:
+Barras squat computed and applied in `OwnShip.cpp:2481-2493`. Sinkage subtracted from Y position, bow-down trim applied. Comprehensive test coverage in `test_mmg_physics.cpp`.
 
-1. In `OwnShip::update()`, after physics step, compute squat from speed and depth
-2. Subtract squat from ship Y position (sinkage)
-3. Apply trim angle from Barras trim formula: `trim = squat * 0.8` (bow-down for single screw)
-4. Display squat on HUD (useful training metric)
+### 3.4 Current Forces -- COMPLETE
 
-**Files:** `OwnShip.cpp`, `ImGuiOverlay.cpp` (squat display)
+Force-based tidal current in MMG. Body-frame current components passed to `PhysicsInput`, relative velocity (`u_rel = u - currentSurge`) used for all hydrodynamic forces. Gives proper drift, crab angle, current-induced yaw. Tested.
 
-### 3.4 Current Forces
+### 3.5 Propeller Walk -- COMPLETE
 
-Currently tidal current only modifies speed-through-water. Add proper force-based current:
-
-1. Compute body-frame current components from world-frame tidal stream vector
-2. In MMG `step()`, compute relative water velocity: `u_rel = u - u_current`, `v_rel = v - v_current`
-3. Use `u_rel, v_rel` for ALL hydrodynamic force calculations (hull, propeller, rudder)
-4. This automatically gives cross-current drift, crab angle, and current-induced yaw
-
-**Files:** `MMGPhysicsModel.cpp` (modify force computation inputs)
-
-### 3.5 Propeller Walk and Transient Effects
-
-Single-screw ships experience lateral force from propeller rotation:
-- **Ahead:** Propeller walk pushes stern to starboard (right-hand prop)
-- **Astern:** Reversed walk pushes stern to port
-- **Transient:** Kick on engine reversal (training-critical maneuver)
-
-Add to MMG: `Y_prop = sign(n) * C_walk * rho * n^2 * D^4` where `C_walk ~ 0.01-0.03`.
-
-**Files:** `MMGPhysicsModel.cpp`
+Implemented in both legacy physics (`LegacyPhysicsModel.cpp`) and own ship physics (`OwnShip.cpp`). Configurable via `PropWalkAhead`/`PropWalkAstern` in `boat.ini`. Single and twin-screw support.
 
 ### 3.6 Azimuth Drive Support for MMG
 
@@ -414,16 +352,28 @@ Current ship models are .3ds/.x format with simple diffuse textures. For photore
 
 ### 5.3 Dynamic Ship Lighting
 
-1. **Navigation lights** (port/starboard/stern/masthead): Already exist as NavLight. Upgrade to:
-   - Proper WE point lights with sector visibility (port red visible 112.5-247.5 deg, etc)
-   - Correct ranges (2-5nm depending on vessel size)
-   - Visible through fog with halo effect (bloom + fog scattering)
+**Status: BLOCKED -- lens flare approach failed, needs new technique**
 
-2. **Deck lights:** Additional point lights on deck for night operations
-3. **Bridge interior:** Warm glow from bridge windows at night
-4. **Searchlight** (stretch): Cone-shaped spot light, player-controllable
+**Failed approaches:**
 
-**Files:** `NavLight.cpp`, `WickedMain.cpp` (light entity creation)
+1. **Emissive UV spheres:** Look like glowing balls, not point lights. Distance-based scaling hacks, no volumetric fog interaction.
+
+2. **WE lens flare billboards (current):** `lensFlareRimTextures` on `LightComponent` renders screen-space textured quads. Fundamental problems:
+   - Billboards are always rectangular -- look like colored blocks, not point lights
+   - Large billboards (16px) bleed through bridge window frames (glass is alpha-blended, doesn't write to depth buffer, so per-pixel depth testing in lensFlarePS.hlsl cannot clip frame overlap)
+   - Small billboards (4px) don't bleed but still look like colored squares, not realistic lights
+   - WE bloom post-process doesn't produce sufficient glow from small additive billboards at typical nav light brightness levels
+   - The lens flare system is designed for sun decorative effects (starburst, hex bokeh), not for simulating distant point lights
+
+**What's needed:** A rendering technique that produces a sub-pixel bright point with natural radial falloff (Airy disk / atmospheric scatter appearance). Options to investigate:
+- Custom screen-space point sprite pass with radial alpha gradient and proper depth testing against opaque geometry only
+- Emissive material on a tiny camera-facing quad with HDR emissive intensity (>>1.0) to drive bloom naturally
+- Custom compute shader that writes directly to the HDR render target at the light's screen position with a Gaussian splat
+- Investigate how other WE-based projects or commercial maritime sims render distant point lights
+
+**Current state in code:** `WickedMain.cpp` has working Allard's Law intensity, COLREG arc visibility, flash sequences, and per-frame light management. The light entity infrastructure is solid -- only the visual representation technique needs replacing.
+
+**Files:** `WickedMain.cpp` (light creation + update loop), `lensFlareVS/PS.hlsl` (modified with per-pixel depth test, kept for reference)
 
 ### 5.4 PBR Building Materials
 
@@ -570,28 +520,31 @@ Target: 60fps per viewport at 1080p on GTX 1070 or equivalent.
 
 This ordering maximizes visual impact per unit of effort:
 
-| Priority | Item | Phase | Impact | Effort |
-|----------|------|-------|--------|--------|
-| 1 | Volumetric atmosphere + sun | 2.1 | Huge | Medium |
-| 2 | Volumetric clouds | 2.2 | High | Medium |
-| 3 | Volumetric fog | 2.3 | High | Medium |
-| 4 | JONSWAP H(0) override | 1.2 | High | Medium (shader) |
-| 5 | Ocean normal map overlay | 1.1+ | High | Low-Medium (shader) |
-| 6 | Multi-cascade shader blending | 1.1c | Huge | High (shader) |
-| 7 | Volumetric fog | 2.3 | High | Medium |
-| 8 | PBR terrain splatting | 4.1 | High | High |
-| 9 | Kelvin wakes | 1.4 | Medium | Low |
-| 10 | Multi-window bridge | 6.1 | Critical (usability) | Medium |
-| 11 | Rain particles | 2.4 | Medium | Medium |
-| 12 | Multi-point buoyancy | 3.2 | High | High |
-| 13 | PBR ship models | 5.1 | High | High (art) |
-| 14 | Applied squat + currents | 3.3-3.4 | Medium | Low |
-| 15 | Radar rendering | 6.2 | Critical (usability) | High |
-| 16 | Nav light upgrades | 5.3 | Medium | Low |
-| 17 | Environmental audio | 7.1 | Medium | Medium |
-| 18 | PBR buildings | 5.4 | Medium | Medium |
-| 19 | Vegetation | 4.5 | Medium | High |
-| 20 | VR support | 6.3 | Low (niche) | High |
+| Priority | Item | Phase | Impact | Effort | Status |
+|----------|------|-------|--------|--------|--------|
+| ~1~ | ~Atmosphere + sun~ | ~2.1~ | ~Huge~ | ~Medium~ | DONE |
+| ~2~ | ~Volumetric clouds~ | ~2.2~ | ~High~ | ~Medium~ | DONE |
+| ~3~ | ~Volumetric fog~ | ~2.3~ | ~High~ | ~Medium~ | DONE |
+| 4 | JONSWAP H(0) override | 1.2 | High | Medium | BLOCKED (shader) |
+| 5 | Ocean normal map overlay | 1.1+ | High | Low-Medium | BLOCKED (shader) |
+| 6 | Multi-cascade blending | 1.1c | Huge | High | BLOCKED (shader) |
+| 7 | PBR terrain splatting | 4.1 | High | High | BLOCKED (shader) |
+| 8 | Kelvin wakes (shader-based) | 1.4 | Medium | Medium | IN PROGRESS |
+| 9 | 6-DOF seakeeping | 3.1 | High | High | Not started |
+| 10 | Multi-window bridge | 6.1 | Critical | Medium | Not started |
+| 11 | Multi-point buoyancy | 3.2 | High | High | Not started |
+| 12 | Radar rendering | 6.2 | Critical | High | Not started |
+| 13 | Nav light visuals | 5.3 | Medium | Medium | BLOCKED (technique) |
+| 14 | PBR ship models | 5.1 | High | High (art) | Not started |
+| 15 | Rain particles | 2.4 | Medium | Medium | BLOCKED (WE crash) |
+| 16 | Azimuth drive MMG | 3.6 | Medium | Medium | Not started |
+| ~17~ | ~Applied squat~ | ~3.3~ | ~Medium~ | ~Low~ | DONE |
+| ~18~ | ~Current forces~ | ~3.4~ | ~Medium~ | ~Low~ | DONE |
+| ~19~ | ~Propeller walk~ | ~3.5~ | ~Medium~ | ~Low~ | DONE |
+| 20 | Environmental audio | 7.1 | Medium | Medium | Not started |
+| 21 | PBR buildings | 5.4 | Medium | Medium | Not started |
+| 22 | Vegetation | 4.5 | Medium | High | Not started |
+| 23 | VR support | 6.3 | Low (niche) | High | Not started |
 
 ---
 

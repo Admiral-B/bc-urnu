@@ -413,87 +413,113 @@ static wi::ecs::Entity createPlaceholderBox(wi::scene::Scene& scene, const std::
     return entity;
 }
 
-// ===== Emissive light marker: tiny bright mesh visible at distance via bloom =====
-// Each unique RGB color gets a shared octahedron mesh+material. Individual lights
-// create Object instances referencing it, toggled via SetRenderable().
-struct LightMarkerKey {
-    int ri, gi, bi;
-    bool operator==(const LightMarkerKey& o) const { return ri == o.ri && gi == o.gi && bi == o.bi; }
-};
-struct LightMarkerKeyHash {
-    size_t operator()(const LightMarkerKey& k) const {
-        return std::hash<int>()(k.ri * 100000 + k.gi * 1000 + k.bi);
+// ===== Navigation light lens flare: WE-native depth-tested screen-space glow =====
+// Replaces emissive sphere markers. Flare visibility is automatically gated by
+// depth buffer occlusion (hull blocks own-ship flares) and by setting intensity=0
+// when the light should be invisible (out of arc, out of range, flash-off).
+//
+// Physics: at 1nm a 155mm lantern subtends 0.15 screen pixels (1080p/60deg FOV) --
+// always sub-pixel. Real lights appear as pinpricks with glow from the eye's Airy
+// disk and atmospheric scatter. We use a 4x4 pixel screen-space billboard for the
+// pinprick (billboard size = texture_pixels / canvas_pixels), and rely on WE's bloom
+// post-process to create apparent size proportional to brightness.
+// NOTE: bridge window glass is alpha-blended and does NOT write to the depth buffer.
+// Per-pixel depth testing in lensFlarePS.hlsl clips opaque geometry (hull, terrain)
+// but cannot clip transparent window frames. The 4px billboard prevents frame bleed.
+//
+// Brightness follows Allard's Law: E = I * T^D / D^2 where T=0.8/nm (clear conditions).
+// COLREG Annex I candela: 2nm sidelight=4.3cd, 3nm=12cd, 5nm masthead=52cd, 6nm=94cd.
+static wi::Resource g_flareWhite, g_flareRed, g_flareGreen;
+
+static void writeTGA(const std::string& path, int w, int h, const uint8_t* rgba) {
+    std::ofstream f(path, std::ios::binary);
+    if (!f) return;
+    uint8_t header[18] = {};
+    header[2] = 2; // uncompressed true-color
+    header[12] = (uint8_t)(w & 0xFF); header[13] = (uint8_t)((w >> 8) & 0xFF);
+    header[14] = (uint8_t)(h & 0xFF); header[15] = (uint8_t)((h >> 8) & 0xFF);
+    header[16] = 32; // 32-bit BGRA
+    header[17] = 0x28; // top-left origin + 8 alpha bits
+    f.write((const char*)header, 18);
+    for (int i = 0; i < w * h; i++) {
+        uint8_t bgra[4] = { rgba[i*4+2], rgba[i*4+1], rgba[i*4+0], rgba[i*4+3] };
+        f.write((const char*)bgra, 4);
     }
-};
-static std::unordered_map<LightMarkerKey, wi::ecs::Entity, LightMarkerKeyHash> g_lightMarkerMeshes;
-
-static wi::ecs::Entity getSharedLightMarkerMesh(wi::scene::Scene& scene,
-                                                  float r, float g, float b) {
-    LightMarkerKey key = {(int)(r * 255), (int)(g * 255), (int)(b * 255)};
-    auto it = g_lightMarkerMeshes.find(key);
-    if (it != g_lightMarkerMeshes.end()) return it->second;
-
-    wi::ecs::Entity meshEntity = scene.Entity_CreateMesh("LightMarker_mesh");
-    auto* mesh = scene.meshes.GetComponent(meshEntity);
-    if (!mesh) return wi::ecs::INVALID_ENTITY;
-
-    wi::ecs::Entity matEntity = scene.Entity_CreateMaterial("LightMarker_mat");
-    auto* mat = scene.materials.GetComponent(matEntity);
-    if (mat) {
-        mat->baseColor = DirectX::XMFLOAT4(r * 0.3f, g * 0.3f, b * 0.3f, 1.0f); // tinted base for close-range color
-        mat->emissiveColor = DirectX::XMFLOAT4(r, g, b, 80.0f); // moderate emissive preserves color in bloom
-        mat->roughness = 1.0f;
-        mat->metalness = 0.0f;
-        mat->SetDoubleSided(true);
-        mat->CreateRenderData();
-    }
-
-    // UV sphere: realistic nav light lantern size.
-    // 0.1m radius (20cm diameter); distance-scaled to stay ~1-2 pixels at long range.
-    const float radius = 0.1f;
-    const int stacks = 6, slices = 8;
-    mesh->subsets.push_back(wi::scene::MeshComponent::MeshSubset());
-    mesh->subsets.back().materialID = matEntity;
-    mesh->subsets.back().indexOffset = 0;
-    for (int st = 0; st <= stacks; st++) {
-        float phi = (float)M_PI * (float)st / (float)stacks;
-        float sinP = std::sin(phi), cosP = std::cos(phi);
-        for (int sl = 0; sl <= slices; sl++) {
-            float theta = 2.0f * (float)M_PI * (float)sl / (float)slices;
-            float nx = sinP * std::cos(theta), ny = cosP, nz = sinP * std::sin(theta);
-            mesh->vertex_positions.push_back(DirectX::XMFLOAT3(nx * radius, ny * radius, nz * radius));
-            mesh->vertex_normals.push_back(DirectX::XMFLOAT3(nx, ny, nz));
-            mesh->vertex_uvset_0.push_back(DirectX::XMFLOAT2((float)sl / slices, (float)st / stacks));
-        }
-    }
-    for (int st = 0; st < stacks; st++) {
-        for (int sl = 0; sl < slices; sl++) {
-            int a = st * (slices + 1) + sl;
-            int b = a + slices + 1;
-            mesh->indices.push_back(a); mesh->indices.push_back(b); mesh->indices.push_back(a + 1);
-            mesh->indices.push_back(a + 1); mesh->indices.push_back(b); mesh->indices.push_back(b + 1);
-        }
-    }
-    mesh->subsets.back().indexCount = (uint32_t)mesh->indices.size();
-    mesh->CreateRenderData();
-
-    g_lightMarkerMeshes[key] = meshEntity;
-    return meshEntity;
 }
 
-static wi::ecs::Entity createLightMarker(wi::scene::Scene& scene, const std::string& name,
-                                          float r, float g, float b) {
-    wi::ecs::Entity sharedMesh = getSharedLightMarkerMesh(scene, r, g, b);
-    if (sharedMesh == wi::ecs::INVALID_ENTITY) return wi::ecs::INVALID_ENTITY;
+// Estimate COLREG candela from nominal range using Allard's Law inverted:
+// I = E_threshold * D_m^2 / T^D_nm
+// E_threshold = 2e-7 lux (COLREG Annex I), T = 0.8/nm (10nm met. visibility)
+// Results: 2nm->4.3cd, 3nm->12cd, 5nm->52cd (matches COLREG Table)
+static float colregCandela(float rangeNM) {
+    if (rangeNM <= 0) rangeNM = 2.0f;
+    float D_m = rangeNM * 1852.0f;
+    return 2.0e-7f * D_m * D_m / std::pow(0.8f, rangeNM);
+}
 
-    // Entity_CreateObject already creates transform + layer + object components
-    wi::ecs::Entity entity = scene.Entity_CreateObject(name);
-    auto* obj = scene.objects.GetComponent(entity);
-    if (obj) {
-        obj->meshID = sharedMesh;
-        obj->SetRenderable(false); // start hidden, update loop controls
+static void generateNavLightFlareTextures() {
+    // 4x4 pixel textures: tiny pinprick dot.  Billboard size on screen
+    // equals texture_pixels (4 px across at 1080p).  Bridge window glass
+    // is alpha-blended and does NOT write to the depth buffer, so the
+    // per-pixel depth test in lensFlarePS.hlsl cannot clip billboard
+    // pixels that overlap the transparent frame material.  Keeping the
+    // billboard at 4 px prevents visible bleed-through entirely.
+    // WE bloom (applied after lens flares in the post-process chain)
+    // spreads the bright additive dot into a natural glow.
+    const int SZ = 4;
+    struct FlareSpec { const char* name; float r, g, b; };
+    FlareSpec specs[] = {
+        {"flare_nav_white.tga", 1.0f, 1.0f, 0.95f},   // bright white
+        {"flare_nav_red.tga",   1.0f, 0.1f, 0.05f},    // COLREG red
+        {"flare_nav_green.tga", 0.05f, 1.0f, 0.15f},   // COLREG green
+    };
+
+    std::vector<uint8_t> pixels(SZ * SZ * 4);
+    for (auto& spec : specs) {
+        for (int y = 0; y < SZ; y++) {
+            for (int x = 0; x < SZ; x++) {
+                int idx = (y * SZ + x) * 4;
+                pixels[idx + 0] = (uint8_t)(spec.r * 255.0f);
+                pixels[idx + 1] = (uint8_t)(spec.g * 255.0f);
+                pixels[idx + 2] = (uint8_t)(spec.b * 255.0f);
+                pixels[idx + 3] = 255; // fully opaque, no falloff
+            }
+        }
+        writeTGA(spec.name, SZ, SZ, pixels.data());
     }
-    return entity;
+}
+
+static void loadNavLightFlareTextures() {
+    generateNavLightFlareTextures();
+    g_flareWhite = wi::resourcemanager::Load("flare_nav_white.tga");
+    g_flareRed   = wi::resourcemanager::Load("flare_nav_red.tga");
+    g_flareGreen = wi::resourcemanager::Load("flare_nav_green.tga");
+    int loaded = (g_flareWhite.IsValid() ? 1 : 0) +
+                 (g_flareRed.IsValid() ? 1 : 0) +
+                 (g_flareGreen.IsValid() ? 1 : 0);
+    weLog("  Nav light flare textures: " + std::to_string(loaded) + "/3 loaded");
+}
+
+static void attachLensFlare(wi::scene::Scene& scene, wi::ecs::Entity lightEntity,
+                             float r, float g, float b) {
+    // Pick colored flare matching light color (COLREG: red port, green stbd, white mast/stern)
+    wi::Resource* flare;
+    if (r > 0.5f && g < 0.3f && b < 0.3f)      flare = &g_flareRed;
+    else if (g > 0.5f && r < 0.3f && b < 0.3f)  flare = &g_flareGreen;
+    else                                          flare = &g_flareWhite;
+
+    if (!flare->IsValid()) {
+        weLog("  [FLARE] texture not valid for entity " + std::to_string(lightEntity));
+        return;
+    }
+    auto* lc = scene.lights.GetComponent(lightEntity);
+    if (!lc) {
+        weLog("  [FLARE] no LightComponent for entity " + std::to_string(lightEntity));
+        return;
+    }
+    lc->lensFlareRimTextures.push_back(*flare);
+    weLog("  [FLARE] attached to entity " + std::to_string(lightEntity) +
+          " flareCount=" + std::to_string(lc->lensFlareRimTextures.size()));
 }
 
 // Cache of WE mesh entities created from Irrlicht-converted models (by filepath)
@@ -1389,6 +1415,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     renderPath.setSSREnabled(true);
     renderPath.setFXAAEnabled(true);
     renderPath.setBloomEnabled(true);
+    renderPath.setLensFlareEnabled(true);  // depth-tested screen-space flares for nav lights
     application.ActivatePath(&renderPath);
 
     application.infoDisplay.active = true;
@@ -1446,6 +1473,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     CoordConverter coords;
     std::unique_ptr<bc::graphics::wicked::WickedTerrainNode> terrainNode;
     bc::graphics::wicked::WickedMultiCascadeOcean ocean;
+
     float ownShipX = 0, ownShipZ = 0;
     float ownShipHeading = scenarioData.ownShipData.initialBearing;
     float ownShipSpeed = scenarioData.ownShipData.initialSpeed; // knots
@@ -1505,16 +1533,18 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     };
     std::vector<BuoyState> buoyStates;
 
-    // Navigation light: WE point light (close-range glow) + emissive marker (long-range dot)
+    // Navigation light: WE point light with lens flare for distance visibility.
+    // Lens flare is depth-tested (auto-occluded by hull geometry) and gated by
+    // setting intensity=0 when out of arc/range/flash-off.
     struct WENavLight {
         wi::ecs::Entity entity = wi::ecs::INVALID_ENTITY;       // point light
-        wi::ecs::Entity markerEntity = wi::ecs::INVALID_ENTITY;  // emissive mesh marker
         int shipIndex = -1;      // index into otherShipStates, -1 for own ship, -2 for fixed/buoy
         int buoyIndex = -1;      // >= 0: buoyStates index (light attached to buoy)
         float localX = 0, localY = 0, localZ = 0; // ship-relative pos OR world pos (if fixed)
         float r = 1, g = 1, b = 1; // color (0-1)
         float startAngle = 0, endAngle = 360; // directional arc (degrees)
         float range = 5000;      // visibility range (metres)
+        float intensity_cd = 12;  // luminous intensity (candela), from COLREG Annex I
         std::string sequence;    // flash pattern ('D' = dark)
         float charTime = 0.25f;  // seconds per sequence character
         float timeOffset = 0;    // random phase offset
@@ -1522,6 +1552,9 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     std::vector<WENavLight> navLights;
 
     try { // Wrap scene setup in try-catch to diagnose crashes
+
+    // ===== LENS FLARE TEXTURES (colored per COLREG: red, green, white) =====
+    loadNavLightFlareTextures();
 
     // ===== SUN / LIGHTING =====
     pumpMessages(); // Keep window responsive during setup
@@ -2148,6 +2181,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 nlt.startAngle = sa; nlt.endAngle = ea;
                 while (nlt.startAngle < 0) { nlt.startAngle += 360; nlt.endAngle += 360; }
                 nlt.range = rangeNM * (float)M_IN_NM;
+                nlt.intensity_cd = colregCandela(rangeNM);
                 nlt.sequence = seq;
                 nlt.charTime = 0.25f;
                 nlt.timeOffset = tOff;
@@ -2158,11 +2192,11 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                     lc->SetType(wi::scene::LightComponent::POINT);
                     lc->color = DirectX::XMFLOAT3(r, g, b);
                     lc->intensity = 0.0f;
-                    lc->range = 500.0f;
-                    lc->SetCastShadow(false);
-                    lc->SetVolumetricsEnabled(true);
+                    lc->range = nlt.range; // WE uses range for frustum culling AABB
+                    lc->SetCastShadow(true); // shadows prevent light bleeding through hull into bridge
+                    lc->SetVolumetricsEnabled(false);
                 }
-                nlt.markerEntity = createLightMarker(scene, lightName + "_mk", r, g, b);
+                attachLensFlare(scene, nlt.entity, nlt.r, nlt.g, nlt.b);
                 navLights.push_back(nlt);
             };
 
@@ -2271,8 +2305,10 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             // Fix negative start angles (same as NavLight.cpp)
             while (nlt.startAngle < 0) { nlt.startAngle += 360; nlt.endAngle += 360; }
 
-            nlt.range = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("LightRange", nl));
-            nlt.range *= (float)M_IN_NM; // Nm -> metres
+            float rangeNM = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("LightRange", nl));
+            if (rangeNM <= 0) rangeNM = 3.0f; // default 3nm if not specified
+            nlt.range = rangeNM * (float)M_IN_NM; // Nm -> metres
+            nlt.intensity_cd = colregCandela(rangeNM);
 
             nlt.sequence = IniFile::iniFileToString(boatIni, IniFile::enumerate1("Sequence", nl));
             uint32_t phaseStart = IniFile::iniFileTou32(boatIni, IniFile::enumerate1("PhaseStart", nl));
@@ -2286,11 +2322,11 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 lightComp->SetType(wi::scene::LightComponent::POINT);
                 lightComp->color = DirectX::XMFLOAT3(lightR, lightG, lightB);
                 lightComp->intensity = 0.0f; // update loop controls
-                lightComp->range = 500.0f;
+                lightComp->range = nlt.range; // WE uses range for frustum culling AABB -- must match visibility distance
                 lightComp->SetCastShadow(false);
-                lightComp->SetVolumetricsEnabled(true);
+                lightComp->SetVolumetricsEnabled(false);
             }
-            nlt.markerEntity = createLightMarker(scene, lightName + "_mk", lightR, lightG, lightB);
+            attachLensFlare(scene, nlt.entity, nlt.r, nlt.g, nlt.b);
 
             navLights.push_back(nlt);
         }
@@ -2433,6 +2469,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 nlt.startAngle = startAngle;
                 nlt.endAngle = endAngle;
                 nlt.range = lightRange * 1852.0f; // nm to metres
+                nlt.intensity_cd = colregCandela(lightRange);
                 nlt.sequence = sequence;
                 nlt.charTime = 0.25f; // standard quarter-second per character
                 nlt.timeOffset = (float)(phaseStart - 1) * nlt.charTime;
@@ -2473,11 +2510,11 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                     lightComp->SetType(wi::scene::LightComponent::POINT);
                     lightComp->color = XMFLOAT3(nlt.r, nlt.g, nlt.b);
                     lightComp->intensity = 0.0f;
-                    lightComp->range = 500.0f;
+                    lightComp->range = nlt.range; // WE uses range for frustum culling AABB -- must match visibility distance
                     lightComp->SetCastShadow(false);
-                    lightComp->SetVolumetricsEnabled(true);
+                    lightComp->SetVolumetricsEnabled(false);
                 }
-                nlt.markerEntity = createLightMarker(scene, lightName + "_mk", nlt.r, nlt.g, nlt.b);
+                attachLensFlare(scene, nlt.entity, nlt.r, nlt.g, nlt.b);
 
                 navLights.push_back(nlt);
                 createdCount++;
@@ -2547,7 +2584,9 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             nlt.localY = 3.0f; // light 3m above buoy base
             nlt.r = lr; nlt.g = lg; nlt.b = lb;
             nlt.startAngle = 0; nlt.endAngle = 360; // all-round
-            nlt.range = (isCardinal ? 5.0f : 3.0f) * 1852.0f; // 3-5 nm
+            float buoyRangeNM = isCardinal ? 5.0f : 3.0f;
+            nlt.range = buoyRangeNM * 1852.0f; // 3-5 nm
+            nlt.intensity_cd = colregCandela(buoyRangeNM);
             nlt.sequence = seq;
             nlt.charTime = 0.25f;
             nlt.timeOffset = (float)(b % 20) * 0.25f; // stagger phase
@@ -2559,11 +2598,11 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 lightComp->SetType(wi::scene::LightComponent::POINT);
                 lightComp->color = XMFLOAT3(lr, lg, lb);
                 lightComp->intensity = 0.0f;
-                lightComp->range = 500.0f;
+                lightComp->range = nlt.range; // WE uses range for frustum culling AABB -- must match visibility distance
                 lightComp->SetCastShadow(false);
-                lightComp->SetVolumetricsEnabled(true);
+                lightComp->SetVolumetricsEnabled(false);
             }
-            nlt.markerEntity = createLightMarker(scene, lightName + "_mk", lr, lg, lb);
+            attachLensFlare(scene, nlt.entity, nlt.r, nlt.g, nlt.b);
             navLights.push_back(nlt);
             autoLightCount++;
         }
@@ -3248,6 +3287,21 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                                    0.0f, 0.0f); // zero pitch/roll
             }
 
+            // Shader-based Kelvin wake: write ship data into ocean constant buffer
+            int wakeIdx = 0;
+            {
+                float spdMps = ownShipSpeed * KNOTS_TO_MPS;
+                if (spdMps > 0.5f && wakeIdx < 8) {
+                    auto& w = scene.weather.oceanParameters.wakeShips[wakeIdx++];
+                    w.posX = ownShipX;
+                    w.posZ = ownShipZ;
+                    w.headingDirX = std::sin(headRad);
+                    w.headingDirZ = std::cos(headRad);
+                    w.speed = spdMps;
+                    w.wakeLength = 150.0f;
+                }
+            }
+
             // Bridge camera: locked to ship with no wave-induced motion
             if (!camOrbitMode) {
                 float vxScaled = viewLocalX * ownShipScaleFactor;
@@ -3268,8 +3322,20 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                     st.heading = SimBridge::getOtherShipHeading(s);
                     setEntityTransform(scene, st.entity, st.x, st.heightCorr, st.z,
                                        st.heading, st.scaleFactor);
+                    float otherSpeedMps = SimBridge::getOtherShipSpeed(s);
+                    if (otherSpeedMps > 0.5f && wakeIdx < 8) {
+                        float hRad = st.heading * (float)M_PI / 180.0f;
+                        auto& w = scene.weather.oceanParameters.wakeShips[wakeIdx++];
+                        w.posX = st.x;
+                        w.posZ = st.z;
+                        w.headingDirX = std::sin(hRad);
+                        w.headingDirZ = std::cos(hRad);
+                        w.speed = otherSpeedMps;
+                        w.wakeLength = 150.0f;
+                    }
                 }
             }
+            scene.weather.oceanParameters.wakeShipCount = wakeIdx;
 
             // ===== BUOY POSITIONS (tidal movement from SimulationModel) =====
             {
@@ -3332,7 +3398,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                     float dist = std::sqrt(dx*dx + dy*dy + dz*dz);
                     bool inRange = (dist <= nlt.range) && (lightAlpha > 0.05f);
 
-                    // Arc visibility (for marker dot -- can the observer SEE the light source?)
+                    // Arc visibility: is the observer within the light's directional sector?
                     bool arcVisible = true;
                     if (inRange && !(nlt.startAngle == 0 && nlt.endAngle == 360)) {
                         // Bearing FROM light TO observer (compass: 0=N, 90=E)
@@ -3365,35 +3431,63 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                             flashOn = false;
                     }
 
-                    // Marker visible = in range + correct arc + flash on
-                    bool markerVisible = inRange && arcVisible && flashOn;
-
-                    // Point light: own ship lights always illuminate the hull (glow on bow)
-                    // regardless of arc -- you see red/green glow on your own ship from the bridge.
-                    // Other ships/buoys/land: respect arc check.
-                    bool pointLightOn = inRange && flashOn;
-                    if (nlt.shipIndex != -1) {
-                        // Not own ship: gate by arc too
-                        pointLightOn = pointLightOn && arcVisible;
+                    // Unified visibility: intensity=0 hides both PBR illumination AND lens flare.
+                    // Own ship: skip arc check (camera is ON the bridge, physically outside
+                    // most arcs). WE depth buffer handles occlusion for own-hull geometry.
+                    // Other ships/buoys/land: arc check determines sector visibility.
+                    bool visible;
+                    if (nlt.shipIndex == -1) {
+                        visible = inRange && flashOn;
+                    } else {
+                        visible = inRange && arcVisible && flashOn;
                     }
 
-                    // Position the point light
+                    // Position the light (lens flare position is derived from the light entity)
                     setEntityTransform(scene, nlt.entity, wx, wy, wz);
 
                     auto* lightComp = scene.lights.GetComponent(nlt.entity);
                     if (lightComp) {
-                        lightComp->intensity = pointLightOn ? (lightAlpha * 3000.0f) : 0.0f;
-                    }
-
-                    // Emissive marker: ~1-2 pixels at any distance, color-preserving bloom
-                    if (nlt.markerEntity != wi::ecs::INVALID_ENTITY) {
-                        float markerScale = std::max(1.0f, dist * 0.002f);
-                        setEntityTransform(scene, nlt.markerEntity, wx, wy, wz, 0, markerScale);
-                        auto* markerObj = scene.objects.GetComponent(nlt.markerEntity);
-                        if (markerObj) {
-                            markerObj->SetRenderable(markerVisible);
+                        if (!visible) {
+                            lightComp->intensity = 0.0f; // hides lens flare too (IsInactive)
+                        } else {
+                            // Allard's Law: illuminance = I * T^D / D^2
+                            // T=0.8 per NM (10nm meteorological visibility, clear night)
+                            float D_nm = std::max(0.1f, dist / 1852.0f);
+                            float transmittance = std::pow(0.8f, D_nm);
+                            float illuminance = nlt.intensity_cd * transmittance / (D_nm * D_nm);
+                            // Scale to WE intensity units. With PBR range=30m and
+                            // volumetrics off, the light only illuminates nearby hull/buoy.
+                            // The 4px lens flare dot provides distant visibility.
+                            // Intensity just needs to be non-zero (keeps flare active)
+                            // and proportional to distance for subtle close-range bloom.
+                            float weIntensity = std::min(3000.0f, illuminance * 50.0f) * lightAlpha;
+                            lightComp->intensity = weIntensity;
                         }
                     }
+                }
+            }
+
+            // One-shot diagnostic: log first 5 nav lights' state
+            {
+                static bool diagDone = false;
+                if (!diagDone && navLights.size() > 0) {
+                    diagDone = true;
+                    int count = std::min((int)navLights.size(), 15);
+                    for (int i = 0; i < count; i++) {
+                        auto& nlt = navLights[i];
+                        auto* lc = scene.lights.GetComponent(nlt.entity);
+                        std::string msg = "  [DIAG] light " + std::to_string(i) +
+                            " entity=" + std::to_string(nlt.entity) +
+                            " intensity=" + (lc ? std::to_string(lc->intensity) : "NO_LC") +
+                            " range=" + (lc ? std::to_string(lc->range) : "?") +
+                            " flares=" + (lc ? std::to_string(lc->lensFlareRimTextures.size()) : "?") +
+                            " inactive=" + (lc ? std::to_string(lc->IsInactive()) : "?") +
+                            " intensity_cd=" + std::to_string(nlt.intensity_cd) +
+                            " shipIdx=" + std::to_string(nlt.shipIndex);
+                        weLog(msg);
+                    }
+                    weLog("  [DIAG] lensFlareEnabled=" + std::to_string(renderPath.getLensFlareEnabled()));
+                    weLog("  [DIAG] total navLights=" + std::to_string(navLights.size()));
                 }
             }
 
