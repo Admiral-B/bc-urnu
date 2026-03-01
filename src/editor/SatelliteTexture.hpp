@@ -3,6 +3,9 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <thread>
+#include <mutex>
+#include <atomic>
 
 class TileDownloader;
 
@@ -34,4 +37,29 @@ public:
     static int suggestZoom(double minLat, double maxLat,
                            double minLon, double maxLon,
                            int targetSize);
+
+    // --- Progressive (two-pass) generation ---
+    // Pass 1 returns a low-zoom preview immediately (blocking, fast).
+    // Pass 2 runs in background at full zoom and calls onComplete when done.
+    struct ProgressiveResult {
+        std::vector<uint8_t> lowResData;   // Pass 1 RGB (available immediately)
+        int lowResWidth = 0;
+        int lowResHeight = 0;
+    };
+
+    // Completion callback receives the high-res data.
+    using CompletionCallback = std::function<void(std::vector<uint8_t> highResData,
+                                                   int width, int height)>;
+
+    // Start progressive two-pass generation.
+    // Returns low-res preview data. High-res generation runs on a background thread
+    // and calls onComplete (from the background thread) when done.
+    // previewZoomDelta: how many zoom levels below target for the preview (default 3).
+    static ProgressiveResult generateProgressive(
+        double minLat, double maxLat, double minLon, double maxLon,
+        int zoom, int targetSize,
+        const std::string& cacheDir,
+        CompletionCallback onComplete,
+        ProgressCallback progress = nullptr,
+        int previewZoomDelta = 3);
 };

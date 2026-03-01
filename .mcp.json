@@ -6,6 +6,13 @@
       "args": [
         "c:/Users/PB/source/bc-urnu/tools/screenshot_mcp.py"
       ]
+    },
+    "bc-input": {
+      "type": "stdio",
+      "command": "python",
+      "args": [
+        "c:/Users/PB/source/bc-urnu/tools/input_mcp.py"
+      ]
     }
   }
 }

@@ -3,11 +3,13 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
-#include <queue>
 #include <mutex>
-#include <thread>
 #include <atomic>
 #include <functional>
+#include <memory>
+
+class TileThreadPool;
+class WinHTTPConnectionPool;
 
 class TileDownloader {
 public:
@@ -15,7 +17,9 @@ public:
     //   e.g. "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
     // cacheDir: local directory for cached tiles
     //   e.g. "%APPDATA%/Bridge Command/tilecache/osm/"
-    TileDownloader(const std::string& tileServerUrl, const std::string& cacheDir);
+    // numWorkers: number of download threads (default 4)
+    TileDownloader(const std::string& tileServerUrl, const std::string& cacheDir,
+                   int numWorkers = 4);
     ~TileDownloader();
 
     // Request a tile. Returns immediately.
@@ -39,14 +43,20 @@ public:
 private:
     std::string buildCachePath(int z, int x, int y) const;
     static std::string tileKey(int z, int x, int y);
-    void downloadThreadFunc();
+    std::string extractDomain(const std::string& url) const;
     std::vector<uint8_t> loadFromDisk(const std::string& path);
     bool saveToDisk(const std::string& path, const std::vector<uint8_t>& data);
-    std::vector<uint8_t> httpDownload(const std::string& url);
+
+    void addToMemoryCache(const std::string& key, std::vector<uint8_t> data);
 
     std::string serverUrl;
     std::string cacheDir;
     std::string userAgent;
+    std::string serverDomain; // cached domain extracted from serverUrl
+
+    // Thread pool + connection pool (owned)
+    std::unique_ptr<TileThreadPool> threadPool;
+    std::unique_ptr<WinHTTPConnectionPool> connPool;
 
     // In-memory LRU cache (max ~200 tiles)
     std::mutex cacheMutex;
@@ -54,16 +64,7 @@ private:
     std::vector<std::string> cacheOrder; // For LRU eviction
     static const size_t MAX_MEMORY_CACHE = 200;
 
-    // Background download queue
-    struct DownloadRequest {
-        int z, x, y;
-    };
-    std::queue<DownloadRequest> downloadQueue;
-    std::mutex queueMutex;
-    std::thread workerThread;
-    std::atomic<bool> running{true};
-    std::atomic<int> pendingCount{0};
-
     // Track tiles already queued to avoid duplicates
+    std::mutex queuedMutex;
     std::unordered_map<std::string, bool> queuedTiles;
 };

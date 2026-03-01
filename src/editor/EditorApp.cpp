@@ -2393,6 +2393,16 @@ void EditorApp::generateWorldFromArea() {
             generateStatus = "Found " + std::to_string(osmBarriers.size()) + " barrier(s) from building query";
         }
 
+        // Enrich building heights from GBA (ML-estimated heights for buildings without OSM data)
+        {
+            std::string gbaDir = cacheDir + "/gba/";
+            int enriched = bldgReader.enrichWithGBA(gbaDir, minLat, maxLat, minLon, maxLon,
+                5.0f, [this](const std::string& msg) { generateStatus = msg; });
+            if (enriched > 0) {
+                generateStatus = "GBA: enriched " + std::to_string(enriched) + " building heights";
+            }
+        }
+
         // Generate heightmap: land classification + real elevation + barrier detection.
         // Strategy:
         //   1. Land/water classification from best available source

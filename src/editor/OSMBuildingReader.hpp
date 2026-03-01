@@ -6,12 +6,20 @@
 #include <functional>
 #include <utility>
 
+// Height provenance tracking
+enum class HeightSource {
+    OSM,      // From OSM height or building:levels tag
+    GBA,      // From GlobalBuildingAtlas ML estimate
+    Default   // Type-based default
+};
+
 struct BuildingFootprint {
     std::vector<std::pair<double, double>> outline; // lat/lon polygon (closed ring)
     float height = 9.0f;      // metres (default ~3 storeys)
     std::string type;          // residential/commercial/industrial/church/...
     std::string name;
     bool isStructure = false;  // true for harbour structures (pier, breakwater, dam, etc.)
+    HeightSource heightSource = HeightSource::Default;
 };
 
 class OSMBuildingReader {
@@ -45,6 +53,16 @@ public:
     static std::vector<uint8_t> httpPost(const std::string& url,
                                           const std::string& body,
                                           const std::string& userAgent);
+
+    // Enrich buildings that lack OSM height data using GBA ML estimates.
+    // gbaDir: cache directory for GBA tiles. varianceThreshold: ignore GBA
+    // heights with variance above this value (default 5.0m).
+    // Returns number of buildings enriched.
+    int enrichWithGBA(const std::string& gbaDir,
+                      double minLat, double maxLat,
+                      double minLon, double maxLon,
+                      float varianceThreshold = 5.0f,
+                      ProgressCallback progress = nullptr);
 
 private:
     std::vector<BuildingFootprint> buildings;

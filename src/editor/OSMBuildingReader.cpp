@@ -482,6 +482,8 @@ bool OSMBuildingReader::parseResponse(const std::string& jsonStr) {
             fp.height = estimateHeight(heightStr, levelsStr, fp.type);
         }
         fp.name = name;
+        fp.heightSource = (!heightStr.empty() || !levelsStr.empty())
+                          ? HeightSource::OSM : HeightSource::Default;
 
         // Check if the way is a closed polygon (first == last point)
         bool isClosed = (fp.outline.size() >= 3 &&
@@ -549,7 +551,9 @@ bool OSMBuildingReader::saveCache(const std::string& path) const {
     f << std::fixed << std::setprecision(8);
     f << buildings.size() << "\n";
     for (const auto& b : buildings) {
-        f << b.outline.size() << " " << b.height << " " << (b.isStructure ? 1 : 0) << " " << b.type << " " << b.name << "\n";
+        f << b.outline.size() << " " << b.height << " " << (b.isStructure ? 1 : 0)
+          << " " << static_cast<int>(b.heightSource)
+          << " " << b.type << " " << b.name << "\n";
         for (const auto& [lat, lon] : b.outline) {
             f << lat << " " << lon << "\n";
         }
@@ -595,8 +599,15 @@ bool OSMBuildingReader::loadCache(const std::string& path) {
         if (!(f >> npts >> fp.height >> isStruct)) return false;
         fp.isStructure = (isStruct != 0);
 
-        // Read type (single word)
-        if (!(f >> fp.type)) return false;
+        // Read next token: either heightSource (int 0-2, new format) or type (string, old format)
+        std::string token;
+        if (!(f >> token)) return false;
+        if (token == "0" || token == "1" || token == "2") {
+            fp.heightSource = static_cast<HeightSource>(std::stoi(token));
+            if (!(f >> fp.type)) return false;
+        } else {
+            fp.type = token;  // old format: token is the type
+        }
 
         // Read rest of line as name (may contain spaces or be empty)
         std::getline(f, fp.name);
@@ -649,4 +660,61 @@ bool OSMBuildingReader::loadCache(const std::string& path) {
 
     queryDone = true;
     return true;
+}
+
+// ---- GBA Height Enrichment ----
+
+#include "GBATileDownloader.hpp"
+#include "CoordinateProjection.hpp"
+
+int OSMBuildingReader::enrichWithGBA(const std::string& gbaDir,
+                                      double minLat, double maxLat,
+                                      double minLon, double maxLon,
+                                      float varianceThreshold,
+                                      ProgressCallback progress) {
+    GBATileDownloader gba(gbaDir);
+    if (!gba.loadForBounds(minLat, maxLat, minLon, maxLon, progress)) {
+        if (progress) progress("GBA: no data available for this area");
+        return 0;
+    }
+
+    if (progress) progress("GBA: enriching " + std::to_string(buildings.size()) +
+                            " buildings from " + std::to_string(gba.buildingCount()) + " GBA polygons");
+
+    int enriched = 0;
+    for (auto& bld : buildings) {
+        // Only enrich buildings without OSM height data
+        if (bld.heightSource == HeightSource::OSM) continue;
+        if (bld.isStructure) continue; // Don't override harbour structures
+
+        // Compute centroid in WGS84
+        double sumLat = 0.0, sumLon = 0.0;
+        for (auto& pt : bld.outline) {
+            sumLat += pt.first;
+            sumLon += pt.second;
+        }
+        double cLat = sumLat / bld.outline.size();
+        double cLon = sumLon / bld.outline.size();
+
+        // Reproject to EPSG:3857
+        double x3857 = CoordinateProjection::lonToX(cLon);
+        double y3857 = CoordinateProjection::latToY(cLat);
+
+        // Find nearest GBA building
+        auto* gbaMatch = gba.findNearest(x3857, y3857, 50.0);
+        if (!gbaMatch) continue;
+
+        // Skip high-variance estimates
+        if (gbaMatch->variance > varianceThreshold) continue;
+
+        // Apply GBA height
+        if (gbaMatch->height > 0.5f) {
+            bld.height = gbaMatch->height;
+            bld.heightSource = HeightSource::GBA;
+            enriched++;
+        }
+    }
+
+    if (progress) progress("GBA: enriched " + std::to_string(enriched) + " buildings");
+    return enriched;
 }

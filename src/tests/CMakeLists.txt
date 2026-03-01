@@ -35,6 +35,10 @@ set(BC_TESTABLE_SOURCES
     ${BC_SRC_DIR}/editor/OSMLandPolygons.cpp
     ${BC_SRC_DIR}/editor/ElevationTile.cpp
     ${BC_SRC_DIR}/editor/TerrainTextureBlender.cpp
+    ${BC_SRC_DIR}/editor/TileThreadPool.cpp
+    ${BC_SRC_DIR}/editor/WinHTTPConnectionPool.cpp
+    ${BC_SRC_DIR}/editor/TileDownloader.cpp
+    ${BC_SRC_DIR}/editor/GBATileDownloader.cpp
     ${BC_SRC_DIR}/gui/IniFileRW.cpp
     test_stubs.cpp
 )
@@ -52,6 +56,8 @@ set(BC_TEST_SOURCES
     test_osm_water_reader.cpp
     test_ini_file_rw.cpp
     test_ocean_math.cpp
+    test_tile_thread_pool.cpp
+    test_gba_tile_downloader.cpp
 )
 
 # Conditionally add chart/world generation if GDAL is available

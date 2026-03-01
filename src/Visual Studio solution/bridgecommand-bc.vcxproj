@@ -241,6 +241,9 @@
     <ClCompile Include="..\TextureUpscaler.cpp" />
     <ClCompile Include="..\MapScreen.cpp" />
     <ClCompile Include="..\editor\TileDownloader.cpp" />
+    <ClCompile Include="..\editor\TileThreadPool.cpp" />
+    <ClCompile Include="..\editor\WinHTTPConnectionPool.cpp" />
+    <ClCompile Include="..\editor\GBATileDownloader.cpp" />
     <ClCompile Include="..\editor\OSMBuildingReader.cpp" />
     <ClCompile Include="..\editor\OSMWaterReader.cpp" />
     <ClCompile Include="..\graphics\wicked\WickedRenderer.cpp" />
@@ -339,6 +342,8 @@
     <ClInclude Include="..\TextureUpscaler.hpp" />
     <ClInclude Include="..\MapScreen.hpp" />
     <ClInclude Include="..\editor\TileDownloader.hpp" />
+    <ClInclude Include="..\editor\TileThreadPool.hpp" />
+    <ClInclude Include="..\editor\WinHTTPConnectionPool.hpp" />
     <ClInclude Include="..\editor\TileMath.hpp" />
     <ClInclude Include="..\editor\OSMBuildingReader.hpp" />
     <ClInclude Include="..\editor\OSMWaterReader.hpp" />

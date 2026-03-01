@@ -3287,18 +3287,18 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                                    0.0f, 0.0f); // zero pitch/roll
             }
 
-            // Shader-based Kelvin wake: write ship data into ocean constant buffer
+            // Shader-based Kelvin wake: write ship data into ocean static wake storage
             int wakeIdx = 0;
             {
                 float spdMps = ownShipSpeed * KNOTS_TO_MPS;
                 if (spdMps > 0.5f && wakeIdx < 8) {
-                    auto& w = scene.weather.oceanParameters.wakeShips[wakeIdx++];
+                    auto& w = wi::Ocean::wakeShips[wakeIdx++];
                     w.posX = ownShipX;
                     w.posZ = ownShipZ;
                     w.headingDirX = std::sin(headRad);
                     w.headingDirZ = std::cos(headRad);
                     w.speed = spdMps;
-                    w.wakeLength = 150.0f;
+                    w.wakeLength = std::min(300.0f, 20.0f * spdMps);
                 }
             }
 
@@ -3325,17 +3325,17 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                     float otherSpeedMps = SimBridge::getOtherShipSpeed(s);
                     if (otherSpeedMps > 0.5f && wakeIdx < 8) {
                         float hRad = st.heading * (float)M_PI / 180.0f;
-                        auto& w = scene.weather.oceanParameters.wakeShips[wakeIdx++];
+                        auto& w = wi::Ocean::wakeShips[wakeIdx++];
                         w.posX = st.x;
                         w.posZ = st.z;
                         w.headingDirX = std::sin(hRad);
                         w.headingDirZ = std::cos(hRad);
                         w.speed = otherSpeedMps;
-                        w.wakeLength = 150.0f;
+                        w.wakeLength = std::min(300.0f, 20.0f * otherSpeedMps);
                     }
                 }
             }
-            scene.weather.oceanParameters.wakeShipCount = wakeIdx;
+            wi::Ocean::wakeShipCount = wakeIdx;
 
             // ===== BUOY POSITIONS (tidal movement from SimulationModel) =====
             {

@@ -255,3 +255,34 @@ bool SatelliteTexture::writePNG(const std::string& path,
                                 rgbData.data(), width * 3);
     return result != 0;
 }
+
+SatelliteTexture::ProgressiveResult SatelliteTexture::generateProgressive(
+    double minLat, double maxLat, double minLon, double maxLon,
+    int zoom, int targetSize,
+    const std::string& cacheDir,
+    CompletionCallback onComplete,
+    ProgressCallback progress,
+    int previewZoomDelta) {
+
+    ProgressiveResult result;
+
+    // Pass 1: low-zoom fast preview
+    int previewZoom = std::max(1, zoom - previewZoomDelta);
+    result.lowResData = generate(minLat, maxLat, minLon, maxLon,
+                                  previewZoom, targetSize, cacheDir,
+                                  result.lowResWidth, result.lowResHeight,
+                                  nullptr);
+
+    // Pass 2: full-zoom in background
+    if (onComplete) {
+        std::thread([=] {
+            int outW = 0, outH = 0;
+            auto highRes = generate(minLat, maxLat, minLon, maxLon,
+                                     zoom, targetSize, cacheDir,
+                                     outW, outH, progress);
+            onComplete(std::move(highRes), outW, outH);
+        }).detach();
+    }
+
+    return result;
+}
