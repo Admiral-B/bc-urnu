@@ -19,12 +19,21 @@
 #define _CRT_SECURE_NO_WARNINGS //FIXME: Temporary fix
 
 #include "VRInterface.hpp"
+#include "ISound.hpp"
+#include "irrlicht.h"
 #include "Constants.hpp"
 #include <iostream>
 #include <cstdarg>
+#include <cmath>
+
+namespace {
+    inline irr::core::vector3df toIrrVec(const bc::graphics::Vec3& v) { return {v.x, v.y, v.z}; }
+    inline irr::core::quaternion toIrrQuat(const bc::graphics::Quaternion& q) { return {q.x, q.y, q.z, q.w}; }
+    constexpr float RADTODEG = 180.0f / 3.14159265358979323846f;
+}
 
 // Constructor
-VRInterface::VRInterface(irr::IrrlichtDevice* dev, irr::scene::ISceneManager* smgr, irr::video::IVideoDriver* driver, irr::u32 suGUI, irr::u32 shGUI) {
+VRInterface::VRInterface(irr::IrrlichtDevice* dev, irr::scene::ISceneManager* smgr, irr::video::IVideoDriver* driver, uint32_t suGUI, uint32_t shGUI) {
 	this->dev = dev;
 	this->smgr = smgr;
     this->driver = driver;
@@ -41,6 +50,7 @@ VRInterface::VRInterface(irr::IrrlichtDevice* dev, irr::scene::ISceneManager* sm
 	vrActive = false;
 
 	menuPressedRepeats = 0;
+	hornActive = false;
 	showHUD = true;
 
 	raySelectScreenX = 0;
@@ -88,14 +98,14 @@ VRInterface::VRInterface(irr::IrrlichtDevice* dev, irr::scene::ISceneManager* sm
 
 	// Add 2d interface rendering option
 	// Create mesh and scene node for HUD
-	irr::f32 hudRatio = 0.75;
+	float hudRatio = 0.75;
 	if (suGUI > 0 && shGUI > 0) {
-		hudRatio = (irr::f32)shGUI / (irr::f32)suGUI;
+		hudRatio = (float)shGUI / (float)suGUI;
 	}
 
-	irr::f32 hudWidth = 1.5;
-	irr::f32 hudHeight = hudWidth * hudRatio;
-	irr::scene::IMesh* hudPlane = smgr->getGeometryCreator()->createPlaneMesh(irr::core::dimension2d<irr::f32>(hudWidth, hudHeight));
+	float hudWidth = 1.5;
+	float hudHeight = hudWidth * hudRatio;
+	irr::scene::IMesh* hudPlane = smgr->getGeometryCreator()->createPlaneMesh(irr::core::dimension2d<float>(hudWidth, hudHeight));
 	smgr->getMeshManipulator()->setVertexColorAlpha(hudPlane, 192); // Set to be 25% transparent
 	// Make HUD mesh vertical so we don't need to worry about rotation later
 	meshRotationMatrix.setRotationDegrees(irr::core::vector3df(-90, 0, 0));
@@ -127,7 +137,7 @@ VRInterface::VRInterface(irr::IrrlichtDevice* dev, irr::scene::ISceneManager* sm
 
 	hudTexture = 0;
 	if (driver->queryFeature(irr::video::EVDF_RENDER_TO_TARGET)) {
-		hudTexture = driver->addRenderTargetTexture(irr::core::dimension2d<irr::u32>(suGUI, shGUI), "HUD");
+		hudTexture = driver->addRenderTargetTexture(irr::core::dimension2d<uint32_t>(suGUI, shGUI), "HUD");
 		hudScreen->setMaterialTexture(0, hudTexture); // set material to render target
 	}
 
@@ -741,6 +751,36 @@ int VRInterface::load(SimulationModel* model) {
 			return 1;
 	}
 
+	// Thumbstick Y axis action (for fine adjustment of throttle/rudder)
+	{
+		XrActionCreateInfo action_info;
+		action_info.type = XR_TYPE_ACTION_CREATE_INFO;
+		action_info.next = NULL;
+		action_info.actionType = XR_ACTION_TYPE_FLOAT_INPUT;
+		action_info.countSubactionPaths = HAND_COUNT;
+		action_info.subactionPaths = hand_paths;
+		strcpy(action_info.actionName, "thumbsticky");
+		strcpy(action_info.localizedActionName, "Thumbstick Y");
+		result = xrCreateAction(gameplay_actionset, &action_info, &thumbstick_y_action);
+		if (!xr_check(instance, result, "failed to create thumbstick Y action"))
+			return 1;
+	}
+
+	// Trigger action (for horn)
+	{
+		XrActionCreateInfo action_info;
+		action_info.type = XR_TYPE_ACTION_CREATE_INFO;
+		action_info.next = NULL;
+		action_info.actionType = XR_ACTION_TYPE_FLOAT_INPUT;
+		action_info.countSubactionPaths = HAND_COUNT;
+		action_info.subactionPaths = hand_paths;
+		strcpy(action_info.actionName, "trigger");
+		strcpy(action_info.localizedActionName, "Trigger");
+		result = xrCreateAction(gameplay_actionset, &action_info, &trigger_action);
+		if (!xr_check(instance, result, "failed to create trigger action"))
+			return 1;
+	}
+
 	// suggest actions for simple controller
 	// Valid actions are: input/select/click, input/menu/click, input/grip/pose, input/aim/pose, output/haptic
 	{
@@ -776,7 +816,55 @@ int VRInterface::load(SimulationModel* model) {
 			return 1;
 	}
 
-	// TODO: Could add additional controllers here (e.g. Valve Index)
+	// Oculus Touch controller bindings (Meta Quest, Rift)
+	// Adds: squeeze (grab), trigger (horn), thumbstick Y (fine adjustment)
+	{
+		XrPath interaction_profile_path;
+		result = xrStringToPath(instance, "/interaction_profiles/oculus/touch_controller",
+			&interaction_profile_path);
+		if (xr_check(instance, result, "got oculus touch interaction profile")) {
+			XrPath squeeze_path[HAND_COUNT];
+			xrStringToPath(instance, "/user/hand/left/input/squeeze/value", &squeeze_path[HAND_LEFT_INDEX]);
+			xrStringToPath(instance, "/user/hand/right/input/squeeze/value", &squeeze_path[HAND_RIGHT_INDEX]);
+
+			XrPath trigger_path[HAND_COUNT];
+			xrStringToPath(instance, "/user/hand/left/input/trigger/value", &trigger_path[HAND_LEFT_INDEX]);
+			xrStringToPath(instance, "/user/hand/right/input/trigger/value", &trigger_path[HAND_RIGHT_INDEX]);
+
+			XrPath thumbstick_y_path[HAND_COUNT];
+			xrStringToPath(instance, "/user/hand/left/input/thumbstick/y", &thumbstick_y_path[HAND_LEFT_INDEX]);
+			xrStringToPath(instance, "/user/hand/right/input/thumbstick/y", &thumbstick_y_path[HAND_RIGHT_INDEX]);
+
+			XrPath menu_path;
+			xrStringToPath(instance, "/user/hand/left/input/menu/click", &menu_path);
+
+			const XrActionSuggestedBinding bindings[] = {
+				{grip_pose_action, grip_pose_path[HAND_LEFT_INDEX]},
+				{grip_pose_action, grip_pose_path[HAND_RIGHT_INDEX]},
+				{aim_pose_action, aim_pose_path[HAND_LEFT_INDEX]},
+				{aim_pose_action, aim_pose_path[HAND_RIGHT_INDEX]},
+				{select_action_float, squeeze_path[HAND_LEFT_INDEX]},   // squeeze = grab
+				{select_action_float, squeeze_path[HAND_RIGHT_INDEX]},
+				{trigger_action, trigger_path[HAND_LEFT_INDEX]},        // trigger = horn
+				{trigger_action, trigger_path[HAND_RIGHT_INDEX]},
+				{thumbstick_y_action, thumbstick_y_path[HAND_LEFT_INDEX]},
+				{thumbstick_y_action, thumbstick_y_path[HAND_RIGHT_INDEX]},
+				{menu_action, menu_path},  // Only left hand has menu on Oculus Touch
+				{haptic_action, haptic_path[HAND_LEFT_INDEX]},
+				{haptic_action, haptic_path[HAND_RIGHT_INDEX]},
+			};
+
+			const XrInteractionProfileSuggestedBinding suggested_bindings = {
+				XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING,
+				NULL,
+				interaction_profile_path,
+				sizeof(bindings) / sizeof(bindings[0]),
+				bindings};
+
+			xrSuggestInteractionProfileBindings(instance, &suggested_bindings);
+			// Not fatal if this fails - simple controller is always available
+		}
+	}
 
 	XrSessionActionSetsAttachInfo actionset_attach_info;
 	actionset_attach_info.type = XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO;
@@ -797,6 +885,16 @@ int VRInterface::load(SimulationModel* model) {
 
 	// If successfull, return 0
 	vrActive = true;
+
+	// Enable HRTF for spatial audio in VR (requires OpenAL Soft, not Apple OpenAL)
+	if (model && model->getSound()) {
+		if (model->getSound()->enableHRTF()) {
+			std::cout << "VR: HRTF spatial audio enabled" << std::endl;
+		} else {
+			std::cout << "VR: HRTF not available (OpenAL Soft required)" << std::endl;
+		}
+	}
+
 	return 0;
 #else
 	std::cout << "VR interface not implemented" << std::endl;
@@ -832,6 +930,11 @@ bool VRInterface::isVRActive() const {
 
 void VRInterface::unload() {
 #if defined _WIN64 || defined __linux__
+	// Disable HRTF when VR is unloaded
+	if (model && model->getSound()) {
+		model->getSound()->disableHRTF();
+	}
+
 	for (uint32_t i = 0; i < view_count; i++) {
 		delete[] images[i];
 
@@ -1091,21 +1194,21 @@ int VRInterface::update() {
 		// Set hand grip location and orientation if successful.
 		if (xr_check(instance, result, "failed to locate space %d!", i)) {
 			if (i == HAND_LEFT_INDEX) {
-				vrLeftGripPosition.X = grip_locations[i].pose.position.x;
-				vrLeftGripPosition.Y = grip_locations[i].pose.position.y;
-				vrLeftGripPosition.Z = -1.0 * grip_locations[i].pose.position.z;
-				vrLeftGripOrientation.X = grip_locations[i].pose.orientation.x;
-				vrLeftGripOrientation.Y = grip_locations[i].pose.orientation.y;
-				vrLeftGripOrientation.Z = -1.0 * grip_locations[i].pose.orientation.z;
-				vrLeftGripOrientation.W = -1.0 * grip_locations[i].pose.orientation.w;
+				vrLeftGripPosition.x = grip_locations[i].pose.position.x;
+				vrLeftGripPosition.y = grip_locations[i].pose.position.y;
+				vrLeftGripPosition.z = -1.0 * grip_locations[i].pose.position.z;
+				vrLeftGripOrientation.x = grip_locations[i].pose.orientation.x;
+				vrLeftGripOrientation.y = grip_locations[i].pose.orientation.y;
+				vrLeftGripOrientation.z = -1.0 * grip_locations[i].pose.orientation.z;
+				vrLeftGripOrientation.w = -1.0 * grip_locations[i].pose.orientation.w;
 			} else if (i == HAND_RIGHT_INDEX) {
-				vrRightGripPosition.X = grip_locations[i].pose.position.x;
-				vrRightGripPosition.Y = grip_locations[i].pose.position.y;
-				vrRightGripPosition.Z = -1.0 * grip_locations[i].pose.position.z;
-				vrRightGripOrientation.X = grip_locations[i].pose.orientation.x;
-				vrRightGripOrientation.Y = grip_locations[i].pose.orientation.y;
-				vrRightGripOrientation.Z = -1.0 * grip_locations[i].pose.orientation.z;
-				vrRightGripOrientation.W = -1.0 * grip_locations[i].pose.orientation.w;
+				vrRightGripPosition.x = grip_locations[i].pose.position.x;
+				vrRightGripPosition.y = grip_locations[i].pose.position.y;
+				vrRightGripPosition.z = -1.0 * grip_locations[i].pose.position.z;
+				vrRightGripOrientation.x = grip_locations[i].pose.orientation.x;
+				vrRightGripOrientation.y = grip_locations[i].pose.orientation.y;
+				vrRightGripOrientation.z = -1.0 * grip_locations[i].pose.orientation.z;
+				vrRightGripOrientation.w = -1.0 * grip_locations[i].pose.orientation.w;
 			}
 		}
 
@@ -1131,21 +1234,21 @@ int VRInterface::update() {
 		// Set hand aim location and orientation if successful.
 		if (xr_check(instance, result, "failed to locate space %d!", i)) {
 			if (i == HAND_LEFT_INDEX) {
-				vrLeftAimPosition.X = aim_locations[i].pose.position.x;
-				vrLeftAimPosition.Y = aim_locations[i].pose.position.y;
-				vrLeftAimPosition.Z = -1.0 * aim_locations[i].pose.position.z;
-				vrLeftAimOrientation.X = aim_locations[i].pose.orientation.x;
-				vrLeftAimOrientation.Y = aim_locations[i].pose.orientation.y;
-				vrLeftAimOrientation.Z = -aim_locations[i].pose.orientation.z;
-				vrLeftAimOrientation.W = -aim_locations[i].pose.orientation.w;
+				vrLeftAimPosition.x = aim_locations[i].pose.position.x;
+				vrLeftAimPosition.y = aim_locations[i].pose.position.y;
+				vrLeftAimPosition.z = -1.0 * aim_locations[i].pose.position.z;
+				vrLeftAimOrientation.x = aim_locations[i].pose.orientation.x;
+				vrLeftAimOrientation.y = aim_locations[i].pose.orientation.y;
+				vrLeftAimOrientation.z = -aim_locations[i].pose.orientation.z;
+				vrLeftAimOrientation.w = -aim_locations[i].pose.orientation.w;
 			} else if (i == HAND_RIGHT_INDEX) {
-				vrRightAimPosition.X = aim_locations[i].pose.position.x;
-				vrRightAimPosition.Y = aim_locations[i].pose.position.y;
-				vrRightAimPosition.Z = -1.0 * aim_locations[i].pose.position.z;
-				vrRightAimOrientation.X = aim_locations[i].pose.orientation.x;
-				vrRightAimOrientation.Y = aim_locations[i].pose.orientation.y;
-				vrRightAimOrientation.Z = -aim_locations[i].pose.orientation.z;
-				vrRightAimOrientation.W = -aim_locations[i].pose.orientation.w;
+				vrRightAimPosition.x = aim_locations[i].pose.position.x;
+				vrRightAimPosition.y = aim_locations[i].pose.position.y;
+				vrRightAimPosition.z = -1.0 * aim_locations[i].pose.position.z;
+				vrRightAimOrientation.x = aim_locations[i].pose.orientation.x;
+				vrRightAimOrientation.y = aim_locations[i].pose.orientation.y;
+				vrRightAimOrientation.z = -aim_locations[i].pose.orientation.z;
+				vrRightAimOrientation.w = -aim_locations[i].pose.orientation.w;
 			}
 		}
 
@@ -1214,6 +1317,68 @@ int VRInterface::update() {
 		}
 	};
 
+	// Process trigger action (horn control)
+	// Either hand's trigger activates the horn
+	{
+		bool triggerPressed = false;
+		for (int i = 0; i < HAND_COUNT; i++) {
+			XrActionStateFloat trigger_value;
+			trigger_value.type = XR_TYPE_ACTION_STATE_FLOAT;
+			trigger_value.next = NULL;
+			XrActionStateGetInfo get_info;
+			get_info.type = XR_TYPE_ACTION_STATE_GET_INFO;
+			get_info.next = NULL;
+			get_info.action = trigger_action;
+			get_info.subactionPath = hand_paths[i];
+			result = xrGetActionStateFloat(session, &get_info, &trigger_value);
+			if (XR_SUCCEEDED(result) && trigger_value.isActive && trigger_value.currentState > 0.5f) {
+				triggerPressed = true;
+			}
+		}
+		// Toggle horn state
+		if (triggerPressed && !hornActive) {
+			model->startHorn();
+			hornActive = true;
+		} else if (!triggerPressed && hornActive) {
+			model->endHorn();
+			hornActive = false;
+		}
+	}
+
+	// Process thumbstick Y for fine adjustment (when grip is held)
+	// Left thumbstick Y: fine engine adjustment
+	// Right thumbstick Y: fine wheel/rudder adjustment
+	for (int i = 0; i < HAND_COUNT; i++) {
+		if (selectState[i]) {
+			XrActionStateFloat thumbstick_value;
+			thumbstick_value.type = XR_TYPE_ACTION_STATE_FLOAT;
+			thumbstick_value.next = NULL;
+			XrActionStateGetInfo get_info;
+			get_info.type = XR_TYPE_ACTION_STATE_GET_INFO;
+			get_info.next = NULL;
+			get_info.action = thumbstick_y_action;
+			get_info.subactionPath = hand_paths[i];
+			result = xrGetActionStateFloat(session, &get_info, &thumbstick_value);
+			if (XR_SUCCEEDED(result) && thumbstick_value.isActive) {
+				float thumbY = thumbstick_value.currentState;
+				// Apply deadzone
+				if (fabs(thumbY) > 0.15f) {
+					float adjustment = thumbY * 0.5f; // Fine adjustment rate
+					if (i == HAND_LEFT_INDEX) {
+						// Left thumbstick Y: fine engine control
+						model->setPortEngine(model->getPortEngine() + adjustment);
+						if (!model->isSingleEngine()) {
+							model->setStbdEngine(model->getStbdEngine() + adjustment);
+						}
+					} else {
+						// Right thumbstick Y: fine rudder/wheel adjustment
+						model->setWheel(model->getWheel() + adjustment * 5.0f);
+					}
+				}
+			}
+		}
+	}
+
 	// Check if menu button pressed on either controller
 	bool menuPressed = false;
 	for (int i = 0; i < HAND_COUNT; i++) {
@@ -1242,13 +1407,16 @@ int VRInterface::update() {
 	}
 
 	// Set controller positions
-	irr::core::vector3df baseViewPosition = model->getCameraBasePosition();
-	irr::core::matrix4 baseViewRotation = model->getCameraBaseRotation();
+	bc::graphics::Vec3 bcBaseViewPos = model->getCameraBasePosition();
+	irr::core::vector3df baseViewPosition(bcBaseViewPos.x, bcBaseViewPos.y, bcBaseViewPos.z);
+	bc::graphics::Matrix4 bcBaseViewRot = model->getCameraBaseRotation();
+	irr::core::matrix4 baseViewRotation;
+	for (int i = 0; i < 16; i++) baseViewRotation[i] = bcBaseViewRot.m[i];
 	// Transform positions based on orientation of the camera's parent
-	irr::core::vector3df transformedVrLeftGripPosition = vrLeftGripPosition;
-	irr::core::vector3df transformedVrRightGripPosition = vrRightGripPosition;
-	irr::core::vector3df transformedVrLeftAimPosition = vrLeftAimPosition;
-	irr::core::vector3df transformedVrRightAimPosition = vrRightAimPosition;
+	irr::core::vector3df transformedVrLeftGripPosition = toIrrVec(vrLeftGripPosition);
+	irr::core::vector3df transformedVrRightGripPosition = toIrrVec(vrRightGripPosition);
+	irr::core::vector3df transformedVrLeftAimPosition = toIrrVec(vrLeftAimPosition);
+	irr::core::vector3df transformedVrRightAimPosition = toIrrVec(vrRightAimPosition);
 	irr::core::vector3df transformedHUDScreenPosition = irr::core::vector3df(0.0, 0.0, 1.0);
 	baseViewRotation.transformVect(transformedVrLeftGripPosition);
 	baseViewRotation.transformVect(transformedVrRightGripPosition);
@@ -1256,10 +1424,10 @@ int VRInterface::update() {
 	baseViewRotation.transformVect(transformedVrRightAimPosition);
 	baseViewRotation.transformVect(transformedHUDScreenPosition);
 	// Transform orientations based on parent
-	irr::core::matrix4 transformedVrLeftGripOrientation = baseViewRotation * vrLeftGripOrientation.getMatrix();
-	irr::core::matrix4 transformedVrRightGripOrientation = baseViewRotation * vrRightGripOrientation.getMatrix();
-	irr::core::matrix4 transformedVrLeftAimOrientation = baseViewRotation * vrLeftAimOrientation.getMatrix();
-	irr::core::matrix4 transformedVrRightAimOrientation = baseViewRotation * vrRightAimOrientation.getMatrix();
+	irr::core::matrix4 transformedVrLeftGripOrientation = baseViewRotation * toIrrQuat(vrLeftGripOrientation).getMatrix();
+	irr::core::matrix4 transformedVrRightGripOrientation = baseViewRotation * toIrrQuat(vrRightGripOrientation).getMatrix();
+	irr::core::matrix4 transformedVrLeftAimOrientation = baseViewRotation * toIrrQuat(vrLeftAimOrientation).getMatrix();
+	irr::core::matrix4 transformedVrRightAimOrientation = baseViewRotation * toIrrQuat(vrRightAimOrientation).getMatrix();
 	// Set these positions
 	leftController->setPosition(baseViewPosition + transformedVrLeftGripPosition);
 	rightController->setPosition(baseViewPosition + transformedVrRightGripPosition);
@@ -1279,6 +1447,41 @@ int VRInterface::update() {
 		leftRayNode->setVisible(true);
 		rightRayNode->setVisible(true);
 		hudScreen->setVisible(true);
+	}
+
+	// Update audio listener from VR head tracking (uses center of head, not per-eye)
+	// This gives HRTF-correct spatial audio that follows the VR headset orientation
+	if (model && model->getSound() && view_count > 0) {
+		// Use the first view pose as head center (close enough for audio)
+		// The position is already in world space after base transform
+		bc::graphics::Vec3 headPos(
+			views[0].pose.position.x,
+			views[0].pose.position.y,
+			-1.0f * views[0].pose.position.z);
+
+		// Transform head position by ship base position and rotation
+		irr::core::vector3df transformedHeadPos = toIrrVec(headPos);
+		baseViewRotation.transformVect(transformedHeadPos);
+		transformedHeadPos += baseViewPosition;
+
+		model->getSound()->setListenerPosition(
+			transformedHeadPos.X, transformedHeadPos.Y, transformedHeadPos.Z);
+
+		// Compute forward and up vectors from head orientation for HRTF
+		bc::graphics::Quaternion headQuat(
+			views[0].pose.orientation.x,
+			views[0].pose.orientation.y,
+			-1.0f * views[0].pose.orientation.z,
+			-1.0f * views[0].pose.orientation.w);
+		irr::core::matrix4 headRotMatrix = baseViewRotation * toIrrQuat(headQuat).getMatrix();
+		irr::core::vector3df headForward(0, 0, 1);
+		irr::core::vector3df headUp(0, 1, 0);
+		headRotMatrix.rotateVect(headForward);
+		headRotMatrix.rotateVect(headUp);
+
+		model->getSound()->setListenerOrientation(
+			headForward.X, headForward.Y, headForward.Z,
+			headUp.X, headUp.Y, headUp.Z);
 	}
 
 	// --- Begin frame
@@ -1320,16 +1523,16 @@ int VRInterface::update() {
 		projection_views[i].fov = views[i].fov;
 
 		// Binding to Irrlicht views
-		irr::core::vector3df eyePos;
-		eyePos.X = projection_views[i].pose.position.x;
-		eyePos.Y = projection_views[i].pose.position.y;
-		eyePos.Z = -1.0 * projection_views[i].pose.position.z;
-		irr::core::quaternion quat;
-		quat.X = projection_views[i].pose.orientation.x;
-		quat.Y = projection_views[i].pose.orientation.y;
-		quat.Z = -1.0 * projection_views[i].pose.orientation.z;
-		quat.W = -1.0 * projection_views[i].pose.orientation.w;
-		
+		bc::graphics::Vec3 eyePos(
+			projection_views[i].pose.position.x,
+			projection_views[i].pose.position.y,
+			-1.0f * projection_views[i].pose.position.z);
+		bc::graphics::Quaternion vrQuat(
+			projection_views[i].pose.orientation.x,
+			projection_views[i].pose.orientation.y,
+			-1.0f * projection_views[i].pose.orientation.z,
+			-1.0f * projection_views[i].pose.orientation.w);
+
 		// Find lens shift, as left and right FOV may not be symmetrical
 		// TODO: Probably doesn't need calculating each frame
 		model->setViewAngle(irr::core::radToDeg(views[i].fov.angleRight - views[i].fov.angleLeft));
@@ -1339,10 +1542,10 @@ int VRInterface::update() {
 		float tanDown = tan(views[i].fov.angleDown);
 		float horizontalShift = -1.0*(tanRight + tanLeft) / (tanRight - tanLeft);
 		float verticalShift = -1.0 * (tanUp + tanDown) / (tanUp - tanDown);
-		irr::core::vector2df lensShift = irr::core::vector2df(horizontalShift, verticalShift);
-		
+		bc::graphics::Vec2 lensShift(horizontalShift, verticalShift);
+
 		// Send this to the camera
-		model->updateCameraVRPos(quat, eyePos, lensShift); // TODO: Check if this is relative to the correct origin
+		model->updateCameraVRPos(vrQuat, eyePos, lensShift); // TODO: Check if this is relative to the correct origin
 
 		int w = viewconfig_views[i].recommendedImageRectWidth;
 		int h = viewconfig_views[i].recommendedImageRectHeight;
@@ -1422,7 +1625,7 @@ int VRInterface::update() {
 			dev->postEventFromUser(userEventFromVR);
 
 			// Get ray from controller, prioritise right hand. Length 10m
-			irr::core::line3d<irr::f32> selectRay;
+			irr::core::line3d<float> selectRay;
 			getRayFromController(&selectRay, 10.0);
 
 			// Tracks the current intersection point with the level or a mesh
@@ -1447,8 +1650,8 @@ int VRInterface::update() {
 				irr::core::vector3df hudScreenTopLeftPos = hudScreenTopLeft->getAbsolutePosition();
 				irr::core::vector3df hudScreenBottomRightPos = hudScreenBottomRight->getAbsolutePosition();
 
-				irr::f32 interpY = 0;
-				irr::f32 interpX = 0;
+				float interpY = 0;
+				float interpX = 0;
 				// Get screen Y from Y
 				if ((hudScreenTopLeftPos.Y - hudScreenBottomRightPos.Y) != 0) {
 					interpY = (intersection.Y - hudScreenBottomRightPos.Y) / (hudScreenTopLeftPos.Y - hudScreenBottomRightPos.Y);
@@ -1511,8 +1714,8 @@ int VRInterface::update() {
 		if (hudTexture) {
 			driver->setRenderTarget(hudTexture, true, true, irr::video::SColor(0, 128, 128, 128));
 			// Draw GUI, this should have been updated in guiMain.drawGUI() above
-			driver->setViewPort(irr::core::rect<irr::s32>(0, 0, 10, 10));//Set to a dummy value first to force the next call to make the change
-			driver->setViewPort(irr::core::rect<irr::s32>(0, 0, suGUI, shGUI));
+			driver->setViewPort(irr::core::rect<int32_t>(0, 0, 10, 10));//Set to a dummy value first to force the next call to make the change
+			driver->setViewPort(irr::core::rect<int32_t>(0, 0, suGUI, shGUI));
 			smgr->getGUIEnvironment()->drawAll();
 			//set back usual render target
 			driver->setRenderTarget(0, 0); // TODO: Maybe not needed here
@@ -1532,8 +1735,8 @@ int VRInterface::update() {
     				portAzimuthThrottleReference = model->getPortAzimuthThrustLever();
 				}
 
-				irr::f32 leftHandDeltaZ = vrLeftGripPosition.Z - vrLeftGripPositionReference.Z;
-				irr::f32 leftHandDeltaX = vrLeftGripPosition.X - vrLeftGripPositionReference.X;
+				float leftHandDeltaZ = vrLeftGripPosition.z - vrLeftGripPositionReference.z;
+				float leftHandDeltaX = vrLeftGripPosition.x - vrLeftGripPositionReference.x;
 
 				// The 'set' functions will check limits, so don't clamp here
 				model->setPortSchottel(portSchottelReference + 360 * leftHandDeltaX); // TODO: Make sensitivity a parameter?
@@ -1547,8 +1750,8 @@ int VRInterface::update() {
     				stbdAzimuthThrottleReference = model->getStbdAzimuthThrustLever();
 				}
 
-				irr::f32 rightHandDeltaZ = vrRightGripPosition.Z - vrRightGripPositionReference.Z;
-				irr::f32 rightHandDeltaX = vrRightGripPosition.X - vrRightGripPositionReference.X;
+				float rightHandDeltaZ = vrRightGripPosition.z - vrRightGripPositionReference.z;
+				float rightHandDeltaX = vrRightGripPosition.x - vrRightGripPositionReference.x;
 
 				// The 'set' functions will check limits, so don't clamp here
 				model->setStbdSchottel(stbdSchottelReference + 360 * rightHandDeltaX); // TODO: Make sensitivity a parameter?
@@ -1567,15 +1770,15 @@ int VRInterface::update() {
 					
 					// Check if tilted to 'left', 'central' or 'right', and set this mode here
 					irr::core::vector3df leftGripEulerAngles;
-					vrLeftGripOrientation.toEuler(leftGripEulerAngles);
+					toIrrQuat(vrLeftGripOrientation).toEuler(leftGripEulerAngles);
 					// TODO: Check sign of this, and if +- 10 degrees is enough overlap
-					if (leftGripEulerAngles.Z * irr::core::RADTODEG > -10) {
+					if (leftGripEulerAngles.Z * RADTODEG > -10) {
 						vrChangingPortEngine = true;
 						portEngineReference = model->getPortEngine();
 					} else {
 						vrChangingPortEngine = false;
 					}
-					if (leftGripEulerAngles.Z * irr::core::RADTODEG < 10) {
+					if (leftGripEulerAngles.Z * RADTODEG < 10) {
 						vrChangingStbdEngine = true;
 						stbdEngineReference = model->getStbdEngine();
 					} else {
@@ -1583,7 +1786,7 @@ int VRInterface::update() {
 					}
 				}
 				
-				irr::f32 leftHandDeltaZ = vrLeftGripPosition.Z - vrLeftGripPositionReference.Z;
+				float leftHandDeltaZ = vrLeftGripPosition.z - vrLeftGripPositionReference.z;
 
 				if (vrChangingPortEngine) {
 					//setPortEngine clips to valid range, so don't worry about this here
@@ -1605,7 +1808,7 @@ int VRInterface::update() {
 					vrRightGripPositionReference = vrRightGripPosition;
 					wheelReference = model->getWheel();
 				}
-				irr::f32 rightHandDeltaX = vrRightGripPosition.X - vrRightGripPositionReference.X;
+				float rightHandDeltaX = vrRightGripPosition.x - vrRightGripPositionReference.x;
 				//setWheel clips to valid range, so don't worry about this here
 				model->setWheel(wheelReference + 60 * rightHandDeltaX); // TODO: Make sensitivity a parameter?
 				// TODO: Add haptic feedback if passing zero position?
@@ -1628,7 +1831,7 @@ int VRInterface::update() {
 #endif
 }
 
-bool VRInterface::getRayFromController(irr::core::line3d<irr::f32>* ray, irr::f32 rayLength)
+bool VRInterface::getRayFromController(irr::core::line3d<float>* ray, float rayLength)
 {
 #if defined _WIN64 || defined __linux__
 	if (selectState[HAND_LEFT_INDEX] || selectState[HAND_RIGHT_INDEX]) {

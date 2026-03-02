@@ -1,0 +1,726 @@
+/*   Bridge Command 5.0 Ship Simulator
+     Copyright (C) 2024 James Packer
+
+     This program is free software; you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 2 as
+     published by the Free Software Foundation
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY Or FITNESS For A PARTICULAR PURPOSE.  See the
+     GNU General Public License For more details.
+
+     You should have received a copy of the GNU General Public License along
+     with this program; if not, write to the Free Software Foundation, Inc.,
+     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA. */
+
+#include "TerrainTextureBlender.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <queue>
+
+// Simple hash-based value noise (same approach as building textures)
+static uint32_t hashXY(int x, int y) {
+    uint32_t h = (uint32_t)(x * 374761393 + y * 668265263);
+    h = (h ^ (h >> 13)) * 1274126177;
+    return h ^ (h >> 16);
+}
+
+static float vnoise(float x, float y, int seed) {
+    int ix = (int)std::floor(x), iy = (int)std::floor(y);
+    float fx = x - ix, fy = y - iy;
+    auto h = [&](int a, int b) -> float {
+        return (float)(hashXY(a + seed, b) % 10000) / 10000.0f;
+    };
+    float v00 = h(ix, iy), v10 = h(ix+1, iy), v01 = h(ix, iy+1), v11 = h(ix+1, iy+1);
+    float a = v00 + (v10 - v00) * fx;
+    float b = v01 + (v11 - v01) * fx;
+    return a + (b - a) * fy;
+}
+
+// FBM (fractal Brownian motion) for richer noise
+static float fbm(float x, float y, int seed, int octaves = 6) {
+    float val = 0.0f, amp = 0.5f, freq = 1.0f;
+    for (int i = 0; i < octaves; i++) {
+        val += vnoise(x * freq, y * freq, seed + i * 1000) * amp;
+        amp *= 0.5f;
+        freq *= 2.0f;
+    }
+    return val;
+}
+
+// Micro-detail noise for surface grain visible at close range
+static float microDetail(float x, float y, int seed) {
+    return vnoise(x * 3.0f, y * 3.0f, seed) * 0.3f +
+           vnoise(x * 6.0f, y * 6.0f, seed + 100) * 0.15f;
+}
+
+// Terrain type colors (R, G, B)
+struct TerrainColor { uint8_t r, g, b; };
+
+// Generate procedural detail color for each terrain type
+static TerrainColor grassColor(float nx, float ny, int seed) {
+    float n = fbm(nx * 0.8f, ny * 0.8f, seed, 3);
+    float n2 = vnoise(nx * 3.0f, ny * 3.0f, seed + 500);
+    // Muted, natural green (less saturated to let satellite show through)
+    int r = 70 + (int)(n * 30) + (int)(n2 * 10);
+    int g = 95 + (int)(n * 40) + (int)(n2 * 15);
+    int b = 50 + (int)(n * 20) + (int)(n2 * 8);
+    return { (uint8_t)std::clamp(r, 0, 255),
+             (uint8_t)std::clamp(g, 0, 255),
+             (uint8_t)std::clamp(b, 0, 255) };
+}
+
+static TerrainColor rockColor(float nx, float ny, int seed) {
+    float n = fbm(nx * 1.2f, ny * 1.2f, seed + 100, 4);
+    float crack = vnoise(nx * 5.0f, ny * 5.0f, seed + 600);
+    int base = 120 + (int)(n * 45);
+    if (crack < 0.15f) base -= 25; // dark crack lines
+    int r = base + 5;
+    int g = base;
+    int b = base - 5;
+    return { (uint8_t)std::clamp(r, 0, 255),
+             (uint8_t)std::clamp(g, 0, 255),
+             (uint8_t)std::clamp(b, 0, 255) };
+}
+
+static TerrainColor sandColor(float nx, float ny, int seed) {
+    float n = fbm(nx * 1.5f, ny * 1.5f, seed + 200, 3);
+    float grain = vnoise(nx * 8.0f, ny * 8.0f, seed + 700);
+    int r = 190 + (int)(n * 30) + (int)(grain * 10);
+    int g = 175 + (int)(n * 25) + (int)(grain * 8);
+    int b = 140 + (int)(n * 20) + (int)(grain * 6);
+    return { (uint8_t)std::clamp(r, 0, 255),
+             (uint8_t)std::clamp(g, 0, 255),
+             (uint8_t)std::clamp(b, 0, 255) };
+}
+
+static TerrainColor dirtColor(float nx, float ny, int seed) {
+    float n = fbm(nx * 1.0f, ny * 1.0f, seed + 300, 3);
+    float clump = vnoise(nx * 4.0f, ny * 4.0f, seed + 800);
+    int r = 110 + (int)(n * 35) + (int)(clump * 15);
+    int g = 85 + (int)(n * 30) + (int)(clump * 12);
+    int b = 60 + (int)(n * 20) + (int)(clump * 8);
+    return { (uint8_t)std::clamp(r, 0, 255),
+             (uint8_t)std::clamp(g, 0, 255),
+             (uint8_t)std::clamp(b, 0, 255) };
+}
+
+// ---- Land-use-specific terrain colors ----
+
+static TerrainColor forestColor(float nx, float ny, int seed) {
+    // Large-scale canopy clusters (individual tree crowns at ~5m scale)
+    float canopyLarge = fbm(nx * 0.4f, ny * 0.4f, seed + 400, 4);
+    float canopySmall = vnoise(nx * 2.5f, ny * 2.5f, seed + 900);
+    // Mix dark green with brown leaf tones in patches
+    float brownMix = vnoise(nx * 0.8f, ny * 0.8f, seed + 910);
+    brownMix = std::max(0.0f, brownMix - 0.6f) * 2.5f; // sparse brown patches
+    int r = 28 + (int)(canopyLarge * 22) + (int)(canopySmall * 10) + (int)(brownMix * 40);
+    int g = 58 + (int)(canopyLarge * 45) + (int)(canopySmall * 18) - (int)(brownMix * 10);
+    int b = 18 + (int)(canopyLarge * 12) + (int)(canopySmall * 6);
+    return { (uint8_t)std::clamp(r, 0, 255),
+             (uint8_t)std::clamp(g, 0, 255),
+             (uint8_t)std::clamp(b, 0, 255) };
+}
+
+static TerrainColor concreteColor(float nx, float ny, int seed) {
+    float n = fbm(nx * 1.5f, ny * 1.5f, seed + 500, 3);
+    float stain = vnoise(nx * 6.0f, ny * 6.0f, seed + 950);
+    int base = 150 + (int)(n * 25);
+    if (stain < 0.2f) base -= 15; // dark patches
+    return { (uint8_t)std::clamp(base + 3, 0, 255),
+             (uint8_t)std::clamp(base, 0, 255),
+             (uint8_t)std::clamp(base - 3, 0, 255) };
+}
+
+static TerrainColor residentialColor(float nx, float ny, int seed) {
+    float n = fbm(nx * 1.2f, ny * 1.2f, seed + 550, 3);
+    float patch = vnoise(nx * 3.0f, ny * 3.0f, seed + 970);
+    // Subtle road grid: darker lines at regular intervals (~50m equivalent)
+    float roadX = std::abs(std::fmod(nx * 2.0f, 1.0f) - 0.5f);
+    float roadY = std::abs(std::fmod(ny * 2.0f, 1.0f) - 0.5f);
+    float road = (roadX < 0.04f || roadY < 0.04f) ? 0.7f : 1.0f;
+    // Garden patches between roads (greener)
+    float garden = vnoise(nx * 4.0f, ny * 4.0f, seed + 975);
+    int r = (int)((135 + (int)(n * 28) + (int)(patch * 10)) * road);
+    int g = (int)((132 + (int)(n * 25) + (int)(patch * 8) + (int)(garden * 12)) * road);
+    int b = (int)((118 + (int)(n * 18) + (int)(patch * 6)) * road);
+    return { (uint8_t)std::clamp(r, 0, 255),
+             (uint8_t)std::clamp(g, 0, 255),
+             (uint8_t)std::clamp(b, 0, 255) };
+}
+
+static TerrainColor farmColor(float nx, float ny, int seed) {
+    // Field pattern with plough rows
+    float n = fbm(nx * 0.4f, ny * 0.4f, seed + 600, 3);
+    float rows = 0.5f + 0.5f * std::sin(nx * 8.0f + n * 3.0f);
+    // Field boundary hedgerows (~200m equivalent intervals)
+    float hedgeX = std::abs(std::fmod(nx * 0.5f, 1.0f) - 0.5f);
+    float hedgeY = std::abs(std::fmod(ny * 0.5f, 1.0f) - 0.5f);
+    bool hedge = (hedgeX < 0.02f || hedgeY < 0.02f);
+    // Per-field color variation (different crops)
+    float fieldId = vnoise(nx * 0.3f, ny * 0.3f, seed + 610);
+    int rBase = 90 + (int)(fieldId * 25);
+    int gBase = 115 + (int)(fieldId * 30);
+    int bBase = 50 + (int)(fieldId * 15);
+    int r = rBase + (int)(n * 28) + (int)(rows * 12);
+    int g = gBase + (int)(n * 32) + (int)(rows * 18);
+    int b = bBase + (int)(n * 18) + (int)(rows * 8);
+    if (hedge) { r = 35; g = 55; b = 22; } // dark green hedgerow
+    return { (uint8_t)std::clamp(r, 0, 255),
+             (uint8_t)std::clamp(g, 0, 255),
+             (uint8_t)std::clamp(b, 0, 255) };
+}
+
+static TerrainColor heathColor(float nx, float ny, int seed) {
+    float n = fbm(nx * 0.7f, ny * 0.7f, seed + 650, 4);
+    float scrub = vnoise(nx * 3.0f, ny * 3.0f, seed + 980);
+    int r = 100 + (int)(n * 35) + (int)(scrub * 12);
+    int g = 95 + (int)(n * 30) + (int)(scrub * 10);
+    int b = 60 + (int)(n * 20) + (int)(scrub * 8);
+    return { (uint8_t)std::clamp(r, 0, 255),
+             (uint8_t)std::clamp(g, 0, 255),
+             (uint8_t)std::clamp(b, 0, 255) };
+}
+
+// ---- New land use type colors ----
+
+static TerrainColor constructionColor(float nx, float ny, int seed) {
+    float n = fbm(nx * 1.0f, ny * 1.0f, seed, 5);
+    float gravel = vnoise(nx * 5.0f, ny * 5.0f, seed + 100);
+    int r = 145 + (int)(n * 30) + (int)(gravel * 15);
+    int g = 115 + (int)(n * 25) + (int)(gravel * 10);
+    int b = 75 + (int)(n * 20) + (int)(gravel * 8);
+    return { (uint8_t)std::clamp(r, 0, 255),
+             (uint8_t)std::clamp(g, 0, 255),
+             (uint8_t)std::clamp(b, 0, 255) };
+}
+
+static TerrainColor quarryColor(float nx, float ny, int seed) {
+    float n = fbm(nx * 0.5f, ny * 0.5f, seed, 5);
+    float terrace = std::abs(std::fmod(ny * 3.0f + n * 2.0f, 1.0f) - 0.5f);
+    int base = 130 + (int)(n * 30) + (int)(terrace * 25);
+    int r = base + 5;
+    int g = base - 2;
+    int b = base - 8;
+    return { (uint8_t)std::clamp(r, 0, 255),
+             (uint8_t)std::clamp(g, 0, 255),
+             (uint8_t)std::clamp(b, 0, 255) };
+}
+
+static TerrainColor allotmentColor(float nx, float ny, int seed) {
+    // Patchwork of small plots with different crop colors
+    float plotX = std::floor(nx * 4.0f);
+    float plotY = std::floor(ny * 4.0f);
+    uint32_t plotHash = hashXY((int)plotX + seed, (int)plotY);
+    float greenMix = (float)(plotHash % 100) / 100.0f;
+    int r = 70 + (int)(greenMix * 40) + (int)(vnoise(nx * 4.0f, ny * 4.0f, seed) * 15);
+    int g = 95 + (int)(greenMix * 35) + (int)(vnoise(nx * 4.0f, ny * 4.0f, seed + 1) * 20);
+    int b = 40 + (int)(greenMix * 15) + (int)(vnoise(nx * 4.0f, ny * 4.0f, seed + 2) * 10);
+    return { (uint8_t)std::clamp(r, 0, 255),
+             (uint8_t)std::clamp(g, 0, 255),
+             (uint8_t)std::clamp(b, 0, 255) };
+}
+
+static TerrainColor cemeteryColor(float nx, float ny, int seed) {
+    float n = fbm(nx * 0.6f, ny * 0.6f, seed, 4);
+    // Subtle row pattern
+    float rowPattern = 0.5f + 0.5f * std::sin(ny * 12.0f);
+    int r = 48 + (int)(n * 20) + (int)(rowPattern * 8);
+    int g = 72 + (int)(n * 30) + (int)(rowPattern * 12);
+    int b = 35 + (int)(n * 15) + (int)(rowPattern * 5);
+    return { (uint8_t)std::clamp(r, 0, 255),
+             (uint8_t)std::clamp(g, 0, 255),
+             (uint8_t)std::clamp(b, 0, 255) };
+}
+
+static TerrainColor parkingColor(float nx, float ny, int seed) {
+    float n = vnoise(nx * 2.0f, ny * 2.0f, seed);
+    // Line markings at regular intervals
+    float lineX = std::abs(std::fmod(nx * 6.0f, 1.0f) - 0.5f);
+    bool isLine = lineX < 0.03f;
+    int base = 85 + (int)(n * 15);
+    if (isLine) base += 40; // white lines
+    return { (uint8_t)std::clamp(base + 2, 0, 255),
+             (uint8_t)std::clamp(base, 0, 255),
+             (uint8_t)std::clamp(base - 2, 0, 255) };
+}
+
+static TerrainColor wetlandColor(float nx, float ny, int seed) {
+    float n = fbm(nx * 0.6f, ny * 0.6f, seed, 5);
+    float waterPatch = vnoise(nx * 2.0f, ny * 2.0f, seed + 200);
+    int r = 55 + (int)(n * 25);
+    int g = 75 + (int)(n * 35);
+    int b = 45 + (int)(n * 20);
+    // Water reflection patches
+    if (waterPatch > 0.7f) {
+        float t = (waterPatch - 0.7f) * 3.3f;
+        r = (int)(r * (1.0f - t) + 40 * t);
+        g = (int)(g * (1.0f - t) + 60 * t);
+        b = (int)(b * (1.0f - t) + 80 * t);
+    }
+    return { (uint8_t)std::clamp(r, 0, 255),
+             (uint8_t)std::clamp(g, 0, 255),
+             (uint8_t)std::clamp(b, 0, 255) };
+}
+
+static TerrainColor mudColor(float nx, float ny, int seed) {
+    float n = fbm(nx * 1.2f, ny * 1.2f, seed, 4);
+    float wet = vnoise(nx * 3.0f, ny * 3.0f, seed + 300);
+    int r = 85 + (int)(n * 25) - (int)(wet * 12);
+    int g = 70 + (int)(n * 20) - (int)(wet * 10);
+    int b = 50 + (int)(n * 15) - (int)(wet * 8);
+    return { (uint8_t)std::clamp(r, 0, 255),
+             (uint8_t)std::clamp(g, 0, 255),
+             (uint8_t)std::clamp(b, 0, 255) };
+}
+
+static TerrainColor shingleColor(float nx, float ny, int seed) {
+    float n = fbm(nx * 1.5f, ny * 1.5f, seed, 5);
+    float pebble = vnoise(nx * 8.0f, ny * 8.0f, seed + 400);
+    int base = 160 + (int)(n * 25) + (int)(pebble * 15);
+    int r = base;
+    int g = base - 5;
+    int b = base - 12;
+    return { (uint8_t)std::clamp(r, 0, 255),
+             (uint8_t)std::clamp(g, 0, 255),
+             (uint8_t)std::clamp(b, 0, 255) };
+}
+
+static TerrainColor tidalFlatColor(float nx, float ny, int seed) {
+    float n = fbm(nx * 0.8f, ny * 0.8f, seed, 4);
+    float wet = vnoise(nx * 2.0f, ny * 2.0f, seed + 500);
+    int r = 100 + (int)(n * 20) - (int)(wet * 15);
+    int g = 90 + (int)(n * 18) - (int)(wet * 12);
+    int b = 75 + (int)(n * 15) - (int)(wet * 10);
+    return { (uint8_t)std::clamp(r, 0, 255),
+             (uint8_t)std::clamp(g, 0, 255),
+             (uint8_t)std::clamp(b, 0, 255) };
+}
+
+void TerrainTextureBlender::blend(uint8_t* textureRGB, int texW, int texH,
+                                   const float* heightGrid, int resolution,
+                                   const uint8_t* landUseGrid) {
+    if (!textureRGB || !heightGrid || texW <= 0 || texH <= 0 || resolution <= 0)
+        return;
+
+    int res = resolution;
+
+    // --- Step 1: Compute slope map from heightmap gradient ---
+    // slope[r][c] = magnitude of gradient at that pixel (in metres/pixel)
+    std::vector<float> slope(res * res, 0.0f);
+    for (int r = 1; r < res - 1; r++) {
+        for (int c = 1; c < res - 1; c++) {
+            float dhdx = (heightGrid[r * res + c + 1] - heightGrid[r * res + c - 1]) * 0.5f;
+            float dhdy = (heightGrid[(r + 1) * res + c] - heightGrid[(r - 1) * res + c]) * 0.5f;
+            slope[r * res + c] = std::sqrt(dhdx * dhdx + dhdy * dhdy);
+        }
+    }
+
+    // --- Step 2: Water distance map (BFS from water pixels) ---
+    // Distance in pixels from nearest water cell
+    std::vector<int> waterDist(res * res, -1);
+    std::queue<int> bfsQ;
+    for (int i = 0; i < res * res; i++) {
+        if (heightGrid[i] <= 0.0f) {
+            waterDist[i] = 0;
+            bfsQ.push(i);
+        }
+    }
+    const int dx4[] = {-1, 1, 0, 0};
+    const int dy4[] = {0, 0, -1, 1};
+    while (!bfsQ.empty()) {
+        int idx = bfsQ.front(); bfsQ.pop();
+        int cr = idx / res, cc = idx % res;
+        for (int d = 0; d < 4; d++) {
+            int nr = cr + dy4[d], nc = cc + dx4[d];
+            if (nr >= 0 && nr < res && nc >= 0 && nc < res) {
+                int ni = nr * res + nc;
+                if (waterDist[ni] < 0) {
+                    waterDist[ni] = waterDist[idx] + 1;
+                    bfsQ.push(ni);
+                }
+            }
+        }
+    }
+
+    // --- Step 3: For each texture pixel, compute terrain type weights and blend ---
+    // Noise seed for breaking up transitions
+    const int noiseSeed = 42;
+
+    for (int ty = 0; ty < texH; ty++) {
+        for (int tx = 0; tx < texW; tx++) {
+            // Map texture pixel to heightmap pixel (bilinear)
+            float hmX = (float)tx / texW * (res - 1);
+            float hmY = (float)ty / texH * (res - 1);
+            int ix = std::min((int)hmX, res - 2);
+            int iy = std::min((int)hmY, res - 2);
+            float fx = hmX - ix, fy = hmY - iy;
+
+            // Sample height (bilinear)
+            float h00 = heightGrid[iy * res + ix];
+            float h10 = heightGrid[iy * res + ix + 1];
+            float h01 = heightGrid[(iy + 1) * res + ix];
+            float h11 = heightGrid[(iy + 1) * res + ix + 1];
+            float h = h00 * (1-fx)*(1-fy) + h10 * fx*(1-fy) +
+                      h01 * (1-fx)*fy + h11 * fx*fy;
+
+            // Skip water pixels
+            if (h <= 0.0f) continue;
+
+            // Sample slope (bilinear)
+            float s00 = slope[iy * res + ix];
+            float s10 = slope[iy * res + ix + 1];
+            float s01 = slope[(iy + 1) * res + ix];
+            float s11 = slope[(iy + 1) * res + ix + 1];
+            float s = s00 * (1-fx)*(1-fy) + s10 * fx*(1-fy) +
+                      s01 * (1-fx)*fy + s11 * fx*fy;
+
+            // Sample water distance (nearest neighbor, convert to approx metres)
+            int wdIdx = std::min(iy, res - 1) * res + std::min(ix, res - 1);
+            float wDistPx = (waterDist[wdIdx] >= 0) ? (float)waterDist[wdIdx] : 999.0f;
+            // Approximate metres: assume heightmap spans ~10km for 1025 pixels ~ 10m/pixel
+            float mPerPixel = 10.0f; // rough estimate
+            float wDistM = wDistPx * mPerPixel;
+
+            // --- Compute terrain type weights ---
+            float wGrass = 0.0f, wRock = 0.0f, wSand = 0.0f, wDirt = 0.0f;
+
+            // Check land-use classification for this pixel
+            uint8_t luType = 0;
+            if (landUseGrid) {
+                int luIdx = std::min(iy, res - 1) * res + std::min(ix, res - 1);
+                luType = landUseGrid[luIdx];
+            }
+
+            // Slope: steep (>3 m/px) -> rock, moderate -> dirt, flat -> grass
+            float slopeNorm = std::min(s / 5.0f, 1.0f); // 0=flat, 1=very steep
+            wRock = slopeNorm;
+
+            // Water proximity: sand/beach only for unclassified land or OSM Beach type.
+            // Don't put sand next to docks, marinas, or residential waterfront.
+            bool allowSand = (luType == 0 || luType == 8); // unclassified or Beach
+            if (allowSand && wDistM < 80.0f) {
+                // Noise-modulated sand boundary for organic edge
+                float sandEdgeNoise = vnoise((float)tx * 0.05f, (float)ty * 0.05f, 77777);
+                float sandRange = 40.0f + sandEdgeNoise * 40.0f; // 40-80m variable width
+                if (wDistM < sandRange) {
+                    float sandW = 1.0f - wDistM / sandRange;
+                    sandW *= sandW; // Quadratic falloff for natural gradient
+                    wSand = sandW * (1.0f - slopeNorm); // sand only on flat areas
+                }
+                // Dirt transition zone between sand and grass
+                if (wDistM > sandRange * 0.5f && wDistM < sandRange * 1.5f) {
+                    float dirtT = (wDistM - sandRange * 0.5f) / sandRange;
+                    dirtT = 1.0f - std::abs(dirtT - 0.5f) * 2.0f; // peak at boundary
+                    wDirt = dirtT * 0.4f * (1.0f - slopeNorm);
+                }
+            }
+
+            // Remaining weight goes to grass
+            float used = wRock + wSand + wDirt;
+            wGrass = std::max(0.0f, 1.0f - used);
+
+            // Elevation modulation: high elevation shifts grass->rock
+            if (h > 50.0f) {
+                float highFactor = std::min((h - 50.0f) / 100.0f, 0.5f);
+                float grassShift = wGrass * highFactor;
+                wGrass -= grassShift;
+                wRock += grassShift;
+            }
+
+            // Noise modulation to break up transitions
+            float noiseX = (float)tx * 0.15f;
+            float noiseY = (float)ty * 0.15f;
+            float nMod = fbm(noiseX, noiseY, noiseSeed, 3);
+            // Perturb weights slightly with noise
+            wGrass += (nMod - 0.5f) * 0.15f;
+            wRock += (vnoise(noiseX * 0.7f, noiseY * 0.7f, noiseSeed + 50) - 0.5f) * 0.1f;
+            wSand += (vnoise(noiseX * 0.9f, noiseY * 0.9f, noiseSeed + 80) - 0.5f) * 0.08f;
+
+            // Clamp and renormalize
+            wGrass = std::max(0.0f, wGrass);
+            wRock = std::max(0.0f, wRock);
+            wSand = std::max(0.0f, wSand);
+            wDirt = std::max(0.0f, wDirt);
+            float wTotal = wGrass + wRock + wSand + wDirt;
+            if (wTotal > 0.001f) {
+                wGrass /= wTotal; wRock /= wTotal;
+                wSand /= wTotal; wDirt /= wTotal;
+            }
+
+            // Generate detail colors (tiling coordinates based on texture position)
+            // Higher frequency for finer detail visible from bridge (~100m)
+            float tileX = (float)tx * 0.4f;
+            float tileY = (float)ty * 0.4f;
+
+            // Land-use override: if OSM land use data is available, use type-specific
+            // colors instead of topographic weight blending.
+            float dr, dg, db;
+
+            if (luType > 0) {
+                // Land-use-specific detail color with slight topographic modulation
+                TerrainColor c;
+                switch (luType) {
+                    case 1: // Forest
+                        c = forestColor(tileX, tileY, 5000);
+                        break;
+                    case 2: // Residential
+                        c = residentialColor(tileX, tileY, 5100);
+                        break;
+                    case 3: // Industrial
+                    case 4: // Commercial
+                        c = concreteColor(tileX, tileY, 5200);
+                        break;
+                    case 5: // Farmland
+                        c = farmColor(tileX, tileY, 5300);
+                        break;
+                    case 6: // Grass/Park
+                        c = grassColor(tileX, tileY, 5400);
+                        break;
+                    case 7: // Heath
+                        c = heathColor(tileX, tileY, 5500);
+                        break;
+                    case 8: // Beach
+                        c = sandColor(tileX, tileY, 5600);
+                        break;
+                    case 9: // Rock/Cliff
+                        c = rockColor(tileX, tileY, 5700);
+                        break;
+                    case 10: // Construction
+                        c = constructionColor(tileX, tileY, 5800);
+                        break;
+                    case 11: // Quarry
+                        c = quarryColor(tileX, tileY, 5900);
+                        break;
+                    case 12: // Allotments
+                        c = allotmentColor(tileX, tileY, 6000);
+                        break;
+                    case 13: // Cemetery
+                        c = cemeteryColor(tileX, tileY, 6100);
+                        break;
+                    case 14: // Parking
+                        c = parkingColor(tileX, tileY, 6200);
+                        break;
+                    case 15: // Wetland
+                        c = wetlandColor(tileX, tileY, 6300);
+                        break;
+                    case 16: // Mud
+                        c = mudColor(tileX, tileY, 6400);
+                        break;
+                    case 17: // Shingle
+                        c = shingleColor(tileX, tileY, 6500);
+                        break;
+                    case 18: // Tidal flat
+                        c = tidalFlatColor(tileX, tileY, 6600);
+                        break;
+                    case 19: // Waterfront (dock/quay edge)
+                        c = concreteColor(tileX, tileY, 6700);
+                        break;
+                    default:
+                        c = grassColor(tileX, tileY, 1000);
+                        break;
+                }
+                // Add micro-detail for surface grain
+                float md = microDetail(tileX, tileY, 7000 + luType * 100);
+                c.r = (uint8_t)std::clamp((int)c.r + (int)((md - 0.2f) * 20), 0, 255);
+                c.g = (uint8_t)std::clamp((int)c.g + (int)((md - 0.2f) * 18), 0, 255);
+                c.b = (uint8_t)std::clamp((int)c.b + (int)((md - 0.2f) * 15), 0, 255);
+                // Blend slope influence: steep areas still get rock mixed in
+                float slopeMix = std::min(slopeNorm * 0.4f, 0.4f);
+                TerrainColor cRock = rockColor(tileX, tileY, 2000);
+                dr = c.r * (1.0f - slopeMix) + cRock.r * slopeMix;
+                dg = c.g * (1.0f - slopeMix) + cRock.g * slopeMix;
+                db = c.b * (1.0f - slopeMix) + cRock.b * slopeMix;
+            } else {
+                // Height-priority blending: each material has a "height" that determines
+                // which material wins at micro scale. Sand fills cracks, rock dominates peaks.
+                TerrainColor cGrass = grassColor(tileX, tileY, 1000);
+                TerrainColor cRock = rockColor(tileX, tileY, 2000);
+                TerrainColor cSand = sandColor(tileX, tileY, 3000);
+                TerrainColor cDirt = dirtColor(tileX, tileY, 4000);
+
+                // Per-material height from noise (0-1 range)
+                float hGrass = vnoise(tileX * 2.0f, tileY * 2.0f, 8100) * 0.3f;
+                float hRock  = vnoise(tileX * 1.5f, tileY * 1.5f, 8200) * 0.5f + 0.2f;
+                float hSand  = vnoise(tileX * 3.0f, tileY * 3.0f, 8300) * 0.1f;
+                float hDirt  = vnoise(tileX * 2.5f, tileY * 2.5f, 8400) * 0.2f + 0.1f;
+
+                // Height + weight = priority
+                float pGrass = hGrass + wGrass * 2.0f;
+                float pRock  = hRock  + wRock  * 2.0f;
+                float pSand  = hSand  + wSand  * 2.0f;
+                float pDirt  = hDirt  + wDirt  * 2.0f;
+
+                float maxP = std::max({pGrass, pRock, pSand, pDirt});
+                float blendDepth = 0.3f; // transition sharpness
+                float ma = maxP - blendDepth;
+
+                float bGrass = std::max(pGrass - ma, 0.0f);
+                float bRock  = std::max(pRock  - ma, 0.0f);
+                float bSand  = std::max(pSand  - ma, 0.0f);
+                float bDirt  = std::max(pDirt  - ma, 0.0f);
+                float bTotal = bGrass + bRock + bSand + bDirt;
+                if (bTotal > 0.001f) {
+                    bGrass /= bTotal; bRock /= bTotal;
+                    bSand /= bTotal; bDirt /= bTotal;
+                }
+
+                dr = cGrass.r * bGrass + cRock.r * bRock + cSand.r * bSand + cDirt.r * bDirt;
+                dg = cGrass.g * bGrass + cRock.g * bRock + cSand.g * bSand + cDirt.g * bDirt;
+                db = cGrass.b * bGrass + cRock.b * bRock + cSand.b * bSand + cDirt.b * bDirt;
+            }
+
+            // Macro variation: large-scale color modulation breaks up tiling (~100-200m)
+            {
+                float macroN = fbm((float)tx * 0.01f, (float)ty * 0.01f, 99999, 3);
+                float macroShift = (macroN - 0.5f) * 30.0f; // +/- 15 RGB
+                dr += macroShift;
+                dg += macroShift * 0.8f;
+                db += macroShift * 0.6f;
+            }
+
+            // Wet sand zone: darken near waterline (physically-based wet surface)
+            // Wet surfaces: reduce albedo ~30-35%, increase color saturation slightly
+            if (wDistM < 15.0f) {
+                float wetness = 1.0f - wDistM / 15.0f;
+                wetness *= wetness; // quadratic falloff
+                // Noise breakup for organic wet patches
+                float wetNoise = vnoise((float)tx * 0.3f, (float)ty * 0.3f, 88888);
+                wetness *= (0.5f + wetNoise);
+                wetness = std::clamp(wetness, 0.0f, 1.0f);
+                dr *= (1.0f - wetness * 0.35f);
+                dg *= (1.0f - wetness * 0.30f);
+                db *= (1.0f - wetness * 0.25f);
+            }
+
+            // Blend with satellite: lerp(satellite, detail, alpha)
+            // Lower alpha = more satellite imagery visible (which provides real-world colors).
+            // Procedural detail adds noise/variation but satellite provides ground truth.
+            float alpha = (luType > 0) ? 0.45f : 0.30f;
+            // Add noise modulation to alpha for organic variation
+            alpha *= (0.7f + fbm(noiseX * 0.5f, noiseY * 0.5f, noiseSeed + 999, 2) * 0.6f);
+            alpha = std::clamp(alpha, 0.15f, 0.55f);
+
+            int pixIdx = (ty * texW + tx) * 3;
+            float sr = textureRGB[pixIdx], sg = textureRGB[pixIdx + 1], sb = textureRGB[pixIdx + 2];
+
+            textureRGB[pixIdx]     = (uint8_t)std::clamp(sr * (1.0f - alpha) + dr * alpha, 0.0f, 255.0f);
+            textureRGB[pixIdx + 1] = (uint8_t)std::clamp(sg * (1.0f - alpha) + dg * alpha, 0.0f, 255.0f);
+            textureRGB[pixIdx + 2] = (uint8_t)std::clamp(sb * (1.0f - alpha) + db * alpha, 0.0f, 255.0f);
+        }
+    }
+}
+
+void TerrainTextureBlender::generateNormalMap(uint8_t* outRGB, const float* heightGrid,
+                                               int resolution, float worldWidth, float worldDepth) {
+    if (!outRGB || !heightGrid || resolution <= 0) return;
+    int res = resolution;
+    // Scale: convert pixel-space gradient to world-space metres
+    float scaleX = worldWidth / (float)(res - 1);
+    float scaleZ = worldDepth / (float)(res - 1);
+
+    for (int r = 0; r < res; r++) {
+        for (int c = 0; c < res; c++) {
+            // Sobel 3x3 for smoother gradients
+            int rm = std::max(0, r - 1), rp = std::min(res - 1, r + 1);
+            int cm = std::max(0, c - 1), cp = std::min(res - 1, c + 1);
+
+            float dx = (heightGrid[rm * res + cp] + 2.0f * heightGrid[r * res + cp] + heightGrid[rp * res + cp])
+                      -(heightGrid[rm * res + cm] + 2.0f * heightGrid[r * res + cm] + heightGrid[rp * res + cm]);
+            float dy = (heightGrid[rp * res + cm] + 2.0f * heightGrid[rp * res + c] + heightGrid[rp * res + cp])
+                      -(heightGrid[rm * res + cm] + 2.0f * heightGrid[rm * res + c] + heightGrid[rm * res + cp]);
+
+            // Convert to world-space normal
+            float nx = -dx / scaleX;
+            float ny = 8.0f; // up component (strength control -- higher = flatter normals)
+            float nz = -dy / scaleZ;
+            float len = std::sqrt(nx * nx + ny * ny + nz * nz);
+            if (len > 0.0f) { nx /= len; ny /= len; nz /= len; }
+
+            int idx = (r * res + c) * 3;
+            outRGB[idx]     = (uint8_t)std::clamp((int)(nx * 127.5f + 127.5f), 0, 255);
+            outRGB[idx + 1] = (uint8_t)std::clamp((int)(ny * 127.5f + 127.5f), 0, 255);
+            outRGB[idx + 2] = (uint8_t)std::clamp((int)(nz * 127.5f + 127.5f), 0, 255);
+        }
+    }
+}
+
+void TerrainTextureBlender::generateRoughnessMap(uint8_t* outRGB, const float* heightGrid,
+                                                   const uint8_t* landUseGrid, int resolution) {
+    if (!outRGB || !heightGrid || resolution <= 0) return;
+    int res = resolution;
+
+    // Water distance BFS for wet sand roughness
+    std::vector<int> waterDist(res * res, -1);
+    std::queue<int> bfsQ;
+    for (int i = 0; i < res * res; i++) {
+        if (heightGrid[i] <= 0.0f) { waterDist[i] = 0; bfsQ.push(i); }
+    }
+    const int dx4[] = {-1, 1, 0, 0};
+    const int dy4[] = {0, 0, -1, 1};
+    while (!bfsQ.empty()) {
+        int idx = bfsQ.front(); bfsQ.pop();
+        int cr = idx / res, cc = idx % res;
+        for (int d = 0; d < 4; d++) {
+            int nr = cr + dy4[d], nc = cc + dx4[d];
+            if (nr >= 0 && nr < res && nc >= 0 && nc < res) {
+                int ni = nr * res + nc;
+                if (waterDist[ni] < 0) { waterDist[ni] = waterDist[idx] + 1; bfsQ.push(ni); }
+            }
+        }
+    }
+
+    for (int r = 0; r < res; r++) {
+        for (int c = 0; c < res; c++) {
+            int i = r * res + c;
+            float h = heightGrid[i];
+            float rough;
+
+            if (h <= 0.0f) {
+                rough = 0.05f; // water: very smooth/reflective
+            } else {
+                rough = 0.85f; // default grass
+
+                if (landUseGrid) {
+                    uint8_t lu = landUseGrid[i];
+                    switch (lu) {
+                        case 1:  rough = 0.90f; break; // Forest
+                        case 2:  rough = 0.60f; break; // Residential
+                        case 3:  rough = 0.55f; break; // Industrial
+                        case 4:  rough = 0.55f; break; // Commercial
+                        case 5:  rough = 0.80f; break; // Farmland
+                        case 6:  rough = 0.85f; break; // Grass
+                        case 7:  rough = 0.88f; break; // Heath
+                        case 8:  rough = 0.70f; break; // Beach
+                        case 9:  rough = 0.92f; break; // Rock
+                        case 10: rough = 0.65f; break; // Construction
+                        case 11: rough = 0.88f; break; // Quarry
+                        case 12: rough = 0.82f; break; // Allotments
+                        case 13: rough = 0.80f; break; // Cemetery
+                        case 14: rough = 0.50f; break; // Parking
+                        case 15: rough = 0.75f; break; // Wetland
+                        case 16: rough = 0.45f; break; // Mud (wet/shiny)
+                        case 17: rough = 0.78f; break; // Shingle
+                        case 18: rough = 0.40f; break; // Tidal flat (wet)
+                        case 19: rough = 0.50f; break; // Waterfront (concrete)
+                        default: break;
+                    }
+                }
+
+                // Wet sand: reduce roughness near water (more reflective when wet)
+                float wDistPx = (waterDist[i] >= 0) ? (float)waterDist[i] : 999.0f;
+                float wDistM = wDistPx * 10.0f; // ~10m/pixel estimate
+                if (wDistM < 15.0f) {
+                    float wetness = 1.0f - wDistM / 15.0f;
+                    wetness *= wetness;
+                    rough *= (1.0f - wetness * 0.5f); // up to 50% roughness reduction
+                }
+            }
+            uint8_t rv = (uint8_t)std::clamp((int)(rough * 255.0f), 0, 255);
+            int idx = i * 3;
+            outRGB[idx] = rv; outRGB[idx + 1] = rv; outRGB[idx + 2] = rv;
+        }
+    }
+}

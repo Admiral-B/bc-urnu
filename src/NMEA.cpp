@@ -27,7 +27,7 @@
 #include <thread>
 #include <vector>
 
-NMEA::NMEA(SimulationModel* model, std::string serialPortName, irr::u32 serialBaudrate, std::string udpHostname, std::string udpPortName, std::string udpListenPortName, irr::IrrlichtDevice* dev) : autopilot(model) //Constructor
+NMEA::NMEA(SimulationModel* model, std::string serialPortName, uint32_t serialBaudrate, std::string udpHostname, std::string udpPortName, std::string udpListenPortName, irr::IrrlichtDevice* dev) : autopilot(model) //Constructor
 {
     //link to model so network can interact with model
     this->model = model; //Link to the model
@@ -111,7 +111,7 @@ void NMEA::ReceiveThread(std::string udpListenPortName)
 
     try 
     {
-        irr::u16 port = std::stoi(udpListenPortName);
+        uint16_t port = std::stoi(udpListenPortName);
         rcvSocket.open(asio::ip::udp::v4());
         rcvSocket.bind(asio::ip::udp::endpoint(asio::ip::udp::v4(), port));
         std::cout << "Listening for NMEA messages on " << rcvSocket.local_endpoint().address().to_string() << ":" << port << std::endl;
@@ -206,8 +206,8 @@ void NMEA::receive()
                 if (sentence.length() < 10) continue;
                
                 // parse the provided checksum and verify it
-                irr::u32 providedChecksum;
-                irr::u32 checksum;
+                uint32_t providedChecksum;
+                uint32_t checksum;
                 try 
                 {
                     providedChecksum = std::stoi(sentence.substr(sentence.length()-2, 2), 0, 16);
@@ -332,14 +332,14 @@ void NMEA::updateNMEA()
         messageBuffer[i]=0;
     }
 
-    irr::u32 now = device->getTimer()->getTime();
+    uint32_t now = device->getTimer()->getTime();
 
     // AIS messages are scheduled based on amount of otherShips and their speed
     // check each frame if a new report should be sent
     if (model->getNumberOfOtherShips() >= 0) { // only consider AIS if there are other ships
         std::string messageToSend = "";
         // which ships are ready to send?
-        std::vector<irr::u32> readyShips = AIS::getReadyShips(model, now);
+        std::vector<uint32_t> readyShips = AIS::getReadyShips(model, now);
         for (auto ship : readyShips) {
             // 8.3.90 AIS VHF data-link message (6-bit, iaw ITU-R M.1371)
             // Position Report Class A
@@ -367,6 +367,47 @@ void NMEA::updateNMEA()
         readyShips.clear();
         if (messageToSend != "") {
             messageQueue.push_back(messageToSend);
+        }
+
+        // AIS Message 5: Static and Voyage Related Data (every 6 minutes)
+        if (AIS::isMessage5Due(model, now)) {
+            uint32_t numShips = model->getNumberOfOtherShips();
+            if (numShips > 0) {
+                for (uint32_t s = 0; s < numShips; s++) {
+                    std::string data;
+                    int fillBits;
+                    std::tie(data, fillBits) = AIS::generateMessage5(model, s);
+
+                    // Message 5 is 424 bits → 71 chars → needs 2 AIVDM sentences
+                    // Split at 56 chars (336 bits) for fragment 1
+                    std::string frag1 = data.substr(0, 56);
+                    std::string frag2 = data.substr(56);
+                    int seqMsgId = (s % 10); // 0-9
+
+                    snprintf(messageBuffer, maxSentenceChars, "!AIVDM,2,1,%d,B,%s,0",
+                             seqMsgId, frag1.c_str());
+                    messageQueue.push_back(addChecksum(std::string(messageBuffer)));
+
+                    snprintf(messageBuffer, maxSentenceChars, "!AIVDM,2,2,%d,B,%s,%d",
+                             seqMsgId, frag2.c_str(), fillBits);
+                    messageQueue.push_back(addChecksum(std::string(messageBuffer)));
+                }
+            }
+        }
+
+        // AIS Message 21: Aid-to-Navigation Report (every 3 minutes)
+        if (AIS::isMessage21Due(now)) {
+            uint32_t numBuoys = model->getNumberOfBuoys();
+            for (uint32_t b = 0; b < numBuoys; b++) {
+                std::string data;
+                int fillBits;
+                std::tie(data, fillBits) = AIS::generateMessage21(model, b);
+
+                // Message 21 is 272 bits → 46 chars → single sentence
+                snprintf(messageBuffer, maxSentenceChars, "!AIVDM,1,1,,B,%s,%d",
+                         data.c_str(), fillBits);
+                messageQueue.push_back(addChecksum(std::string(messageBuffer)));
+            }
         }
     }
 
@@ -397,33 +438,33 @@ void NMEA::updateNMEA()
     const char *min  = minuteString.c_str();
     const char *sec  =secondsString.c_str();
 
-    irr::f32 rudderAngle = model->getRudder();
+    float rudderAngle = model->getRudder();
 
     int engineRPM[] = {
         Utilities::round(model->getStbdEngineRPM()), // idx=1, odd (starboard)
         Utilities::round(model->getPortEngineRPM())  // idx=2, even (port)
     };
 
-    irr::f32 lat = model->getLat();
-    irr::f32 lon = model->getLong();
+    float lat = model->getLat();
+    float lon = model->getLong();
 
-    irr::f32 cog = model->getCOG();
-    irr::f32 sog = model->getSOG()*MPS_TO_KTS;
+    float cog = model->getCOG();
+    float sog = model->getSOG()*MPS_TO_KTS;
 
-    irr::f32 hdg = model->getHeading();
-    irr::f32 rot = model->getRateOfTurn()*RAD_PER_S_IN_DEG_PER_MINUTE;
+    float hdg = model->getHeading();
+    float rot = model->getRateOfTurn()*RAD_PER_S_IN_DEG_PER_MINUTE;
 
-    irr::f32 depth = model->getDepth();
+    float depth = model->getDepth();
 
     char eastWest = easting[lon < 0];
     char northSouth = northing[lat < 0];
 
     lat = fabs(lat);
     lon = fabs(lon);
-    irr::f32 latMinutes = (lat - (int)lat)*60;
-    irr::f32 lonMinutes = (lon - (int)lon)*60;
-    irr::u8 latDegrees = (int) lat;
-    irr::u8 lonDegrees = (int) lon;
+    float latMinutes = (lat - (int)lat)*60;
+    float lonMinutes = (lon - (int)lon)*60;
+    uint8_t latDegrees = (int) lat;
+    uint8_t lonDegrees = (int) lon;
 
 
     switch (currentMessageType) { // EN 61162-1:2011
@@ -576,6 +617,27 @@ void NMEA::updateNMEA()
             messageToSend.append(addChecksum(std::string(messageBuffer)));
             break;
         */
+        case VHW: // 8.3.99 Water speed and heading
+        {
+            float sogKts = sog; // Already converted to knots above
+            float sogKmh = sogKts * 1.852f;
+            snprintf(messageBuffer,maxSentenceChars,"$VWVHW,%.1f,T,,M,%.1f,N,%.1f,K",hdg,sogKts,sogKmh);
+            messageQueue.push_back(addChecksum(std::string(messageBuffer)));
+            break;
+        }
+        case MWV: // 8.3.56 Wind speed and angle
+        {
+            float windDir = model->getWindDirection(); // True wind direction (degrees)
+            float windSpd = model->getWindSpeed(); // Wind speed (knots)
+            // Relative wind angle = true wind direction - ship heading
+            float relWindAngle = windDir - hdg;
+            if (relWindAngle < 0) relWindAngle += 360.0f;
+            if (relWindAngle >= 360.0f) relWindAngle -= 360.0f;
+            // Relative wind (R)
+            snprintf(messageBuffer,maxSentenceChars,"$WIMWV,%.1f,R,%.1f,N,A",relWindAngle,windSpd);
+            messageQueue.push_back(addChecksum(std::string(messageBuffer)));
+            break;
+        }
         default:
             break;
     }
@@ -625,7 +687,7 @@ std::string NMEA::addChecksum(std::string messageIn)
     char checksumBuffer[3];
     //Get checksum
     unsigned char checksum=0;
-    irr::u8 s = messageIn.length();
+    uint8_t s = messageIn.length();
     for(int i = 1; i<s; i++)
     {
         checksum^= messageIn.at(i);

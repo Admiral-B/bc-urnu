@@ -22,102 +22,119 @@
 #include <cstdio>
 #include <vector>
 
-Network::Network(int port) //Constructor
+Network::Network(int port, bool serverMode)
 {
-
     this->port = port;
+    this->isServer = serverMode;
 
-    //start networking
-    if (enet_initialize () != 0) {
-        //fprintf(stderr, "An error occurred while initializing ENet.\n");
-        exit (EXIT_FAILURE);
+    if (enet_initialize() != 0) {
+        exit(EXIT_FAILURE);
     }
 
-    client = enet_host_create (NULL /* create a client host */,
-    32 /* Allow up to 10 outgoing connections */, //Todo: Should this be configurable?
-    0 /* allow maximum number of channels */,
-    0 /* unlimited bandwidth */,
-    0 /* unlimited bandwidth */);
-    if (client == NULL) {
-        std::cout << "An error occurred while trying to create an ENet client host." << std::endl;
-        exit (EXIT_FAILURE);
+    host = nullptr;
+
+    if (!serverMode) {
+        // Legacy client mode: create client host immediately
+        host = enet_host_create(NULL, 32, 0, 0, 0);
+        if (host == NULL) {
+            std::cout << "An error occurred while trying to create an ENet client host." << std::endl;
+            exit(EXIT_FAILURE);
+        }
+        std::cout << "Started enet (client mode)" << std::endl;
+    } else {
+        std::cout << "ENet initialized (server mode, call startServer to begin listening)" << std::endl;
     }
-
-    std::cout << "Started enet\n";
-
-    //TODO: Think if this is the best way to handle failure
 }
 
-Network::~Network() //Destructor
+Network::~Network()
 {
-    //shut down networking
-    enet_host_destroy(client);
+    // Disconnect all peers gracefully
+    for (unsigned int i = 0; i < peers.size(); i++) {
+        if (peers[i] && peerConnected[i]) {
+            enet_peer_disconnect(peers[i], 0);
+        }
+    }
+    if (host) {
+        // Flush any pending disconnect packets
+        enet_host_flush(host);
+        enet_host_destroy(host);
+    }
     enet_deinitialize();
+    std::cout << "Shut down enet" << std::endl;
+}
 
-    std::cout << "Shut down enet\n";
+void Network::startServer(int maxPlayers)
+{
+    if (!isServer) {
+        std::cout << "startServer called but not in server mode" << std::endl;
+        return;
+    }
+
+    ENetAddress address;
+    address.host = ENET_HOST_ANY;
+    address.port = port;
+
+    host = enet_host_create(&address, maxPlayers, 2, 0, 0);
+    if (host == NULL) {
+        std::cout << "Failed to create ENet server on port " << port << std::endl;
+        return;
+    }
+    std::cout << "ENet server listening on port " << port << std::endl;
 }
 
 void Network::connectToServer(std::string hostnames)
 {
-
-    //hostname may be multiple comma separated names
-    std::vector<std::string> multipleHostnames = Utilities::split(hostnames,',');
-
-    //Ensure there's at least one entry
-    if (multipleHostnames.size() < 1 ) {
-        multipleHostnames.push_back(""); //Add an empty record
+    if (isServer) {
+        std::cout << "connectToServer called but in server mode" << std::endl;
+        return;
     }
 
-    //Set up a peer for each hostname
-    for (int i = 0; i<multipleHostnames.size(); i++) {
+    // hostname may be multiple comma separated names
+    std::vector<std::string> multipleHostnames = Utilities::split(hostnames, ',');
+
+    if (multipleHostnames.size() < 1) {
+        multipleHostnames.push_back("");
+    }
+
+    for (int i = 0; i < (int)multipleHostnames.size(); i++) {
         ENetAddress address;
         ENetPeer* peer;
 
         std::string thisHostname = Utilities::trim(multipleHostnames.at(i));
-        //Todo: validate this?
 
-        //Check if the string contains a ':', and if so, split into hostname and port part
         if (thisHostname.find(':') != std::string::npos) {
-            std::vector<std::string> splitHostname = Utilities::split(thisHostname,':');
-            if (splitHostname.size()==2) {
+            std::vector<std::string> splitHostname = Utilities::split(thisHostname, ':');
+            if (splitHostname.size() == 2) {
                 thisHostname = splitHostname.at(0);
                 address.port = Utilities::lexical_cast<enet_uint16>(splitHostname.at(1));
             } else {
-                address.port = port; //Fall back to default
+                address.port = port;
             }
         } else {
             address.port = port;
 
-            //Count number of instances of this earlier in list, and if so, increment port, so
-            //localhost,localhost,localhost would become like localhost:port,localhost:port+1,localhost:port+2
-            for (unsigned int j=0; j<i; j++) {
-                if (thisHostname.compare(multipleHostnames.at(j))==0) {
+            for (unsigned int j = 0; j < (unsigned int)i; j++) {
+                if (thisHostname.compare(multipleHostnames.at(j)) == 0) {
                     address.port++;
                 }
             }
         }
 
-        enet_address_set_host (& address, thisHostname.c_str());
+        enet_address_set_host(&address, thisHostname.c_str());
 
-        /* Initiate the connection, allocating the maximum number of channels. */
-        peer = enet_host_connect (client, & address, ENET_PROTOCOL_MAXIMUM_CHANNEL_COUNT, 0);
+        peer = enet_host_connect(host, &address, ENET_PROTOCOL_MAXIMUM_CHANNEL_COUNT, 0);
 
-        if (peer == NULL)
-        {
+        if (peer == NULL) {
             std::cout << "No available peers for initiating an ENet connection." << std::endl;
-            exit (EXIT_FAILURE);
+            exit(EXIT_FAILURE);
         }
-        /* Wait up to 1 second for the connection attempt to succeed. */
-        if (enet_host_service (client, & event, 1000) > 0 && event.type == ENET_EVENT_TYPE_CONNECT) {
+        if (enet_host_service(host, &event, 1000) > 0 && event.type == ENET_EVENT_TYPE_CONNECT) {
             std::cout << "ENet connection succeeded to: " << thisHostname << std::endl;
-            //Store peer, and initialise the vector of latest strings received
             peers.push_back(peer);
             latestMessageFromPeer.push_back("");
+            peerConnected.push_back(true);
         } else {
-            /* Either the 1 second is up or a disconnect event was */
-            /* received. Reset the peer in the event the 1 second */
-            /* had run out without any significant event. */
-            enet_peer_reset (peer);
+            enet_peer_reset(peer);
             std::cout << "ENet connection failed to:" << thisHostname << std::endl;
         }
     }
@@ -125,53 +142,91 @@ void Network::connectToServer(std::string hostnames)
 
 unsigned int Network::getNumberOfPeers()
 {
-    return peers.size();
+    return (unsigned int)peers.size();
+}
+
+unsigned int Network::getNumberOfConnectedPeers()
+{
+    unsigned int count = 0;
+    for (unsigned int i = 0; i < peerConnected.size(); i++) {
+        if (peerConnected[i]) count++;
+    }
+    return count;
+}
+
+bool Network::isPeerConnected(unsigned int peerNumber)
+{
+    return peerNumber < peerConnected.size() && peerConnected[peerNumber];
 }
 
 void Network::sendString(std::string stringToSend, bool reliable, unsigned int peerNumber)
 {
-    if (peerNumber < peers.size()) {
-
-        int reliableFlag;
-        if(reliable) {
-            reliableFlag = ENET_PACKET_FLAG_RELIABLE;
-        } else {
-            reliableFlag = 0;
-        }
+    if (peerNumber < peers.size() && peerConnected[peerNumber] && peers[peerNumber]) {
+        int reliableFlag = reliable ? ENET_PACKET_FLAG_RELIABLE : 0;
 
         if (stringToSend.length() > 0) {
-            ENetPacket * packet = enet_packet_create (stringToSend.c_str(),
-            strlen (stringToSend.c_str()) + 1,
-            reliableFlag); //Flag
+            ENetPacket* packet = enet_packet_create(
+                stringToSend.c_str(),
+                strlen(stringToSend.c_str()) + 1,
+                reliableFlag);
 
-            // Send the packet to peer over channel id 0.
             enet_peer_send(peers.at(peerNumber), 0, packet);
-
-            // One could just use enet_host_service() instead.
-            enet_host_flush (client);
+            enet_host_flush(host);
         }
     }
 }
 
 void Network::listenForMessages()
 {
-    while (enet_host_service (client, & event, 10) > 0) {
-        if (event.type==ENET_EVENT_TYPE_RECEIVE) {
-
-            //Convert into a string, max length 8192
-            char tempString[8192]; //Fixme: Think if this is long enough
-            snprintf(tempString,8192,"%s",event.packet -> data);
+    while (enet_host_service(host, &event, 10) > 0) {
+        switch (event.type) {
+        case ENET_EVENT_TYPE_CONNECT: {
+            // New peer connected
+            std::cout << "New peer connected from "
+                      << (event.peer->address.host & 0xFF) << "."
+                      << ((event.peer->address.host >> 8) & 0xFF) << "."
+                      << ((event.peer->address.host >> 16) & 0xFF) << "."
+                      << ((event.peer->address.host >> 24) & 0xFF) << ":"
+                      << event.peer->address.port << std::endl;
+            peers.push_back(event.peer);
+            latestMessageFromPeer.push_back("");
+            peerConnected.push_back(true);
+            pendingConnections.push_back((unsigned int)peers.size() - 1);
+            break;
+        }
+        case ENET_EVENT_TYPE_RECEIVE: {
+            char tempString[8192];
+            snprintf(tempString, 8192, "%s", event.packet->data);
             std::string receivedString(tempString);
 
-            //check which peer, if any it came from
-            for(unsigned int i=0; i<peers.size(); i++) {
-                if (event.peer==peers.at(i)) {
-                    if (i<latestMessageFromPeer.size()) {
+            for (unsigned int i = 0; i < peers.size(); i++) {
+                if (event.peer == peers.at(i)) {
+                    if (receivedString.length() > 5 && receivedString.substr(0, 5) == "CHAT#") {
+                        pendingChatMessages.push_back(std::make_pair(i, receivedString));
+                    } else if (i < latestMessageFromPeer.size()) {
                         latestMessageFromPeer.at(i) = receivedString;
                     }
                 }
             }
-            enet_packet_destroy (event.packet);
+            enet_packet_destroy(event.packet);
+            break;
+        }
+        case ENET_EVENT_TYPE_DISCONNECT: {
+            // Find which peer disconnected - mark as disconnected, don't erase
+            for (unsigned int i = 0; i < peers.size(); i++) {
+                if (event.peer == peers.at(i)) {
+                    std::cout << "Peer " << i << " disconnected." << std::endl;
+                    peerConnected[i] = false;
+                    peers[i] = nullptr;
+                    latestMessageFromPeer[i] = "";
+                    pendingDisconnections.push_back(i);
+                    break;
+                }
+            }
+            break;
+        }
+        default:
+            break;
         }
     }
 }
@@ -183,4 +238,40 @@ std::string Network::getLatestMessage(unsigned int peerNumber)
     } else {
         return "";
     }
+}
+
+std::vector<unsigned int> Network::getNewConnections()
+{
+    std::vector<unsigned int> result;
+    result.swap(pendingConnections);
+    return result;
+}
+
+std::vector<unsigned int> Network::getNewDisconnections()
+{
+    std::vector<unsigned int> result;
+    result.swap(pendingDisconnections);
+    return result;
+}
+
+std::deque<std::pair<unsigned int, std::string>> Network::getPendingChatMessages()
+{
+    std::deque<std::pair<unsigned int, std::string>> result;
+    result.swap(pendingChatMessages);
+    return result;
+}
+
+std::string Network::getPeerAddress(unsigned int peerNumber) const
+{
+    if (peerNumber < peers.size() && peers[peerNumber]) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%u.%u.%u.%u:%u",
+                 peers[peerNumber]->address.host & 0xFF,
+                 (peers[peerNumber]->address.host >> 8) & 0xFF,
+                 (peers[peerNumber]->address.host >> 16) & 0xFF,
+                 (peers[peerNumber]->address.host >> 24) & 0xFF,
+                 peers[peerNumber]->address.port);
+        return std::string(buf);
+    }
+    return "";
 }

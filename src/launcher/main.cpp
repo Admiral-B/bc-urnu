@@ -15,6 +15,7 @@
 
 #include "irrlicht.h"
 #include <iostream>
+#include <fstream>
 #include <thread>
 #include "../IniFile.hpp"
 #include "../Lang.hpp"
@@ -32,6 +33,42 @@
 //Mac OS:
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
+#include <spawn.h>
+extern char **environ;
+
+// Launch a helper .app by forking and exec-ing the binary directly.
+// We fork so the launcher stays alive, and exec the binary inside the .app
+// bundle so it inherits the working directory (Contents/Resources).
+// Note: Using /usr/bin/open fails on macOS Tahoe for unsigned helper bundles.
+static void macLaunchHelper(const char* binaryPath, const char* arg1 = nullptr, const char* arg2 = nullptr) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        // Child process: exec the helper binary
+        if (arg1 && arg2) {
+            execl(binaryPath, binaryPath, arg1, arg2, nullptr);
+        } else if (arg1) {
+            execl(binaryPath, binaryPath, arg1, nullptr);
+        } else {
+            execl(binaryPath, binaryPath, nullptr);
+        }
+        // If exec fails, exit the child
+        _exit(1);
+    } else if (pid < 0) {
+        std::cerr << "macLaunchHelper: fork failed for " << binaryPath << std::endl;
+    }
+    // Parent continues (launcher stays alive)
+}
+
+// Open a file/folder/URL via /usr/bin/open
+static void macOpen(const char* target) {
+    pid_t pid;
+    char* argv[] = {(char*)"open", (char*)target, nullptr};
+    int ret = posix_spawn(&pid, "/usr/bin/open", nullptr, nullptr, argv, environ);
+    if (ret != 0) {
+        std::cerr << "macOpen FAILED: " << target
+                  << " error=" << strerror(ret) << std::endl;
+    }
+}
 #endif
 
 // Irrlicht Namespaces
@@ -44,20 +81,25 @@ namespace IniFile {
     irr::ILogger* irrlichtLogger = 0;
 }
 
-const irr::s32 BC_BUTTON = 1;
-const irr::s32 MC_BUTTON = 2;
-const irr::s32 RP_BUTTON = 3;
-const irr::s32 ED_BUTTON = 4;
-const irr::s32 MH_BUTTON = 5;
-const irr::s32 INI_BC_BUTTON = 6;
-const irr::s32 INI_MC_BUTTON = 7;
-const irr::s32 INI_RP_BUTTON = 8;
-const irr::s32 INI_MH_BUTTON = 9;
-const irr::s32 DOC_BUTTON = 10;
-const irr::s32 USER_BUTTON = 11;
-const irr::s32 EXIT_BUTTON = 12;
+const int32_t BC_BUTTON = 1;
+const int32_t MC_BUTTON = 2;
+const int32_t RP_BUTTON = 3;
+const int32_t ED_BUTTON = 4;
+const int32_t MH_BUTTON = 5;
+const int32_t INI_BC_BUTTON = 6;
+const int32_t INI_MC_BUTTON = 7;
+const int32_t INI_RP_BUTTON = 8;
+const int32_t INI_MH_BUTTON = 9;
+const int32_t DOC_BUTTON = 10;
+const int32_t USER_BUTTON = 11;
+const int32_t EXIT_BUTTON = 12;
+const int32_t MP_JOIN_BUTTON = 13;
+const int32_t MP_CONNECT_BUTTON = 14;
 
 std::string userFolder;
+std::string bcExtraArgs; // Extra arguments to pass to bridgecommand-bc.exe
+irr::gui::IGUIEditBox* mpHostEdit = nullptr;
+irr::IrrlichtDevice* globalDevice = nullptr;
 
 //Event receiver: This does the actual launching
 class Receiver : public irr::IEventReceiver
@@ -69,28 +111,36 @@ public:
     {
         if (event.EventType == irr::EET_GUI_EVENT) {
             if (event.GUIEvent.EventType == irr::gui::EGET_BUTTON_CLICKED ) {
-                irr::s32 id = event.GUIEvent.Caller->getID();
+                int32_t id = event.GUIEvent.Caller->getID();
 
                 if (id == EXIT_BUTTON) {
                     exit(EXIT_SUCCESS);
                 }
 
-                #ifndef _WIN32
-                int pid = fork();  // posix only (GNU/Linux, MacOS)
+                #if !defined(_WIN32) && !defined(__APPLE__)
+                int pid = fork();  // posix only (GNU/Linux)
                 if (pid > 0) return false;
                 #endif
 
                 if (id == BC_BUTTON) {
                     #ifdef _WIN32
-                        ShellExecute(NULL, NULL, "bridgecommand-bc.exe", NULL, NULL, SW_SHOW);
-                        //_execl("./bridgecommand-bc.exe", "bridgecommand-bc.exe", NULL);
+                        ShellExecute(NULL, NULL, "bridgecommand-bc.exe",
+                                     bcExtraArgs.empty() ? NULL : bcExtraArgs.c_str(),
+                                     NULL, SW_SHOW);
                     #else
                     #ifdef __APPLE__
-                        //APPLE
-                        execl("../Helpers/bc.app/Contents/MacOS/bc", "bc", NULL);
+                        if (!bcExtraArgs.empty()) {
+                            macLaunchHelper("../Helpers/bc.app/Contents/MacOS/bc", bcExtraArgs.c_str());
+                        } else {
+                            macLaunchHelper("../Helpers/bc.app/Contents/MacOS/bc");
+                        }
                     #else
                         //Other (assumed posix)
-                        execl("./bridgecommand-bc", "bridgecommand-bc", NULL);
+                        if (!bcExtraArgs.empty()) {
+                            execl("./bridgecommand-bc", "bridgecommand-bc", bcExtraArgs.c_str(), NULL);
+                        } else {
+                            execl("./bridgecommand-bc", "bridgecommand-bc", NULL);
+                        }
                     #endif
                     #endif
                 }
@@ -100,8 +150,7 @@ public:
                         //_execl("./bridgecommand-mc.exe", "bridgecommand-mc.exe", NULL);
                     #else
                     #ifdef __APPLE__
-                        //APPLE
-                        execl("../Helpers/mc.app/Contents/MacOS/mc", "mc", NULL);
+                        macLaunchHelper("../Helpers/mc.app/Contents/MacOS/mc");
                     #else
                         //Other (assumed posix)
                         execl("./bridgecommand-mc", "bridgecommand-mc", NULL);
@@ -114,8 +163,7 @@ public:
                         //_execl("./bridgecommand-rp.exe", "bridgecommand-rp.exe", NULL);
                     #else
                     #ifdef __APPLE__
-                        //APPLE
-                        execl("../Helpers/rp.app/Contents/MacOS/rp", "rp", NULL);
+                        macLaunchHelper("../Helpers/rp.app/Contents/MacOS/rp");
                     #else
                         //Other (assumed posix)
                         execl("./bridgecommand-rp", "bridgecommand-rp", NULL);
@@ -128,8 +176,7 @@ public:
                         //_execl("./bridgecommand-ed.exe", "bridgecommand-ed.exe", NULL);
                     #else
                     #ifdef __APPLE__
-                        //APPLE
-                        execl("../Helpers/ed.app/Contents/MacOS/ed", "ed", NULL);
+                        macLaunchHelper("../Helpers/ed.app/Contents/MacOS/ed");
                     #else
                         //Other (assumed posix)
                         execl("./bridgecommand-ed", "bridgecommand-ed", NULL);
@@ -142,13 +189,67 @@ public:
                         //_execl("./bridgecommand-mh.exe", "bridgecommand-mh.exe", NULL);
                     #else
                     #ifdef __APPLE__
-                        //APPLE
-                        execl("../Helpers/mh.app/Contents/MacOS/mh", "mh", NULL);
+                        macLaunchHelper("../Helpers/mh.app/Contents/MacOS/mh");
                     #else
                         //Other (assumed posix)
                         execl("./bridgecommand-mh", "bridgecommand-mh", NULL);
                     #endif
                     #endif
+                }
+                if (id == MP_JOIN_BUTTON) {
+                    // Show join multiplayer dialog
+                    if (globalDevice) {
+                        irr::gui::IGUIEnvironment* guienv = globalDevice->getGUIEnvironment();
+                        irr::gui::IGUIWindow* wnd = guienv->addWindow(
+                            irr::core::rect<int32_t>(10, 200, 290, 330), true, L"Join Multiplayer Session");
+                        guienv->addStaticText(L"Hub IP:Port",
+                            irr::core::rect<int32_t>(10, 30, 270, 48), false, false, wnd);
+
+                        // Load saved IP
+                        std::string savedHost = "localhost:18305";
+                        std::string savedFile = userFolder + "mp_lasthost.txt";
+                        if (Utilities::pathExists(savedFile)) {
+                            std::string loaded = IniFile::iniFileToString(savedFile, "host");
+                            if (!loaded.empty()) savedHost = loaded;
+                        }
+                        irr::core::stringw wHost(savedHost.c_str());
+                        mpHostEdit = guienv->addEditBox(wHost.c_str(),
+                            irr::core::rect<int32_t>(10, 50, 270, 72), true, wnd);
+
+                        guienv->addButton(
+                            irr::core::rect<int32_t>(80, 85, 200, 110), wnd, MP_CONNECT_BUTTON, L"Connect");
+                    }
+                    return true;
+                }
+                if (id == MP_CONNECT_BUTTON) {
+                    if (mpHostEdit) {
+                        irr::core::stringc hostStr(mpHostEdit->getText());
+                        std::string host = hostStr.c_str();
+
+                        // Save for next time
+                        if (!userFolder.empty()) {
+                            std::ofstream saveFile(userFolder + "mp_lasthost.txt");
+                            if (saveFile.is_open()) {
+                                saveFile << "host=" << host << std::endl;
+                                saveFile.close();
+                            }
+                        }
+
+                        std::string connectArg = "--connect " + host;
+                        #ifdef _WIN32
+                            ShellExecute(NULL, NULL, "bridgecommand-bc.exe", connectArg.c_str(), NULL, SW_SHOW);
+                        #else
+                        #ifdef __APPLE__
+                            macLaunchHelper("../Helpers/bc.app/Contents/MacOS/bc", "--connect", host.c_str());
+                        #else
+                            //Other (assumed posix)
+                            execl("./bridgecommand-bc", "bridgecommand-bc", "--connect", host.c_str(), NULL);
+                        #endif
+                        #endif
+
+                        mpHostEdit = nullptr;
+                    }
+                    return true;
                 }
                 if (id == INI_BC_BUTTON) {
                     #ifdef _WIN32
@@ -156,8 +257,7 @@ public:
                         //_execl("./bridgecommand-ini.exe", "bridgecommand-ini.exe", NULL);
                     #else
                     #ifdef __APPLE__
-                        //APPLE
-                        execl("../Helpers/ini.app/Contents/MacOS/ini", "ini", NULL);
+                        macLaunchHelper("../Helpers/ini.app/Contents/MacOS/ini");
                     #else
                         //Other (assumed posix)
                         execl("./bridgecommand-ini", "bridgecommand-ini", NULL);
@@ -170,8 +270,7 @@ public:
                         //_execl("./bridgecommand-ini.exe", "bridgecommand-ini.exe", "-M", NULL);
                     #else
                     #ifdef __APPLE__
-                        //APPLE
-                        execl("../Helpers/ini.app/Contents/MacOS/ini", "ini", "-M", NULL);
+                        macLaunchHelper("../Helpers/ini.app/Contents/MacOS/ini", "-M");
                     #else
                         //Other (assumed posix)
                         execl("./bridgecommand-ini", "bridgecommand-ini", "-M", NULL);
@@ -184,8 +283,7 @@ public:
                         //_execl("./bridgecommand-ini.exe", "bridgecommand-ini.exe", "-R", NULL);
                     #else
                     #ifdef __APPLE__
-                        //APPLE
-                        execl("../Helpers/ini.app/Contents/MacOS/ini", "ini", "-R", NULL);
+                        macLaunchHelper("../Helpers/ini.app/Contents/MacOS/ini", "-R");
                     #else
                         //Other (assumed posix)
                         execl("./bridgecommand-ini", "bridgecommand-ini", "-R", NULL);
@@ -198,8 +296,7 @@ public:
                         //_execl("./bridgecommand-ini.exe", "bridgecommand-ini.exe", "-H", NULL);
                     #else
                     #ifdef __APPLE__
-                        //APPLE
-                        execl("../Helpers/ini.app/Contents/MacOS/ini", "ini", "-H", NULL);
+                        macLaunchHelper("../Helpers/ini.app/Contents/MacOS/ini", "-H");
                     #else
                         //Other (assumed posix)
                         execl("./bridgecommand-ini", "bridgecommand-ini", "-H", NULL);
@@ -214,8 +311,7 @@ public:
                         //exit(EXIT_SUCCESS);
                     #else
                     #ifdef __APPLE__
-                        //APPLE
-                        execl("/usr/bin/open", "open", "../Resources/doc/index.html", NULL);
+                        macOpen("../Resources/doc/index.html");
                     #else
                         //Other (assumed posix)
                         #ifdef FOR_DEB
@@ -240,9 +336,7 @@ public:
                         //exit(EXIT_SUCCESS);
                     #else
                     #ifdef __APPLE__
-                        //APPLE
-                        std::cout << userFolder << std::endl;
-                        execl("/usr/bin/open", "open", userFolder.c_str(), NULL);
+                        macOpen(userFolder.c_str());
                     #else
                         //Other (assumed posix)
                         execl("/usr/bin/xdg-open", "xdg-open", userFolder.c_str(), NULL);
@@ -302,6 +396,20 @@ int main (int argc, char ** argv)
         iniFilename = userFolder + iniFilename;
     }
 
+    // Check for --wicked flag or use_wicked_engine ini setting
+    bool useWicked = false;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--wicked") == 0) {
+            useWicked = true;
+        }
+    }
+    if (!useWicked && IniFile::iniFileTou32(iniFilename, "use_wicked_engine") == 1) {
+        useWicked = true;
+    }
+    if (useWicked) {
+        bcExtraArgs = "--wicked";
+    }
+
     std::string modifier = IniFile::iniFileToString(iniFilename, "lang");
     if (modifier.length()==0) {
         modifier = "en"; //Default
@@ -323,18 +431,18 @@ int main (int argc, char ** argv)
 	    fontScale = 1.0;
     }
 
-    irr::u32 graphicsWidth = 300;
-    irr::u32 graphicsHeight = 620;
-    irr::u32 graphicsDepth = 32;
+    uint32_t graphicsWidth = 300;
+    uint32_t graphicsHeight = 650;
+    uint32_t graphicsDepth = 32;
     bool fullScreen = false;
 
-    irr::IrrlichtDevice* device = irr::createDevice(irr::video::EDT_OPENGL, irr::core::dimension2d<irr::u32>(graphicsWidth,graphicsHeight),graphicsDepth,fullScreen,false,false,0);
+    irr::IrrlichtDevice* device = irr::createDevice(irr::video::EDT_OPENGL, irr::core::dimension2d<uint32_t>(graphicsWidth,graphicsHeight),graphicsDepth,fullScreen,false,false,0);
     irr::video::IVideoDriver* driver = device->getVideoDriver();
 
     irr::video::ITexture* imgTexture = driver->getTexture("media/logo.png");
-    irr::core::dimension2d<irr::u32> imgSize = imgTexture->getSize();
+    irr::core::dimension2d<uint32_t> imgSize = imgTexture->getSize();
 
-    driver->OnResize(irr::core::dimension2d<irr::u32>(imgSize.Width, graphicsHeight));
+    driver->OnResize(irr::core::dimension2d<uint32_t>(imgSize.Width, graphicsHeight));
 
     #ifdef __APPLE__
     //Mac OS - cd back to original dir - seems to be changed during createDevice
@@ -344,6 +452,7 @@ int main (int argc, char ** argv)
         std::cout << "Could not get filesystem" << std::endl;
     }
     fileSystem->changeWorkingDirectoryTo(exeFolderPath.c_str());
+    chdir(exeFolderPath.c_str()); // Also restore real OS CWD for posix_spawn
     #endif
 
     device->setWindowCaption(L"Bridge Command");
@@ -377,52 +486,56 @@ int main (int argc, char ** argv)
     device->getGUIEnvironment()->addImage(imgTexture, irr::core::position2d<int>(bC, 10));
 
     y1 = imgSize.Height +   2*bR; y2 = y1 + 2*bH; 
-    irr::gui::IGUIButton* launchBC    = device->getGUIEnvironment()->addButton(irr::core::rect<irr::s32>(x1,y1,x2,y2),0,BC_BUTTON,language.translate("startBC").c_str()); //i18n
+    irr::gui::IGUIButton* launchBC    = device->getGUIEnvironment()->addButton(irr::core::rect<int32_t>(x1,y1,x2,y2),0,BC_BUTTON,language.translate("startBC").c_str()); //i18n
     launchBC->setImage(driver->getTexture("media/startBC.png"));
     launchBC->setUseAlphaChannel();
 
-    y1 = y2 + 3*bR; y2 = y1 +   bH; irr::gui::IGUIButton* launchED    = device->getGUIEnvironment()->addButton(irr::core::rect<irr::s32>(x1,y1,x2,y2),0,ED_BUTTON,language.translate("startED").c_str()); //i18n
+    y1 = y2 + 3*bR; y2 = y1 +   bH; irr::gui::IGUIButton* launchED    = device->getGUIEnvironment()->addButton(irr::core::rect<int32_t>(x1,y1,x2,y2),0,ED_BUTTON,language.translate("startED").c_str()); //i18n
     launchED->setImage(driver->getTexture("media/startED.png"));
     launchED->setUseAlphaChannel();
-    y1 = y2 +   bR; y2 = y1 +   bH; irr::gui::IGUIButton* launchMC    = device->getGUIEnvironment()->addButton(irr::core::rect<irr::s32>(x1,y1,x2,y2),0,MC_BUTTON,language.translate("startMC").c_str()); //i18n
+    y1 = y2 +   bR; y2 = y1 +   bH; irr::gui::IGUIButton* launchMC    = device->getGUIEnvironment()->addButton(irr::core::rect<int32_t>(x1,y1,x2,y2),0,MC_BUTTON,language.translate("startMC").c_str()); //i18n
     launchMC->setImage(driver->getTexture("media/startMC.png"));
     launchMC->setUseAlphaChannel();
-    y1 = y2 +   bR; y2 = y1 +   bH; irr::gui::IGUIButton* launchRP    = device->getGUIEnvironment()->addButton(irr::core::rect<irr::s32>(x1,y1,x2,y2),0,RP_BUTTON,language.translate("startRP").c_str()); //i18n
+    y1 = y2 +   bR; y2 = y1 +   bH; irr::gui::IGUIButton* launchRP    = device->getGUIEnvironment()->addButton(irr::core::rect<int32_t>(x1,y1,x2,y2),0,RP_BUTTON,language.translate("startRP").c_str()); //i18n
     launchRP->setImage(driver->getTexture("media/startRP.png"));
     launchRP->setUseAlphaChannel();
-    y1 = y2 +   bR; y2 = y1 +   bH; irr::gui::IGUIButton* launchMH    = device->getGUIEnvironment()->addButton(irr::core::rect<irr::s32>(x1,y1,x2,y2),0,MH_BUTTON,language.translate("startMH").c_str()); //i18n
+    y1 = y2 +   bR; y2 = y1 +   bH; irr::gui::IGUIButton* launchMH    = device->getGUIEnvironment()->addButton(irr::core::rect<int32_t>(x1,y1,x2,y2),0,MH_BUTTON,language.translate("startMH").c_str()); //i18n
     launchMH->setImage(driver->getTexture("media/startMH.png"));
     launchMH->setUseAlphaChannel();
-    y1 = y2 + 3*bR; y2 = y1 +   bH; irr::gui::IGUIButton* launchINIBC = device->getGUIEnvironment()->addButton(irr::core::rect<irr::s32>(x1,y1,x2,y2),0,INI_BC_BUTTON,language.translate("startINIBC").c_str()); //i18n
+    y1 = y2 +   bR; y2 = y1 +   bH; irr::gui::IGUIButton* joinMP     = device->getGUIEnvironment()->addButton(irr::core::rect<int32_t>(x1,y1,x2,y2),0,MP_JOIN_BUTTON,L"Join Session");
+    joinMP->setImage(driver->getTexture("media/startMH.png"));
+    joinMP->setUseAlphaChannel();
+    y1 = y2 + 3*bR; y2 = y1 +   bH; irr::gui::IGUIButton* launchINIBC = device->getGUIEnvironment()->addButton(irr::core::rect<int32_t>(x1,y1,x2,y2),0,INI_BC_BUTTON,language.translate("startINIBC").c_str()); //i18n
     launchINIBC->setImage(driver->getTexture("media/settings.png"));
     launchINIBC->setUseAlphaChannel();
-    y1 = y2 +   bR; y2 = y1 +   bH; irr::gui::IGUIButton* launchINIMC = device->getGUIEnvironment()->addButton(irr::core::rect<irr::s32>(x1,y1,x2,y2),0,INI_MC_BUTTON,language.translate("startINIMC").c_str()); //i18n
+    y1 = y2 +   bR; y2 = y1 +   bH; irr::gui::IGUIButton* launchINIMC = device->getGUIEnvironment()->addButton(irr::core::rect<int32_t>(x1,y1,x2,y2),0,INI_MC_BUTTON,language.translate("startINIMC").c_str()); //i18n
     launchINIMC->setImage(driver->getTexture("media/settings.png"));
     launchINIMC->setUseAlphaChannel();
-    y1 = y2 +   bR; y2 = y1 +   bH; irr::gui::IGUIButton* launchINIRP = device->getGUIEnvironment()->addButton(irr::core::rect<irr::s32>(x1,y1,x2,y2),0,INI_RP_BUTTON,language.translate("startINIRP").c_str()); //i18n
+    y1 = y2 +   bR; y2 = y1 +   bH; irr::gui::IGUIButton* launchINIRP = device->getGUIEnvironment()->addButton(irr::core::rect<int32_t>(x1,y1,x2,y2),0,INI_RP_BUTTON,language.translate("startINIRP").c_str()); //i18n
     launchINIRP->setImage(driver->getTexture("media/settings.png"));
     launchINIRP->setUseAlphaChannel();
-    y1 = y2 +   bR; y2 = y1 +   bH; irr::gui::IGUIButton* launchINIMH = device->getGUIEnvironment()->addButton(irr::core::rect<irr::s32>(x1,y1,x2,y2),0,INI_MH_BUTTON,language.translate("startINIMH").c_str()); //i18n
+    y1 = y2 +   bR; y2 = y1 +   bH; irr::gui::IGUIButton* launchINIMH = device->getGUIEnvironment()->addButton(irr::core::rect<int32_t>(x1,y1,x2,y2),0,INI_MH_BUTTON,language.translate("startINIMH").c_str()); //i18n
     launchINIMH->setImage(driver->getTexture("media/settings.png"));
     launchINIMH->setUseAlphaChannel();
 
-    y1 = y2 + 3*bR; y2 = y1 +   bH; irr::gui::IGUIButton* launchDOC   = device->getGUIEnvironment()->addButton(irr::core::rect<irr::s32>(x1,y1,x2,y2),0,DOC_BUTTON,language.translate("startDOC").c_str()); //i18n
+    y1 = y2 + 3*bR; y2 = y1 +   bH; irr::gui::IGUIButton* launchDOC   = device->getGUIEnvironment()->addButton(irr::core::rect<int32_t>(x1,y1,x2,y2),0,DOC_BUTTON,language.translate("startDOC").c_str()); //i18n
     launchDOC->setImage(driver->getTexture("media/startDOC.png"));
     launchDOC->setUseAlphaChannel();
-    y1 = y2 +   bR; y2 = y1 +   bH; irr::gui::IGUIButton* launchFOLDER= device->getGUIEnvironment()->addButton(irr::core::rect<irr::s32>(x1,y1,x2,y2),0,USER_BUTTON,language.translate("user").c_str()); //i18n
+    y1 = y2 +   bR; y2 = y1 +   bH; irr::gui::IGUIButton* launchFOLDER= device->getGUIEnvironment()->addButton(irr::core::rect<int32_t>(x1,y1,x2,y2),0,USER_BUTTON,language.translate("user").c_str()); //i18n
     launchFOLDER->setImage(driver->getTexture("media/user.png"));
     launchFOLDER->setUseAlphaChannel();
-    y1 = y2 +   bR; y2 = y1 +   bH; irr::gui::IGUIButton* leave       = device->getGUIEnvironment()->addButton(irr::core::rect<irr::s32>(x1,y1,x2,y2),0,EXIT_BUTTON,language.translate("leave").c_str()); //i18n
+    y1 = y2 +   bR; y2 = y1 +   bH; irr::gui::IGUIButton* leave       = device->getGUIEnvironment()->addButton(irr::core::rect<int32_t>(x1,y1,x2,y2),0,EXIT_BUTTON,language.translate("leave").c_str()); //i18n
     leave->setImage(driver->getTexture("media/leave.png"));
     leave->setUseAlphaChannel();
 
     std::string version = "v" + LONGVERSION; 
     irr::core::stringw wVer(version.c_str());
 
-    y1 = y2 + bR; y2 = y1 + bH; device->getGUIEnvironment()->addStaticText(wVer.c_str(), irr::core::rect<irr::s32>(180+ wVer.size(), y1, x2, y2), true);
+    y1 = y2 + bR; y2 = y1 + bH; device->getGUIEnvironment()->addStaticText(wVer.c_str(), irr::core::rect<int32_t>(180+ wVer.size(), y1, x2, y2), true);
 
     device->getGUIEnvironment()->setFocus(launchBC);
 
+    globalDevice = device;
     Receiver receiver;
     device->setEventReceiver(&receiver);
 

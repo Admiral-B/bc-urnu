@@ -20,6 +20,7 @@
 #include "Network.hpp"
 
 #include <string>
+#include <deque>
 
 #include <enet/enet.h>
 
@@ -38,7 +39,10 @@ public:
     void update();
     int getPort();
     void shutdownAllSecondaries(void);
-  
+    void sendChatMessage(const std::string& text) override;
+    bool hasPendingChat() override;
+    std::deque<ChatMessage> getPendingChatMessages() override;
+
 private:
     SimulationModel* model;
     irr::IrrlichtDevice* device;
@@ -46,12 +50,15 @@ private:
     float accelAdjustment;
     float previousTimeError;
 
-    ENetHost * server;
+    ENetHost * server; // Also used as client host in MultiplayerClient mode
+    ENetPeer * hubPeer; // Peer connection to hub (MultiplayerClient mode only)
     ENetEvent event;
     OperatingMode::Mode mode;
 
     void receiveMessage();
 
+    // Chat message queue
+    std::deque<ChatMessage> pendingChatMessages;
 };
 
 #endif

@@ -15,6 +15,10 @@
      51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA. */
 
 #include "ControllerModel.hpp"
+#include "MapTileSources.hpp"
+#include "MapWidget.hpp"
+#include "CoastlineRenderer.hpp"
+#include "irrlicht.h"
 #include "../IniFile.hpp"
 #include "../Constants.hpp"
 #include "../Utilities.hpp"
@@ -30,7 +34,7 @@
 #define MAX_PX_IN_MAP 160000000
 
 //Constructor
-ControllerModel::ControllerModel(irr::IrrlichtDevice* device, Lang* lang, GUIMain* gui, std::string worldName, ScenarioData* scenarioData, std::vector<PositionData>* buoysData, std::vector<PositionData>* landObjectsData, irr::u32 _zoomLevels)
+ControllerModel::ControllerModel(irr::IrrlichtDevice* device, Lang* lang, GUIMain* gui, std::string worldName, ScenarioData* scenarioData, std::vector<PositionData>* buoysData, std::vector<PositionData>* landObjectsData, uint32_t _zoomLevels)
 {
 
     this->gui = gui;
@@ -90,7 +94,7 @@ ControllerModel::ControllerModel(irr::IrrlichtDevice* device, Lang* lang, GUIMai
             irr::io::IFileList* fileList = fileSystem->createFileList();
             if (fileList!=0) {
                 //List here
-                for (irr::u32 i=0;i<fileList->getFileCount();i++) {
+                for (uint32_t i=0;i<fileList->getFileCount();i++) {
                     if (fileList->isDirectory(i)==false) {
                         const irr::io::path& fileName = fileList->getFileName(i);
                         if (irr::core::hasFileExtension(fileName,"hdr")) {
@@ -178,23 +182,23 @@ ControllerModel::ControllerModel(irr::IrrlichtDevice* device, Lang* lang, GUIMai
     std::cout << "Width m " << terrainXWidth << " Height m " << terrainZWidth << std::endl;
 
     //Calculate ratio required
-    irr::f32 widthToHeight;
+    float widthToHeight;
     if (terrainXWidth>0 &&  terrainZWidth>0) {
         widthToHeight = terrainXWidth/terrainZWidth;
     } else {
         std::cout << "Zero map width or height. Please check world model." << std::endl;
         exit(EXIT_FAILURE);
     }
-    irr::core::dimension2d<irr::u32> loadedSize = unscaledMap->getDimension();
+    irr::core::dimension2d<uint32_t> loadedSize = unscaledMap->getDimension();
 
     std::cout << "Loaded map image (" << loadedSize.Width << "x" << loadedSize.Height << ")" << std::endl;
 
     //Calculate scaling needed
     for (unsigned int i = 0; i<zoomLevels; i++) {
-         irr::f32 scaling = 0.00625 * pow(2, i);
+         float scaling = 0.00625 * pow(2, i);
 
-         irr::u32 requiredWidth = terrainXWidth*scaling;//std::max(widthFromHeight, loadedSize.Width);
-         irr::u32 requiredHeight = terrainZWidth*scaling;//std::max(heightFromWidth, loadedSize.Height);
+         uint32_t requiredWidth = terrainXWidth*scaling;//std::max(widthFromHeight, loadedSize.Width);
+         uint32_t requiredHeight = terrainZWidth*scaling;//std::max(heightFromWidth, loadedSize.Height);
 
         //Avoid zero sized map
         if (requiredWidth < 1) {
@@ -208,7 +212,7 @@ ControllerModel::ControllerModel(irr::IrrlichtDevice* device, Lang* lang, GUIMai
 
 			 //Create scaled map with the same image format of the size required
 			 std::cout << "About to create empty scaled map " << i << " (" << requiredWidth << "x" << requiredHeight << ")" << std::endl;
-			 scaledMap.at(i) = driver->createImage(unscaledMap->getColorFormat(), irr::core::dimension2d<irr::u32>(requiredWidth, requiredHeight));
+			 scaledMap.at(i) = driver->createImage(unscaledMap->getColorFormat(), irr::core::dimension2d<uint32_t>(requiredWidth, requiredHeight));
 			 //Copy and scale image
 			 std::cout << "About to copy in for " << i << std::endl;
 			 //TODO: Check if empty scaled map has been created
@@ -233,6 +237,41 @@ ControllerModel::ControllerModel(irr::IrrlichtDevice* device, Lang* lang, GUIMai
     unscaledMap->drop();
     unscaledMap=0;
 
+    // Initialize tile map system
+    std::string tileCacheDir = Utilities::getUserDirBase() + "tilecache";
+    tileSources = std::make_unique<MapTileSources>(tileCacheDir, driver);
+    mapWidget = std::make_unique<MapWidget>(tileSources->getDownloader(), tileSources->getTextureManager());
+
+    // Center tile map on the world's center position
+    double centerLat = terrainLat + terrainLatExtent / 2.0;
+    double centerLon = terrainLong + terrainLongExtent / 2.0;
+    mapWidget->setCenter(centerLat, centerLon);
+
+    // Set zoom level based on terrain extent
+    // Roughly: zoom = log2(360 / extent)
+    double extent = std::max(terrainLongExtent, terrainLatExtent);
+    int tileZoom = 6;
+    if (extent > 0) {
+        tileZoom = static_cast<int>(std::log2(360.0 / extent));
+        tileZoom = std::max(2, std::min(18, tileZoom));
+    }
+    mapWidget->setZoom(tileZoom);
+
+    // Load coastline data
+    coastlineRenderer = std::make_unique<CoastlineRenderer>();
+    std::string dataDir = Utilities::getUserDirBase() + "../Data/Coastlines/";
+    // Try alongside the executable first, then in user dir
+    std::string exeDir = "";
+    // Get executable directory from device's file system
+    irr::io::IFileSystem* fs = device->getFileSystem();
+    if (fs) {
+        exeDir = std::string(irr::core::stringc(fs->getWorkingDirectory()).c_str()) + "/Data/Coastlines/";
+    }
+    if (!exeDir.empty() && coastlineRenderer->load(exeDir + "coastlines_50m.bin", exeDir + "coastlines_10m.bin")) {
+        // Loaded from executable directory
+    } else {
+        coastlineRenderer->load(dataDir + "coastlines_50m.bin", dataDir + "coastlines_10m.bin");
+    }
 }
 
 //Destructor
@@ -243,22 +282,22 @@ ControllerModel::~ControllerModel()
     }
 }
 
-irr::f32 ControllerModel::longToX(irr::f32 longitude) const
+float ControllerModel::longToX(float longitude) const
 {
     return ((longitude - terrainLong ) * (terrainXWidth)) / terrainLongExtent;
 }
 
-irr::f32 ControllerModel::latToZ(irr::f32 latitude) const
+float ControllerModel::latToZ(float latitude) const
 {
     return ((latitude - terrainLat ) * (terrainZWidth)) / terrainLatExtent;
 }
 
-irr::f32 ControllerModel::xToLong(irr::f32 x) const
+float ControllerModel::xToLong(float x) const
 {
     return terrainLong + x*terrainLongExtent/terrainXWidth;
 }
 
-irr::f32 ControllerModel::zToLat(irr::f32 z) const
+float ControllerModel::zToLat(float z) const
 {
     return terrainLat + z*terrainLatExtent/terrainZWidth;
 }
@@ -274,44 +313,82 @@ void ControllerModel::update()
 
     //Find mouse position change if clicked, and clicked last time
     if (mouseClickedLastUpdate && mouseDown) {
-        irr::core::position2d<irr::s32> mouseNow = device->getCursorControl()->getPosition();
-        irr::s32 mouseDeltaX = mouseNow.X - mouseLastPosition.X;
-        irr::s32 mouseDeltaY = mouseNow.Y - mouseLastPosition.Y;
+        irr::core::position2d<int32_t> mouseNow = device->getCursorControl()->getPosition();
+        int32_t mouseDeltaX = mouseNow.X - mouseLastPositionX;
+        int32_t mouseDeltaY = mouseNow.Y - mouseLastPositionY;
 
         //Change offset
         mapOffsetX += mouseDeltaX;
         mapOffsetZ += mouseDeltaY;
     }
     //Update mouse position and clicked state
-    mouseLastPosition = device->getCursorControl()->getPosition();
+    auto mousePos = device->getCursorControl()->getPosition();
+    mouseLastPositionX = mousePos.X;
+    mouseLastPositionY = mousePos.Y;
     mouseClickedLastUpdate = mouseDown;
 
 
-    //TODO: Work out the required area of the map image, and create this as a texture to go to the gui
-    irr::core::dimension2d<irr::u32> screenSize = device->getVideoDriver()->getScreenSize();
-    //grab an area this size from the scaled map
-    irr::video::IImage* tempImage = driver->createImage(scaledMap.at(currentZoom)->getColorFormat(),screenSize); //Empty image
-    tempImage->fill(irr::video::SColor(255,0,0,32)); //Initialise background
+    irr::core::dimension2d<uint32_t> screenSize = device->getVideoDriver()->getScreenSize();
 
-    //Copy in data
-    irr::s32 topLeftX = -1*scenarioData->ownShipData.initialX/metresPerPx.at(currentZoom) + driver->getScreenSize().Width/2 + mapOffsetX;
-    irr::s32 topLeftZ = scenarioData->ownShipData.initialZ/metresPerPx.at(currentZoom)    + driver->getScreenSize().Height/2 - scaledMap.at(currentZoom)->getDimension().Height + mapOffsetZ;
+    // Render tile map as background if enabled (BEFORE the GUI, so overlays draw on top)
+    if (tileMapEnabled && mapWidget) {
+        // Sync tile map center with the existing editor's map center
+        // The editor's map center in world coords:
+        double mapCenterX = scenarioData->ownShipData.initialX - mapOffsetX * metresPerPx.at(currentZoom);
+        double mapCenterZ = scenarioData->ownShipData.initialZ + mapOffsetZ * metresPerPx.at(currentZoom);
 
-    scaledMap.at(currentZoom)->copyTo(tempImage,irr::core::position2d<irr::s32>(topLeftX,topLeftZ)); //Fixme: Check bounds are reasonable
+        // Convert world coords to lat/lon
+        double centerLat = terrainLat + (mapCenterZ / terrainZWidth) * terrainLatExtent;
+        double centerLon = terrainLong + (mapCenterX / terrainXWidth) * terrainLongExtent;
+        mapWidget->setCenter(centerLat, centerLon);
+
+        // Calculate tile zoom from metresPerPx
+        double mpp = metresPerPx.at(currentZoom);
+        if (mpp > 0) {
+            int tileZoom = static_cast<int>(std::round(
+                std::log2(156543.03392 * std::cos(centerLat * M_PI / 180.0) / mpp)));
+            tileZoom = std::max(2, std::min(19, tileZoom));
+            mapWidget->setZoom(tileZoom);
+        }
+
+        // Render tiles as background (no grid/overlay -- the existing editor provides those)
+        mapWidget->showGrid = false;
+        mapWidget->showOverlay = false;
+        irr::gui::IGUIFont* font = device->getGUIEnvironment()->getBuiltInFont();
+        mapWidget->render(driver, font, 0, 0, screenSize.Width, screenSize.Height);
+
+        // Render coastlines on top of tiles
+        if (coastlineEnabled && coastlineRenderer && coastlineRenderer->isLoaded()) {
+            coastlineRenderer->render(driver, *mapWidget);
+        }
+    }
+
+    // Build the bitmap map texture (skip when tile map provides the background)
+    irr::video::ITexture* displayMapTexture = nullptr;
 
     //Drop any previous textures
-    for(irr::u32 i = 0; i < driver->getTextureCount(); i++) {
+    for(uint32_t i = 0; i < driver->getTextureCount(); i++) {
         if (driver->getTextureByIndex(i)->getName().getPath()=="DisplayTexture") {
             driver->removeTexture(driver->getTextureByIndex(i));
         }
     }
 
-    //Make a texture - The name is required to remove the texture from memory.
-    irr::video::ITexture* displayMapTexture = driver->addTexture("DisplayTexture", tempImage);
+    if (!tileMapEnabled) {
+        irr::video::IImage* tempImage = driver->createImage(scaledMap.at(currentZoom)->getColorFormat(), screenSize);
+        // Original dark blue background for bitmap map
+        tempImage->fill(irr::video::SColor(255, 0, 0, 32));
 
-    tempImage->drop();
+        // Copy bitmap map data
+        int32_t topLeftX = -1*scenarioData->ownShipData.initialX/metresPerPx.at(currentZoom) + driver->getScreenSize().Width/2 + mapOffsetX;
+        int32_t topLeftZ = scenarioData->ownShipData.initialZ/metresPerPx.at(currentZoom)    + driver->getScreenSize().Height/2 - scaledMap.at(currentZoom)->getDimension().Height + mapOffsetZ;
+        scaledMap.at(currentZoom)->copyTo(tempImage, irr::core::position2d<int32_t>(topLeftX, topLeftZ));
 
-    //Send the current data to the gui, and update it
+        //Make a texture - The name is required to remove the texture from memory.
+        displayMapTexture = driver->addTexture("DisplayTexture", tempImage);
+        tempImage->drop();
+    }
+
+    //Send the current data to the gui, and update it (ships, controls render on top)
     gui->updateGuiData(*scenarioData,mapOffsetX,mapOffsetZ,metresPerPx.at(currentZoom),*buoysData,*landObjectsData,displayMapTexture,selectedShip,selectedLeg, terrainLong, terrainLongExtent, terrainXWidth, terrainLat, terrainLatExtent, terrainZWidth);
 }
 
@@ -326,7 +403,7 @@ void ControllerModel::increaseZoom()
     if(currentZoom+1<zoomLevels) {
         currentZoom++;
 
-        irr::f32 scaleChange = (irr::f32)scaledMap.at(currentZoom)->getDimension().Width/(irr::f32)scaledMap.at(currentZoom-1)->getDimension().Width;
+        float scaleChange = (float)scaledMap.at(currentZoom)->getDimension().Width/(float)scaledMap.at(currentZoom-1)->getDimension().Width;
         mapOffsetX*=scaleChange;
         mapOffsetZ*=scaleChange;
     }
@@ -337,29 +414,29 @@ void ControllerModel::decreaseZoom()
     if(currentZoom>0) {
         currentZoom--;
 
-        irr::f32 scaleChange = (irr::f32)scaledMap.at(currentZoom)->getDimension().Width/(irr::f32)scaledMap.at(currentZoom+1)->getDimension().Width;
+        float scaleChange = (float)scaledMap.at(currentZoom)->getDimension().Width/(float)scaledMap.at(currentZoom+1)->getDimension().Width;
         mapOffsetX*=scaleChange;
         mapOffsetZ*=scaleChange;
     }
 }
 
-void ControllerModel::setShipPosition(irr::s32 ship, irr::core::vector2df position)
+void ControllerModel::setShipPosition(int32_t ship, bc::graphics::Vec2 position)
 {
     if (ship==0) {
         //Own ship
-        scenarioData->ownShipData.initialX = position.X;
-        scenarioData->ownShipData.initialZ = position.Y;
+        scenarioData->ownShipData.initialX = position.x;
+        scenarioData->ownShipData.initialZ = position.y;
     } else if (ship>0) {
         //Other ship
-        irr::s32 otherShipNumber = ship-1; //Ship number is minimum of 1, so subtract 1 to start at 0
+        int32_t otherShipNumber = ship-1; //Ship number is minimum of 1, so subtract 1 to start at 0
         if (otherShipNumber < scenarioData->otherShipsData.size()) {
-            scenarioData->otherShipsData.at(otherShipNumber).initialX = position.X;
-            scenarioData->otherShipsData.at(otherShipNumber).initialZ = position.Y;
+            scenarioData->otherShipsData.at(otherShipNumber).initialX = position.x;
+            scenarioData->otherShipsData.at(otherShipNumber).initialZ = position.y;
         }
     }
 }
 
-void ControllerModel::updateSelectedShip(irr::s32 index) //To be called from eventReceiver, where index is from the combo box
+void ControllerModel::updateSelectedShip(int32_t index) //To be called from eventReceiver, where index is from the combo box
 {
     if(index < 1) { //If 0 or -1
         selectedShip = -1; //Own ship
@@ -370,7 +447,7 @@ void ControllerModel::updateSelectedShip(irr::s32 index) //To be called from eve
     //No guarantee from this that the selected ship is valid
 }
 
-void ControllerModel::updateSelectedLeg(irr::s32 index) //To be called from eventReceiver, where index is from the combo box. -1 if nothing selected, 0 upwards for leg
+void ControllerModel::updateSelectedLeg(int32_t index) //To be called from eventReceiver, where index is from the combo box. -1 if nothing selected, 0 upwards for leg
 {
     selectedLeg = index;
     //No guarantee from this that the selected leg is valid
@@ -425,7 +502,7 @@ void ControllerModel::checkName() //Check if the scenario name chosen will mean 
 
 }
 
-void ControllerModel::changeLeg(irr::s32 ship, irr::s32 index, irr::f32 legCourse, irr::f32 legSpeed, irr::f32 legDistance)  //Change othership (or ownship) course, speed etc.
+void ControllerModel::changeLeg(int32_t ship, int32_t index, float legCourse, float legSpeed, float legDistance)  //Change othership (or ownship) course, speed etc.
 {
     //If ownship:
     if (ship==0) {
@@ -447,7 +524,7 @@ void ControllerModel::changeLeg(irr::s32 ship, irr::s32 index, irr::f32 legCours
     recalculateLegTimes(); //Subsequent leg start times may have changed, so recalculate these
 }
 
-void ControllerModel::deleteLeg(irr::s32 ship, irr::s32 index)
+void ControllerModel::deleteLeg(int32_t ship, int32_t index)
 {
     //If other ship:
     if (ship>0) {
@@ -462,7 +539,7 @@ void ControllerModel::deleteLeg(irr::s32 ship, irr::s32 index)
     }
 }
 
-void ControllerModel::setMMSI(irr::s32 ship, int mmsi)
+void ControllerModel::setMMSI(int32_t ship, int mmsi)
 {
     //If other ship:
     if (ship>0) {
@@ -473,7 +550,7 @@ void ControllerModel::setMMSI(irr::s32 ship, int mmsi)
     }   
 }
 
-void ControllerModel::setDrifting(irr::s32 ship, bool drifting)
+void ControllerModel::setDrifting(int32_t ship, bool drifting)
 {
     //If other ship:
     if (ship > 0) {
@@ -484,7 +561,7 @@ void ControllerModel::setDrifting(irr::s32 ship, bool drifting)
     }
 }
 
-void ControllerModel::addLeg(irr::s32 ship, irr::s32 afterLegNumber, irr::f32 legCourse, irr::f32 legSpeed, irr::f32 legDistance)
+void ControllerModel::addLeg(int32_t ship, int32_t afterLegNumber, float legCourse, float legSpeed, float legDistance)
 {
     //If other ship:
     if (ship>0) {
@@ -521,11 +598,11 @@ void ControllerModel::addLeg(irr::s32 ship, irr::s32 afterLegNumber, irr::f32 le
     recalculateLegTimes(); //Subsequent leg start times may have changed, so recalculate these
 }
 
-void ControllerModel::addShip(std::string name, irr::core::vector2df position)
+void ControllerModel::addShip(std::string name, bc::graphics::Vec2 position)
 {
     OtherShipData newShip;
-    newShip.initialX = position.X;
-    newShip.initialZ = position.Y;
+    newShip.initialX = position.x;
+    newShip.initialZ = position.y;
     newShip.shipName = name;
     newShip.mmsi = 0;
     //Add a 'stop' leg
@@ -541,7 +618,7 @@ void ControllerModel::addShip(std::string name, irr::core::vector2df position)
     recalculateLegTimes(); //Subsequent leg start times may have changed, so recalculate these
 }
 
-void ControllerModel::deleteShip(irr::s32 ship) 
+void ControllerModel::deleteShip(int32_t ship) 
 {
 	//If other ship:
 	if (ship > 0) {
@@ -555,15 +632,15 @@ void ControllerModel::deleteShip(irr::s32 ship)
 void ControllerModel::recalculateLegTimes()
 {
     //Run through all othership legs, recalculating leg stop times
-    irr::f32 scenarioStartTime = scenarioData->startTime; //Legs start at the start of the scenario
+    float scenarioStartTime = scenarioData->startTime; //Legs start at the start of the scenario
 
     for (int thisShip = 0; thisShip < scenarioData->otherShipsData.size(); thisShip++) {
 
-        irr::f32 legStartTime = scenarioStartTime; //Legs start at the start of the scenario
+        float legStartTime = scenarioStartTime; //Legs start at the start of the scenario
         for (int thisLeg = 0; thisLeg < scenarioData->otherShipsData.at(thisShip).legs.size(); thisLeg++) {
             scenarioData->otherShipsData.at(thisShip).legs.at(thisLeg).startTime = legStartTime;
-            irr::f32 thisLegDistance = scenarioData->otherShipsData.at(thisShip).legs.at(thisLeg).distance;
-            irr::f32 thisLegSpeed = scenarioData->otherShipsData.at(thisShip).legs.at(thisLeg).speed;
+            float thisLegDistance = scenarioData->otherShipsData.at(thisShip).legs.at(thisLeg).distance;
+            float thisLegSpeed = scenarioData->otherShipsData.at(thisShip).legs.at(thisLeg).speed;
             //Update legStart time for start of next leg:
             legStartTime+= SECONDS_IN_HOUR*(thisLegDistance/fabs(thisLegSpeed)); // nm/kts -> hours, so convert to seconds
         }
@@ -577,9 +654,9 @@ void ControllerModel::changeOwnShipName(std::string name)
 
 }
 
-void ControllerModel::changeOtherShipName(irr::s32 ship, std::string name)
+void ControllerModel::changeOtherShipName(int32_t ship, std::string name)
 {
-    irr::s32 shipIndex = ship-1; //'ship' number starts at 1 for otherShips
+    int32_t shipIndex = ship-1; //'ship' number starts at 1 for otherShips
     if (shipIndex < scenarioData->otherShipsData.size()) {
         scenarioData->otherShipsData.at(shipIndex).shipName = name;
     }
@@ -703,4 +780,21 @@ void ControllerModel::save()
 void ControllerModel::setMouseDown(bool isMouseDown)
 {
     mouseDown = isMouseDown;
+}
+
+void ControllerModel::toggleTileMapSource()
+{
+    if (tileSources) {
+        tileSources->toggleSource();
+        // Update map widget to use the new source
+        if (mapWidget) {
+            // Recreate the map widget with the new source's downloader/texture manager
+            double lat = mapWidget->getCenterLat();
+            double lon = mapWidget->getCenterLon();
+            int zoom = mapWidget->getZoom();
+            mapWidget = std::make_unique<MapWidget>(tileSources->getDownloader(), tileSources->getTextureManager());
+            mapWidget->setCenter(lat, lon);
+            mapWidget->setZoom(zoom);
+        }
+    }
 }

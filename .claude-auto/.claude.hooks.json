@@ -1,0 +1,25 @@
+{
+  "autoContinue": {
+    "mode": "smart",
+    "maxIterations": 0,
+    "skipModes": [
+      "plan"
+    ]
+  },
+  "validateCommit": {
+    "mode": "strict",
+    "batchCount": 3
+  },
+  "denyList": {
+    "enabled": true,
+    "extraPatterns": []
+  },
+  "promptReminder": {
+    "enabled": true
+  },
+  "subagentHooks": {
+    "validateCommitOnExplore": false,
+    "validateCommitOnWork": true,
+    "validateCommitOnUnknown": true
+  }
+}

@@ -80,12 +80,12 @@
     <IntDir>$(Configuration)\bc\</IntDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);..\libs\Irrlicht\irrlicht-svn\include;..\libs\asio\include;..\libs\libsndfile\include;..\libs\portaudio\include;..\libs\enet-1.3.14\include</IncludePath>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);..\libs\Irrlicht\irrlicht-svn\include;..\libs\asio\include;..\libs\libsndfile\include;..\libs\portaudio\include;..\libs\enet-1.3.14\include;..\..\..\WickedEngine\WickedEngine;..\libs\earcut;..\graphics\wicked\imgui</IncludePath>
     <OutDir>..\..\bin</OutDir>
     <IntDir>$(Configuration)\bc\</IntDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);..\libs\Irrlicht\irrlicht-svn\include;..\libs\asio\include;..\libs\libsndfile\include;..\libs\portaudio\include;..\libs\enet-1.3.14\include</IncludePath>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);..\libs\Irrlicht\irrlicht-svn\include;..\libs\asio\include;..\libs\libsndfile\include;..\libs\portaudio\include;..\libs\enet-1.3.14\include;..\..\..\WickedEngine\WickedEngine;..\libs\earcut;..\graphics\wicked\imgui</IncludePath>
     <OutDir>..\..\bin</OutDir>
     <IntDir>$(Configuration)\bc\</IntDir>
   </PropertyGroup>
@@ -113,15 +113,16 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_MBCS;%(PreprocessorDefinitions);ASIO_STANDALONE;ASIO_HAS_STD_THREAD;ASIO_HAS_STD_ADDRESSOF;ASIO_HAS_STD_ARRAY;ASIO_HAS_CSTDINT;ASIO_HAS_STD_SHARED_PTR;ASIO_HAS_STD_TYPE_TRAITS;_WIN32_WINNT=0x0501;WITH_SOUND</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_MBCS;%(PreprocessorDefinitions);ASIO_STANDALONE;ASIO_HAS_STD_THREAD;ASIO_HAS_STD_ADDRESSOF;ASIO_HAS_STD_ARRAY;ASIO_HAS_CSTDINT;ASIO_HAS_STD_SHARED_PTR;ASIO_HAS_STD_TYPE_TRAITS;_WIN32_WINNT=0x0A00;WITH_SOUND;WITH_WICKED_ENGINE;_CRT_SECURE_NO_WARNINGS</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
-      <AdditionalLibraryDirectories>..\libs\Irrlicht\irrlicht-svn\lib\Win64-visualstudio;..\libs\libsndfile\lib;..\libs\portaudio\lib;..\libs\enet-1.3.14;..\libs\OpenXR\OpenXR-SDK-main\build\win64\src\loader\Release</AdditionalLibraryDirectories>
-      <AdditionalDependencies>winmm.lib;ws2_32.lib;Irrlicht.lib;sndfile.lib;portaudio_x64.lib;enet64.lib;openxr_loader.lib;opengl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>..\libs\Irrlicht\irrlicht-svn\lib\Win64-visualstudio;..\libs\libsndfile\lib;..\libs\portaudio\lib;..\libs\enet-1.3.14;..\libs\OpenXR\OpenXR-SDK-main\build\win64\src\loader\Release;..\..\..\WickedEngine\WickedEngine\BUILD\x64\Release</AdditionalLibraryDirectories>
+      <AdditionalDependencies>winmm.lib;ws2_32.lib;Irrlicht_VS64.lib;sndfile.lib;portaudio_x64.lib;enet64.lib;openxr_loader.lib;opengl32.lib;WickedEngine_Windows.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>call ..\..\bin\useVS64dll.bat</Command>
+      <Command>call ..\..\bin\useVSdll.bat</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -154,17 +155,18 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_MBCS;%(PreprocessorDefinitions);ASIO_STANDALONE;ASIO_HAS_STD_THREAD;ASIO_HAS_STD_ADDRESSOF;ASIO_HAS_STD_ARRAY;ASIO_HAS_CSTDINT;ASIO_HAS_STD_SHARED_PTR;ASIO_HAS_STD_TYPE_TRAITS;_WIN32_WINNT=0x0501;WITH_SOUND</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_MBCS;%(PreprocessorDefinitions);ASIO_STANDALONE;ASIO_HAS_STD_THREAD;ASIO_HAS_STD_ADDRESSOF;ASIO_HAS_STD_ARRAY;ASIO_HAS_CSTDINT;ASIO_HAS_STD_SHARED_PTR;ASIO_HAS_STD_TYPE_TRAITS;_WIN32_WINNT=0x0A00;WITH_SOUND;WITH_WICKED_ENGINE;_CRT_SECURE_NO_WARNINGS</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalLibraryDirectories>..\libs\Irrlicht\irrlicht-svn\lib\Win64-visualstudio;..\libs\libsndfile\lib;..\libs\portaudio\lib;..\libs\enet-1.3.14;..\libs\OpenXR\OpenXR-SDK-main\build\win64\src\loader\Release</AdditionalLibraryDirectories>
-      <AdditionalDependencies>winmm.lib;ws2_32.lib;Irrlicht.lib;sndfile.lib;portaudio_x64.lib;enet64.lib;openxr_loader.lib;opengl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>..\libs\Irrlicht\irrlicht-svn\lib\Win64-visualstudio;..\libs\libsndfile\lib;..\libs\portaudio\lib;..\libs\enet-1.3.14;..\libs\OpenXR\OpenXR-SDK-main\build\win64\src\loader\Release;..\..\..\WickedEngine\WickedEngine\BUILD\x64\Release</AdditionalLibraryDirectories>
+      <AdditionalDependencies>winmm.lib;ws2_32.lib;Irrlicht_VS64.lib;sndfile.lib;portaudio_x64.lib;enet64.lib;openxr_loader.lib;opengl32.lib;WickedEngine_Windows.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>call ..\..\bin\useVS64dll.bat</Command>
+      <Command>call ..\..\bin\useVSdll.bat</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -211,6 +213,7 @@
     <ClCompile Include="..\OtherShips.cpp" />
     <ClCompile Include="..\OutlineScrollBar.cpp" />
     <ClCompile Include="..\OwnShip.cpp" />
+    <ClCompile Include="..\MMGPhysicsModel.cpp" />
     <ClCompile Include="..\RadarCalculation.cpp" />
     <ClCompile Include="..\RadarScreen.cpp" />
     <ClCompile Include="..\Rain.cpp" />
@@ -221,6 +224,7 @@
     <ClCompile Include="..\SimulationModel.cpp" />
     <ClCompile Include="..\Sky.cpp" />
     <ClCompile Include="..\Sound.cpp" />
+    <ClCompile Include="..\SoundOpenAL.cpp" />
     <ClCompile Include="..\StartupEventReceiver.cpp" />
     <ClCompile Include="..\Terrain.cpp" />
     <ClCompile Include="..\Tide.cpp" />
@@ -229,6 +233,39 @@
     <ClCompile Include="..\VRInterface.cpp" />
     <ClCompile Include="..\Water.cpp" />
     <ClCompile Include="..\iprof.cpp" />
+    <ClCompile Include="..\WickedMain.cpp" />
+    <ClCompile Include="..\IrrlichtModelConverter.cpp" />
+    <ClCompile Include="..\SimulationBridge.cpp" />
+    <ClCompile Include="..\BuildingGenerator.cpp" />
+    <ClCompile Include="..\StbImageImpl.cpp" />
+    <ClCompile Include="..\TextureUpscaler.cpp" />
+    <ClCompile Include="..\MapScreen.cpp" />
+    <ClCompile Include="..\editor\TileDownloader.cpp" />
+    <ClCompile Include="..\editor\TileThreadPool.cpp" />
+    <ClCompile Include="..\editor\WinHTTPConnectionPool.cpp" />
+    <ClCompile Include="..\editor\GBATileDownloader.cpp" />
+    <ClCompile Include="..\editor\OSMBuildingReader.cpp" />
+    <ClCompile Include="..\editor\OSMWaterReader.cpp" />
+    <ClCompile Include="..\graphics\wicked\WickedRenderer.cpp" />
+    <ClCompile Include="..\graphics\wicked\WickedWater.cpp" />
+    <ClCompile Include="..\graphics\wicked\WickedTerrainNode.cpp" />
+    <ClCompile Include="..\graphics\wicked\WickedModelImporter.cpp" />
+    <ClCompile Include="..\graphics\wicked\ModelImporter_GLTF.cpp" />
+    <ClCompile Include="..\graphics\wicked\WickedMultiView.cpp" />
+    <ClCompile Include="..\graphics\wicked\WickedVRView.cpp" />
+    <ClCompile Include="..\graphics\wicked\WickedKelvinWake.cpp" />
+    <ClCompile Include="..\graphics\wicked\WickedMultiCascadeOcean.cpp" />
+    <ClCompile Include="..\graphics\wicked\WickedImGui.cpp" />
+    <ClCompile Include="..\graphics\wicked\imgui\imgui.cpp" />
+    <ClCompile Include="..\graphics\wicked\imgui\imgui_draw.cpp" />
+    <ClCompile Include="..\graphics\wicked\imgui\imgui_tables.cpp" />
+    <ClCompile Include="..\graphics\wicked\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="..\graphics\wicked\imgui\backends\imgui_impl_win32.cpp" />
+    <ClCompile Include="..\gui\ImGuiOverlay.cpp" />
+    <ClCompile Include="..\gui\IniFileRW.cpp" />
+    <ClCompile Include="..\gui\SettingsPanel.cpp" />
+    <ClCompile Include="..\gui\RadarDisplay.cpp" />
+    <ClCompile Include="..\gui\EcdisDisplay.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\AIS.hpp" />
@@ -251,6 +288,7 @@
     <ClInclude Include="..\GUIRectangle.hpp" />
     <ClInclude Include="..\HeadingIndicator.h" />
     <ClInclude Include="..\IniFile.hpp" />
+    <ClInclude Include="..\ISound.hpp" />
     <ClInclude Include="..\LandLights.hpp" />
     <ClInclude Include="..\LandObject.hpp" />
     <ClInclude Include="..\LandObjects.hpp" />
@@ -273,6 +311,8 @@
     <ClInclude Include="..\OtherShips.hpp" />
     <ClInclude Include="..\OutlineScrollBar.h" />
     <ClInclude Include="..\OwnShip.hpp" />
+    <ClInclude Include="..\PhysicsModel.hpp" />
+    <ClInclude Include="..\MMGPhysicsModel.hpp" />
     <ClInclude Include="..\profile.hpp" />
     <ClInclude Include="..\RadarCalculation.hpp" />
     <ClInclude Include="..\RadarData.hpp" />
@@ -285,6 +325,7 @@
     <ClInclude Include="..\SimulationModel.hpp" />
     <ClInclude Include="..\Sky.hpp" />
     <ClInclude Include="..\Sound.hpp" />
+    <ClInclude Include="..\SoundOpenAL.hpp" />
     <ClInclude Include="..\StartupEventReceiver.hpp" />
     <ClInclude Include="..\Terrain.hpp" />
     <ClInclude Include="..\Tide.hpp" />
@@ -294,6 +335,38 @@
     <ClInclude Include="..\Water.hpp" />
     <ClInclude Include="..\iprof.hpp" />
     <ClInclude Include="..\hitime.hpp" />
+    <ClInclude Include="..\WickedMain.hpp" />
+    <ClInclude Include="..\IrrlichtModelConverter.hpp" />
+    <ClInclude Include="..\SimulationBridge.hpp" />
+    <ClInclude Include="..\BuildingGenerator.hpp" />
+    <ClInclude Include="..\TextureUpscaler.hpp" />
+    <ClInclude Include="..\MapScreen.hpp" />
+    <ClInclude Include="..\editor\TileDownloader.hpp" />
+    <ClInclude Include="..\editor\TileThreadPool.hpp" />
+    <ClInclude Include="..\editor\WinHTTPConnectionPool.hpp" />
+    <ClInclude Include="..\editor\TileMath.hpp" />
+    <ClInclude Include="..\editor\OSMBuildingReader.hpp" />
+    <ClInclude Include="..\editor\OSMWaterReader.hpp" />
+    <ClInclude Include="..\graphics\IRenderer.hpp" />
+    <ClInclude Include="..\graphics\ISceneManager.hpp" />
+    <ClInclude Include="..\graphics\ISceneNode.hpp" />
+    <ClInclude Include="..\graphics\Types.hpp" />
+    <ClInclude Include="..\graphics\irrlicht\IrrlichtRenderer.hpp" />
+    <ClInclude Include="..\graphics\irrlicht\IrrlichtSceneManager.hpp" />
+    <ClInclude Include="..\graphics\irrlicht\IrrlichtSceneNode.hpp" />
+    <ClInclude Include="..\graphics\wicked\WickedRenderer.hpp" />
+    <ClInclude Include="..\graphics\wicked\WickedSceneManager.hpp" />
+    <ClInclude Include="..\graphics\wicked\WickedSceneNode.hpp" />
+    <ClInclude Include="..\graphics\wicked\WickedWater.hpp" />
+    <ClInclude Include="..\graphics\wicked\WickedTerrainNode.hpp" />
+    <ClInclude Include="..\graphics\wicked\WickedMultiView.hpp" />
+    <ClInclude Include="..\graphics\wicked\WickedModelImporter.hpp" />
+    <ClInclude Include="..\graphics\wicked\WickedImGui.hpp" />
+    <ClInclude Include="..\gui\ImGuiOverlay.hpp" />
+    <ClInclude Include="..\gui\IniFileRW.hpp" />
+    <ClInclude Include="..\gui\SettingsPanel.hpp" />
+    <ClInclude Include="..\gui\RadarDisplay.hpp" />
+    <ClInclude Include="..\gui\EcdisDisplay.hpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="..\icon.rc" />

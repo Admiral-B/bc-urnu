@@ -23,14 +23,17 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 
     Sound::Sound() {}
 	Sound::~Sound()  {}
-	void Sound::load(std::string engineSoundFile, std::string waveSoundFile, std::string hornSoundFile) {}
+	void Sound::load(std::string engineSoundFile, std::string waveSoundFile, std::string hornSoundFile, std::string alarmSoundFile) {}
 	void Sound::StartSound() {}
 	void Sound::setVolumeWave(float vol) {}
 	void Sound::setVolumeEngine(float vol) {}
 	void Sound::setVolumeHorn(float vol) {}
+	void Sound::setVolumeAlarm(float vol) {}
 	float Sound::getVolumeWave() const {return 0;}
 	float Sound::getVolumeEngine() const {return 0;}
 	float Sound::getVolumeHorn() const {return 0;}
+	float Sound::getVolumeAlarm() const {return 0;}
+	void Sound::setEnginePitch(float pitch) {}
 
 #else // WITH_SOUND
 
@@ -45,6 +48,15 @@ float Sound::alarmVolume=0.0;
 bool Sound::waveSoundLoaded = false;
 bool Sound::hornSoundLoaded = false;
 bool Sound::alarmSoundLoaded = false;
+float Sound::enginePitchValue = 1.0f;
+double Sound::engineReadPos = 0;
+std::vector<float> Sound::engineBuf;
+sf_count_t Sound::engineBufFrames = 0;
+int Sound::engineBufChannels = 0;
+int Sound::engineSampleRate = 44100;
+double Sound::enginePhase = 0;
+double Sound::dieselPhase = 0;
+float Sound::lpState[2] = {0.0f, 0.0f};
 
 Sound::Sound() {
 
@@ -74,6 +86,33 @@ void Sound::load(std::string engineSoundFile, std::string waveSoundFile, std::st
 	if (sf_error(data.fileEngine) != SF_ERR_NO_ERROR) {
 		std::cerr << "sf_error on engineSoundFile " << engineSoundFile.c_str() << std::endl;
 		return;
+	}
+
+	// Pre-decode engine WAV into memory for glitch-free playback
+	{
+		engineBufChannels = data.infoEngine.channels;
+		engineSampleRate = data.infoEngine.samplerate;
+		sf_count_t totalFrames = data.infoEngine.frames;
+		engineBuf.resize(totalFrames * engineBufChannels);
+		sf_seek(data.fileEngine, 0, SEEK_SET);
+		sf_count_t nRead = sf_readf_float(data.fileEngine, engineBuf.data(), totalFrames);
+		engineBufFrames = nRead;
+
+		// Crossfade the loop boundary to eliminate click
+		sf_count_t xfFrames = (nRead / 4 < 4096) ? nRead / 4 : 4096;
+		for (sf_count_t i = 0; i < xfFrames; i++) {
+			float t = (float)i / (float)xfFrames;
+			for (int c = 0; c < engineBufChannels; c++) {
+				sf_count_t endIdx = (nRead - xfFrames + i) * engineBufChannels + c;
+				sf_count_t startIdx = i * engineBufChannels + c;
+				engineBuf[endIdx] = engineBuf[endIdx] * (1.0f - t) + engineBuf[startIdx] * t;
+			}
+		}
+		enginePhase = 0;
+		dieselPhase = 0;
+		lpState[0] = lpState[1] = 0;
+		std::cout << "Engine WAV pre-decoded: " << nRead << " frames, "
+		          << engineBufChannels << " channels, " << engineSampleRate << " Hz" << std::endl;
 	}
 
 	/* Open the soundfiles */
@@ -193,6 +232,12 @@ float Sound::getVolumeHorn() const {
 
 float Sound::getVolumeAlarm() const {
 	return Sound::alarmVolume;
+}
+
+void Sound::setEnginePitch(float pitch) {
+	if (pitch < 0.25f) pitch = 0.25f;
+	if (pitch > 4.0f) pitch = 4.0f;
+	Sound::enginePitchValue = pitch;
 }
 
 Sound::~Sound() {

@@ -17,9 +17,25 @@
 #ifndef __VRINTERFACE_HPP_INCLUDED__
 #define __VRINTERFACE_HPP_INCLUDED__
 
-#include "irrlicht.h"
+#include "graphics/Types.hpp"
 #include "SimulationModel.hpp"
 #include <cstdint> // For int64_t
+
+// Forward declarations for Irrlicht types used as pointers/references
+namespace irr {
+    class IrrlichtDevice;
+    namespace scene {
+        class ISceneManager;
+        class ISceneNode;
+    }
+    namespace video {
+        class IVideoDriver;
+        class ITexture;
+    }
+    namespace core {
+        template<class T> class line3d;
+    }
+}
 
 #if defined _WIN64
 #include <Unknwn.h>
@@ -61,7 +77,7 @@
 
 class VRInterface {
 public:
-    VRInterface(irr::IrrlichtDevice* dev, irr::scene::ISceneManager* smgr, irr::video::IVideoDriver* driver, irr::u32 suGUI, irr::u32 shGUI);
+    VRInterface(irr::IrrlichtDevice* dev, irr::scene::ISceneManager* smgr, irr::video::IVideoDriver* driver, uint32_t suGUI, uint32_t shGUI);
     ~VRInterface();
     int load(SimulationModel* model);
     void unload();
@@ -69,7 +85,7 @@ public:
     bool isVRActive() const;
     int runtimeEvents();
     int update();
-    bool getRayFromController(irr::core::line3d<irr::f32>* ray, irr::f32 rayLength);
+    bool getRayFromController(irr::core::line3d<float>* ray, float rayLength);
 
 private:
     static bool xr_check(XrInstance instance, XrResult result, const char* format, ...);
@@ -115,9 +131,12 @@ private:
     XrAction select_action_float;
     XrAction menu_action;
     XrAction haptic_action;
+    XrAction thumbstick_y_action;  // Thumbstick Y axis for fine adjustment
+    XrAction trigger_action;       // Trigger for horn
     XrResult result;
 
     int menuPressedRepeats;
+    bool hornActive;
 
     int swapchainImageWidth;
     int swapchainImageHeight;
@@ -143,28 +162,28 @@ private:
     SimulationModel* model; // Store pointer to model
 
     // Vars to track position and orientation of controllers
-    irr::core::vector3df vrLeftGripPosition;
-    irr::core::vector3df vrRightGripPosition;
-    irr::core::vector3df vrLeftAimPosition;
-    irr::core::vector3df vrRightAimPosition;
-    irr::core::quaternion vrLeftGripOrientation;
-    irr::core::quaternion vrRightGripOrientation;
-    irr::core::quaternion vrLeftAimOrientation;
-    irr::core::quaternion vrRightAimOrientation;
-    
+    bc::graphics::Vec3 vrLeftGripPosition;
+    bc::graphics::Vec3 vrRightGripPosition;
+    bc::graphics::Vec3 vrLeftAimPosition;
+    bc::graphics::Vec3 vrRightAimPosition;
+    bc::graphics::Quaternion vrLeftGripOrientation;
+    bc::graphics::Quaternion vrRightGripOrientation;
+    bc::graphics::Quaternion vrLeftAimOrientation;
+    bc::graphics::Quaternion vrRightAimOrientation;
+
     // Reference values to track movement
-    irr::core::vector3df vrLeftGripPositionReference;
-    irr::core::vector3df vrRightGripPositionReference;
+    bc::graphics::Vec3 vrLeftGripPositionReference;
+    bc::graphics::Vec3 vrRightGripPositionReference;
     bool vrChangingPortEngine;
     bool vrChangingStbdEngine;
     // Engine settings for these reference positions
-    irr::f32 portEngineReference;
-    irr::f32 stbdEngineReference;
-    irr::f32 wheelReference;
-    irr::f32 portSchottelReference;
-    irr::f32 portAzimuthThrottleReference;
-    irr::f32 stbdSchottelReference;
-    irr::f32 stbdAzimuthThrottleReference;
+    float portEngineReference;
+    float stbdEngineReference;
+    float wheelReference;
+    float portSchottelReference;
+    float portAzimuthThrottleReference;
+    float stbdSchottelReference;
+    float stbdAzimuthThrottleReference;
 
     irr::scene::ISceneNode* leftController;
     irr::scene::ISceneNode* rightController;
@@ -174,13 +193,13 @@ private:
     irr::scene::ISceneNode* hudScreenTopLeft;
     irr::scene::ISceneNode* hudScreenBottomRight;
     irr::video::ITexture* hudTexture;
-    irr::u32 suGUI;
-    irr::u32 shGUI;
+    uint32_t suGUI;
+    uint32_t shGUI;
     bool showHUD;
     bool selectState[HAND_COUNT];
     bool previousSelectState[HAND_COUNT];
-    irr::s32 raySelectScreenX;
-    irr::s32 raySelectScreenY;
+    int32_t raySelectScreenX;
+    int32_t raySelectScreenY;
 };
 
 #endif

@@ -33,9 +33,22 @@
 #define IPROF(a) //intentionally empty placeholder
 #endif
 
+using bc::graphics::Vec3;
+using bc::graphics::Vec3i;
+using bc::graphics::Line3d;
+
+namespace {
+    inline irr::core::vector3df toIrrVec(const Vec3& v) { return {v.x, v.y, v.z}; }
+    inline Vec3 fromIrrVec(const irr::core::vector3df& v) { return {v.X, v.Y, v.Z}; }
+    inline irr::core::vector3di toIrrVec3i(const Vec3i& v) { return {v.x, v.y, v.z}; }
+    inline irr::core::line3d<float> toIrrLine(const Line3d& l) {
+        return {l.start.x, l.start.y, l.start.z, l.end.x, l.end.y, l.end.z};
+    }
+}
+
 // using namespace irr;
 
-void OwnShip::load(OwnShipData ownShipData, irr::core::vector3di numberOfContactPoints, irr::f32 minContactPointSpacing, irr::f32 contactStiffnessFactor, irr::f32 contactDampingFactor, irr::f32 frictionCoefficient, irr::f32 tanhFrictionFactor, irr::scene::ISceneManager *smgr, SimulationModel *model, Terrain *terrain, irr::IrrlichtDevice *dev)
+void OwnShip::load(OwnShipData ownShipData, Vec3i numberOfContactPoints, float minContactPointSpacing, float contactStiffnessFactor, float contactDampingFactor, float frictionCoefficient, float tanhFrictionFactor, irr::scene::ISceneManager *smgr, SimulationModel *model, Terrain *terrain, irr::IrrlichtDevice *dev)
 {
     // Store reference to terrain
     this->terrain = terrain;
@@ -155,6 +168,10 @@ void OwnShip::load(OwnShipData ownShipData, irr::core::vector3di numberOfContact
     pitchPeriod = IniFile::iniFileTof32(shipIniFilename, "PitchPeriod"); // Softcoded roll period Tr a function of the ships condition indpendant of Te, the wave encounter period
     pitchAngle = 0.5 * IniFile::iniFileTof32(shipIniFilename, "Swell");  // Max pitch Angle (deg @weather=1)
     buffet = IniFile::iniFileTof32(shipIniFilename, "Buffet");
+    // Wave-coupled motion parameters (all optional)
+    gmMetacentric = IniFile::iniFileTof32(shipIniFilename, "GM");         // Metacentric height (m), 0=auto from breadth
+    rollDampingIni = IniFile::iniFileTof32(shipIniFilename, "RollDamping");   // Damping ratio, 0=default 0.10
+    pitchDampingIni = IniFile::iniFileTof32(shipIniFilename, "PitchDamping"); // Damping ratio, 0=default 0.20
     depthSounder = (IniFile::iniFileTou32(shipIniFilename, "HasDepthSounder") == 1);
     maxSounderDepth = IniFile::iniFileTof32(shipIniFilename, "MaxDepth");
     gps = (IniFile::iniFileTou32(shipIniFilename, "HasGPS") == 1);
@@ -178,7 +195,7 @@ void OwnShip::load(OwnShipData ownShipData, irr::core::vector3di numberOfContact
     // DEE_DEC22 ^^^^
     // Scale
     scaleFactor = IniFile::iniFileTof32(shipIniFilename, "ScaleFactor");
-    irr::f32 yCorrection = IniFile::iniFileTof32(shipIniFilename, "YCorrection");
+    float yCorrection = IniFile::iniFileTof32(shipIniFilename, "YCorrection");
     angleCorrection = IniFile::iniFileTof32(shipIniFilename, "AngleCorrection");
     // DEE_DEC22 vvvv
     angleCorrectionRoll = 0;  // default value
@@ -187,54 +204,54 @@ void OwnShip::load(OwnShipData ownShipData, irr::core::vector3di numberOfContact
     angleCorrectionPitch = IniFile::iniFileTof32(shipIniFilename, "AngleCorrectionPitch");
     // DEE_DEC22 ^^^^
     // camera offset (in unscaled and uncorrected ship coords)
-    irr::u32 numberOfViews = IniFile::iniFileTof32(shipIniFilename, "Views");
+    uint32_t numberOfViews = IniFile::iniFileTof32(shipIniFilename, "Views");
     if (numberOfViews == 0)
     {
         std::cerr << "Own ship: View positions can't be loaded. Please check ini file " << shipIniFilename << std::endl;
         exit(EXIT_FAILURE);
     }
-    for (irr::u32 i = 1; i <= numberOfViews; i++)
+    for (uint32_t i = 1; i <= numberOfViews; i++)
     {
-        irr::f32 camOffsetX = IniFile::iniFileTof32(shipIniFilename, IniFile::enumerate1("ViewX", i));
-        irr::f32 camOffsetY = IniFile::iniFileTof32(shipIniFilename, IniFile::enumerate1("ViewY", i));
-        irr::f32 camOffsetZ = IniFile::iniFileTof32(shipIniFilename, IniFile::enumerate1("ViewZ", i));
+        float camOffsetX = IniFile::iniFileTof32(shipIniFilename, IniFile::enumerate1("ViewX", i));
+        float camOffsetY = IniFile::iniFileTof32(shipIniFilename, IniFile::enumerate1("ViewY", i));
+        float camOffsetZ = IniFile::iniFileTof32(shipIniFilename, IniFile::enumerate1("ViewZ", i));
         bool highView = IniFile::iniFileTou32(shipIniFilename, IniFile::enumerate1("ViewHigh", i)) == 1;
-        views.push_back(irr::core::vector3df(scaleFactor * camOffsetX, scaleFactor * camOffsetY, scaleFactor * camOffsetZ));
+        views.push_back(Vec3(scaleFactor * camOffsetX, scaleFactor * camOffsetY, scaleFactor * camOffsetZ));
         isHighView.push_back(highView);
     }
 
     // Radar Screen position, if not set in file, set value to -999 as 'no data' marker
-    screenDisplayPosition.X = IniFile::iniFileTof32(shipIniFilename, "RadarScreenX", -999);
-    screenDisplayPosition.Y = IniFile::iniFileTof32(shipIniFilename, "RadarScreenY", -999);
-    screenDisplayPosition.Z = IniFile::iniFileTof32(shipIniFilename, "RadarScreenZ", -999);
+    screenDisplayPosition.x = IniFile::iniFileTof32(shipIniFilename, "RadarScreenX", -999);
+    screenDisplayPosition.y = IniFile::iniFileTof32(shipIniFilename, "RadarScreenY", -999);
+    screenDisplayPosition.z = IniFile::iniFileTof32(shipIniFilename, "RadarScreenZ", -999);
     screenDisplaySize = IniFile::iniFileTof32(shipIniFilename, "RadarScreenSize");
     screenDisplayTilt = IniFile::iniFileTof32(shipIniFilename, "RadarScreenTilt");
     // Default position out of view if not set
-    if (screenDisplayPosition.X == -999.0 && screenDisplayPosition.Y == -999.0 && screenDisplayPosition.Z == -999.0)
+    if (screenDisplayPosition.x == -999.0f && screenDisplayPosition.y == -999.0f && screenDisplayPosition.z == -999.0f)
     {
-        screenDisplayPosition.X = 0;
-        screenDisplayPosition.Y = 0;
-        screenDisplayPosition.Y = 500;
+        screenDisplayPosition.x = 0;
+        screenDisplayPosition.y = 0;
+        screenDisplayPosition.y = 500;
     }
 
     if (screenDisplaySize <= 0)
     {
         screenDisplaySize = 1;
     }
-    screenDisplayPosition = scaleFactor * screenDisplayPosition;
+    screenDisplayPosition = screenDisplayPosition * scaleFactor;
     screenDisplaySize = scaleFactor * screenDisplaySize;
 
     // Positions for engine controls (if present)
     // If not set in file, set value to -999 as 'no data' marker
-    portThrottlePosition.X = IniFile::iniFileTof32(shipIniFilename, "PortThrottleX", -999);
-    portThrottlePosition.Y = IniFile::iniFileTof32(shipIniFilename, "PortThrottleY", -999);
-    portThrottlePosition.Z = IniFile::iniFileTof32(shipIniFilename, "PortThrottleZ", -999);
-    stbdThrottlePosition.X = IniFile::iniFileTof32(shipIniFilename, "StbdThrottleX", -999);
-    stbdThrottlePosition.Y = IniFile::iniFileTof32(shipIniFilename, "StbdThrottleY", -999);
-    stbdThrottlePosition.Z = IniFile::iniFileTof32(shipIniFilename, "StbdThrottleZ", -999);
-    wheelControlPosition.X = IniFile::iniFileTof32(shipIniFilename, "WheelX", -999);
-    wheelControlPosition.Y = IniFile::iniFileTof32(shipIniFilename, "WheelY", -999);
-    wheelControlPosition.Z = IniFile::iniFileTof32(shipIniFilename, "WheelZ", -999);
+    portThrottlePosition.x = IniFile::iniFileTof32(shipIniFilename, "PortThrottleX", -999);
+    portThrottlePosition.y = IniFile::iniFileTof32(shipIniFilename, "PortThrottleY", -999);
+    portThrottlePosition.z = IniFile::iniFileTof32(shipIniFilename, "PortThrottleZ", -999);
+    stbdThrottlePosition.x = IniFile::iniFileTof32(shipIniFilename, "StbdThrottleX", -999);
+    stbdThrottlePosition.y = IniFile::iniFileTof32(shipIniFilename, "StbdThrottleY", -999);
+    stbdThrottlePosition.z = IniFile::iniFileTof32(shipIniFilename, "StbdThrottleZ", -999);
+    wheelControlPosition.x = IniFile::iniFileTof32(shipIniFilename, "WheelX", -999);
+    wheelControlPosition.y = IniFile::iniFileTof32(shipIniFilename, "WheelY", -999);
+    wheelControlPosition.z = IniFile::iniFileTof32(shipIniFilename, "WheelZ", -999);
     wheelControlScale = IniFile::iniFileTof32(shipIniFilename, "WheelScale", 1);
 
     // Do not scale portThrottlePosition, stbd... and wheelControlPosition, as these are implicitly scaled as position used relative to parent
@@ -267,11 +284,11 @@ void OwnShip::load(OwnShipData ownShipData, irr::core::vector3di numberOfContact
             smgr->getMeshManipulator()->flipSurfaces(viewMesh);
 
             // Angle correction
-            irr::f32 panoRotationYaw = IniFile::iniFileTof32(shipIniFilename, IniFile::enumerate1("PanoRotationYaw", i + 1));
-            irr::f32 panoRotationPitch = IniFile::iniFileTof32(shipIniFilename, IniFile::enumerate1("PanoRotationPitch", i + 1));
-            irr::f32 panoRotationRoll = IniFile::iniFileTof32(shipIniFilename, IniFile::enumerate1("PanoRotationRoll", i + 1));
+            float panoRotationYaw = IniFile::iniFileTof32(shipIniFilename, IniFile::enumerate1("PanoRotationYaw", i + 1));
+            float panoRotationPitch = IniFile::iniFileTof32(shipIniFilename, IniFile::enumerate1("PanoRotationPitch", i + 1));
+            float panoRotationRoll = IniFile::iniFileTof32(shipIniFilename, IniFile::enumerate1("PanoRotationRoll", i + 1));
 
-            irr::scene::IAnimatedMeshSceneNode *viewNode = smgr->addAnimatedMeshSceneNode(viewMesh, ship, -1, views.at(i) / scaleFactor, irr::core::vector3df(panoRotationPitch, panoRotationYaw, panoRotationRoll));
+            irr::scene::IAnimatedMeshSceneNode *viewNode = smgr->addAnimatedMeshSceneNode(viewMesh, ship, -1, toIrrVec(views.at(i) / scaleFactor), irr::core::vector3df(panoRotationPitch, panoRotationYaw, panoRotationRoll));
 
             std::string panoPath = basePath + IniFile::iniFileToString(shipIniFilename, IniFile::enumerate1("Pano", i + 1));
             irr::video::ITexture *texture360 = device->getVideoDriver()->getTexture(panoPath.c_str());
@@ -287,7 +304,7 @@ void OwnShip::load(OwnShipData ownShipData, irr::core::vector3di numberOfContact
             // Set lighting to use diffuse and ambient, so lighting of untextured models works
             if (viewNode->getMaterialCount() > 0)
             {
-                for (irr::u32 mat = 0; mat < viewNode->getMaterialCount(); mat++)
+                for (uint32_t mat = 0; mat < viewNode->getMaterialCount(); mat++)
                 {
                     viewNode->getMaterial(mat).MaterialType = irr::video::EMT_TRANSPARENT_ALPHA_CHANNEL;
                     viewNode->getMaterial(mat).ColorMaterial = irr::video::ECM_DIFFUSE_AND_AMBIENT;
@@ -314,7 +331,7 @@ void OwnShip::load(OwnShipData ownShipData, irr::core::vector3di numberOfContact
         // If any part is partially transparent, make it fully transparent (for bridge windows etc!)
         if (IniFile::iniFileTou32(shipIniFilename, "MakeTransparent") == 1)
         {
-            for (irr::u32 mb = 0; mb < shipMesh->getMeshBufferCount(); mb++)
+            for (uint32_t mb = 0; mb < shipMesh->getMeshBufferCount(); mb++)
             {
                 if (shipMesh->getMeshBuffer(mb)->getMaterial().DiffuseColor.getAlpha() < 255)
                 {
@@ -326,7 +343,7 @@ void OwnShip::load(OwnShipData ownShipData, irr::core::vector3di numberOfContact
 
         // For testing, make wireframe
         /*
-        for (irr::u32 i=0; i<shipMesh->getMeshBufferCount(); ++i)
+        for (uint32_t i=0; i<shipMesh->getMeshBufferCount(); ++i)
         {
             irr::scene::IMeshBuffer* mb = shipMesh->getMeshBuffer(i);
             if (mb)
@@ -350,7 +367,7 @@ void OwnShip::load(OwnShipData ownShipData, irr::core::vector3di numberOfContact
         // Set lighting to use diffuse and ambient, so lighting of untextured models works
         if (ship->getMaterialCount() > 0)
         {
-            for (irr::u32 mat = 0; mat < ship->getMaterialCount(); mat++)
+            for (uint32_t mat = 0; mat < ship->getMaterialCount(); mat++)
             {
                 ship->getMaterial(mat).MaterialType = irr::video::EMT_TRANSPARENT_VERTEX_ALPHA;
                 ship->getMaterial(mat).ColorMaterial = irr::video::ECM_DIFFUSE_AND_AMBIENT;
@@ -370,7 +387,7 @@ void OwnShip::load(OwnShipData ownShipData, irr::core::vector3di numberOfContact
     // DEE_DEC22 ---------- End of reading in information from .ini files and ownShipData
 
     // DEE_DEC22 Start setting defaults and sanity checks on parameters
-    irr::f32 seawaterDensity = 1024; // define seawater density in kg / m^3 could parametarise this for dockwater and freshwater
+    float seawaterDensity = 1024; // define seawater density in kg / m^3 could parametarise this for dockwater and freshwater
     draught = -1 * ship->getTransformedBoundingBox().MinEdge.Y;
     airDraught = ship->getTransformedBoundingBox().MaxEdge.Y;
 
@@ -387,6 +404,13 @@ void OwnShip::load(OwnShipData ownShipData, irr::core::vector3di numberOfContact
 
     // Default buffet Period DEE_DEC22 to do make this a function of Izz and weather strength perhaps direction too
     buffetPeriod = 8; // Yaw period (s)
+
+    // Initialize wave-coupled motion model from ship dimensions
+    seakeepingParams = bc::WaveMotion::computeFromDimensions(
+        length, breadth, draught,
+        rollPeriod, pitchPeriod,
+        gmMetacentric, rollDampingIni, pitchDampingIni);
+    waveMotionState = {};  // zero-initialize all DOF states
 
     // Default for maxSounderDepth
     if (maxSounderDepth < 1)
@@ -457,7 +481,7 @@ void OwnShip::load(OwnShipData ownShipData, irr::core::vector3di numberOfContact
         else
         {
             device->getLogger()->log("cB not defined in boat.ini mass declared in boat.ini used");
-            irr::f32 estimatedMass = seawaterDensity * length * breadth * draught * 1;
+            float estimatedMass = seawaterDensity * length * breadth * draught * 1;
             device->getLogger()->log((irr::core::stringw("Mass: ") + irr::core::stringw(shipMass)).c_str());
             device->getLogger()->log((irr::core::stringw("Mass with cB=1: ") + irr::core::stringw(estimatedMass)).c_str());
             device->getLogger()->log((irr::core::stringw("Effective cB=") + irr::core::stringw(shipMass / estimatedMass)).c_str());
@@ -565,6 +589,60 @@ void OwnShip::load(OwnShipData ownShipData, irr::core::vector3di numberOfContact
     // Start in engine control mode
     controlMode = MODE_ENGINE;
 
+    // MMG Physics Model (optional, enabled by MMGMode=1 in boat.ini)
+    useMMG = false;
+    physicsAccumulator = 0;
+    if (IniFile::iniFileTou32(shipIniFilename, "MMGMode") == 1 && !azimuthDrive) {
+        useMMG = true;
+        device->getLogger()->log("MMG physics model enabled");
+
+        ShipDimensions mmgDims;
+        mmgDims.length = length;
+        mmgDims.beam = breadth;
+        mmgDims.draught = draught;
+        mmgDims.displacement = shipMass; // Already in kg
+        mmgDims.blockCoefficient = (cB > 0) ? cB : 0.65; // Default Cb if not specified
+        mmgDims.maxSpeed = maxSpeed_mps > 0 ? maxSpeed_mps : 10.0;
+        mmgDims.maxEngineForce = maxForce * (singleEngine ? 2.0 : 1.0); // Total max force (maxForce is per-engine)
+        mmgDims.singleEngine = singleEngine;
+        mmgDims.propellorSpacing = propellorSpacing;
+
+        // Propeller diameter: from boat.ini or estimate from draught
+        float propDiameter = IniFile::iniFileTof32(shipIniFilename, "PropellerDiameter");
+        mmgDims.propellerDiameter = (propDiameter > 0) ? propDiameter : draught * 0.65;
+
+        // Max RPM: from boat.ini or estimate
+        float mmgMaxRPM = IniFile::iniFileTof32(shipIniFilename, "PropellerMaxRPM");
+        mmgDims.maxRPM = (mmgMaxRPM > 0) ? mmgMaxRPM : (maxEngineRevs > 0 ? maxEngineRevs : 120.0);
+
+        // Check if explicit MMG coefficients are provided, otherwise estimate from dimensions
+        MMGCoefficients mmgCoeffs;
+        float mmg_mx = IniFile::iniFileTof32(shipIniFilename, "MMG_mx_prime");
+        if (mmg_mx != 0) {
+            // Explicit coefficients provided - read them all
+            mmgCoeffs.m_x_prime = mmg_mx;
+            mmgCoeffs.m_y_prime = IniFile::iniFileTof32(shipIniFilename, "MMG_my_prime");
+            mmgCoeffs.J_z_prime = IniFile::iniFileTof32(shipIniFilename, "MMG_Jz_prime");
+            mmgCoeffs.Y_v_prime = IniFile::iniFileTof32(shipIniFilename, "MMG_Yv_prime");
+            mmgCoeffs.Y_r_prime = IniFile::iniFileTof32(shipIniFilename, "MMG_Yr_prime");
+            mmgCoeffs.N_v_prime = IniFile::iniFileTof32(shipIniFilename, "MMG_Nv_prime");
+            mmgCoeffs.N_r_prime = IniFile::iniFileTof32(shipIniFilename, "MMG_Nr_prime");
+            mmgCoeffs.t_P = IniFile::iniFileTof32(shipIniFilename, "MMG_tP");
+            mmgCoeffs.w_P0 = IniFile::iniFileTof32(shipIniFilename, "MMG_wP0");
+            device->getLogger()->log("MMG: Using explicit coefficients from boat.ini");
+            mmgModel = std::make_unique<MMGPhysicsModel>(mmgDims, mmgCoeffs);
+        } else {
+            // Estimate coefficients from ship dimensions
+            device->getLogger()->log("MMG: Estimating coefficients from ship dimensions");
+            mmgModel = std::make_unique<MMGPhysicsModel>(mmgDims);
+        }
+
+        device->getLogger()->log((irr::core::stringw("MMG: L=") + irr::core::stringw(mmgDims.length)
+            + " B=" + irr::core::stringw(mmgDims.beam)
+            + " T=" + irr::core::stringw(mmgDims.draught)
+            + " Dp=" + irr::core::stringw(mmgDims.propellerDiameter)).c_str());
+    }
+
     // calculate max speed from dynamics parameters
     //  DEE this looks like it is in knots and not metres per second
     maxSpeedAhead = ((-1 * dynamicsSpeedB) + sqrt((dynamicsSpeedB * dynamicsSpeedB) - 4 * dynamicsSpeedA * -2 * maxForce)) / (2 * dynamicsSpeedA);
@@ -610,7 +688,7 @@ void OwnShip::load(OwnShipData ownShipData, irr::core::vector3di numberOfContact
     // DEE_NOV22 vvvv Azimuth Drive code
     // calculate some parameters here for computational efficiency
     // HERE
-    irr::f32 idleEngine = (azimuthDriveEngineIdleRPM) / (maxEngineRevs); // DEE_NOV22 calculate idle engine expressed as (0..1) as opposed to RPM
+    float idleEngine = (azimuthDriveEngineIdleRPM) / (maxEngineRevs); // DEE_NOV22 calculate idle engine expressed as (0..1) as opposed to RPM
 
     // DEE_NOV22 initialise some new variables here
     portSchottel = 90;     // port schottel dead ahead
@@ -656,12 +734,12 @@ void OwnShip::load(OwnShipData ownShipData, irr::core::vector3di numberOfContact
     ship->updateAbsolutePosition();
 
     irr::core::aabbox3df boundingBox = ship->getTransformedBoundingBox();
-    irr::f32 minX = boundingBox.MinEdge.X;
-    irr::f32 maxX = boundingBox.MaxEdge.X;
-    irr::f32 minY = boundingBox.MinEdge.Y;
-    irr::f32 maxY = boundingBox.MaxEdge.Y;
-    irr::f32 minZ = boundingBox.MinEdge.Z;
-    irr::f32 maxZ = boundingBox.MaxEdge.Z;
+    float minX = boundingBox.MinEdge.X;
+    float maxX = boundingBox.MaxEdge.X;
+    float minY = boundingBox.MinEdge.Y;
+    float maxY = boundingBox.MaxEdge.Y;
+    float minZ = boundingBox.MinEdge.Z;
+    float maxZ = boundingBox.MaxEdge.Z;
 
     device->getLogger()->log("Own bounding box (scaled): ");
     irr::core::stringw boundingBoxInfo;
@@ -694,29 +772,25 @@ void OwnShip::load(OwnShipData ownShipData, irr::core::vector3di numberOfContact
     // Find if we need more contact points to maintain minContactPointSpacing
     if (minContactPointSpacing > 0)
     {
-        numberOfContactPoints.X = std::max(numberOfContactPoints.X, (int)ceil((maxX - minX) / minContactPointSpacing));
-        numberOfContactPoints.Y = std::max(numberOfContactPoints.Y, (int)ceil((maxY - minY) / minContactPointSpacing));
-        numberOfContactPoints.Z = std::max(numberOfContactPoints.Z, (int)ceil((maxZ - minZ) / minContactPointSpacing));
+        numberOfContactPoints.x = std::max(numberOfContactPoints.x, (int32_t)ceil((maxX - minX) / minContactPointSpacing));
+        numberOfContactPoints.y = std::max(numberOfContactPoints.y, (int32_t)ceil((maxY - minY) / minContactPointSpacing));
+        numberOfContactPoints.z = std::max(numberOfContactPoints.z, (int32_t)ceil((maxZ - minZ) / minContactPointSpacing));
     }
 
     // Grid from below looking up
-    for (int i = 0; i < numberOfContactPoints.X; i++)
+    for (int i = 0; i < numberOfContactPoints.x; i++)
     {
-        for (int j = 0; j < numberOfContactPoints.Z; j++)
+        for (int j = 0; j < numberOfContactPoints.z; j++)
         {
 
-            irr::f32 xSpacing = (maxX - minX) / (irr::f32)(numberOfContactPoints.X - 1);
-            irr::f32 zSpacing = (maxZ - minZ) / (irr::f32)(numberOfContactPoints.Z - 1);
+            float xSpacing = (maxX - minX) / (float)(numberOfContactPoints.x - 1);
+            float zSpacing = (maxZ - minZ) / (float)(numberOfContactPoints.z - 1);
 
-            irr::f32 xTestPos = minX + (irr::f32)i * xSpacing;
-            irr::f32 zTestPos = minZ + (irr::f32)j * zSpacing;
+            float xTestPos = minX + (float)i * xSpacing;
+            float zTestPos = minZ + (float)j * zSpacing;
 
-            irr::core::line3df ray; // Make a ray. This will start outside the mesh, looking in
-            ray.start.X = xTestPos;
-            ray.start.Y = minY - 0.1;
-            ray.start.Z = zTestPos;
-            ray.end = ray.start;
-            ray.end.Y = maxY + 0.1;
+            Line3d ray(xTestPos, minY - 0.1f, zTestPos,
+                       xTestPos, maxY + 0.1f, zTestPos);
 
             // Check the ray and add the contact point if it exists
             addContactPointFromRay(ray, xSpacing * zSpacing);
@@ -724,57 +798,49 @@ void OwnShip::load(OwnShipData ownShipData, irr::core::vector3di numberOfContact
     }
 
     // Grid from ahead/astern
-    for (int i = 0; i < numberOfContactPoints.X; i++)
+    for (int i = 0; i < numberOfContactPoints.x; i++)
     {
-        for (int j = 0; j < numberOfContactPoints.Y; j++)
+        for (int j = 0; j < numberOfContactPoints.y; j++)
         {
 
-            irr::f32 xSpacing = (maxX - minX) / (irr::f32)(numberOfContactPoints.X - 1);
-            irr::f32 ySpacing = (maxY - minY) / (irr::f32)(numberOfContactPoints.Y - 1);
+            float xSpacing = (maxX - minX) / (float)(numberOfContactPoints.x - 1);
+            float ySpacing = (maxY - minY) / (float)(numberOfContactPoints.y - 1);
 
-            irr::f32 xTestPos = minX + (irr::f32)i * xSpacing;
-            irr::f32 yTestPos = minY + (irr::f32)j * ySpacing;
+            float xTestPos = minX + (float)i * xSpacing;
+            float yTestPos = minY + (float)j * ySpacing;
 
-            irr::core::line3df ray; // Make a ray. This will start outside the mesh, looking in
-            ray.start.X = xTestPos;
-            ray.start.Y = yTestPos;
-            ray.start.Z = maxZ + 0.1;
-            ray.end = ray.start;
-            ray.end.Z = minZ - 0.1;
+            Line3d ray(xTestPos, yTestPos, maxZ + 0.1f,
+                       xTestPos, yTestPos, minZ - 0.1f);
 
             // Check the ray and add the contact point if it exists
             addContactPointFromRay(ray, xSpacing * ySpacing);
             // swap ray direction and check again
-            ray.start.Z = minZ - 0.1;
-            ray.end.Z = maxZ + 0.1;
+            ray.start.z = minZ - 0.1f;
+            ray.end.z = maxZ + 0.1f;
             addContactPointFromRay(ray, xSpacing * ySpacing);
         }
     }
 
     // Grid from side to side
-    for (int i = 0; i < numberOfContactPoints.Z; i++)
+    for (int i = 0; i < numberOfContactPoints.z; i++)
     {
-        for (int j = 0; j < numberOfContactPoints.Y; j++)
+        for (int j = 0; j < numberOfContactPoints.y; j++)
         {
 
-            irr::f32 zSpacing = (maxZ - minZ) / (irr::f32)(numberOfContactPoints.Z - 1);
-            irr::f32 ySpacing = (maxY - minY) / (irr::f32)(numberOfContactPoints.Y - 1);
+            float zSpacing = (maxZ - minZ) / (float)(numberOfContactPoints.z - 1);
+            float ySpacing = (maxY - minY) / (float)(numberOfContactPoints.y - 1);
 
-            irr::f32 zTestPos = minZ + (irr::f32)i * zSpacing;
-            irr::f32 yTestPos = minY + (irr::f32)j * ySpacing;
+            float zTestPos = minZ + (float)i * zSpacing;
+            float yTestPos = minY + (float)j * ySpacing;
 
-            irr::core::line3df ray; // Make a ray. This will start outside the mesh, looking in
-            ray.start.X = maxX + 0.1;
-            ray.start.Y = yTestPos;
-            ray.start.Z = zTestPos;
-            ray.end = ray.start;
-            ray.end.X = minX - 0.1;
+            Line3d ray(maxX + 0.1f, yTestPos, zTestPos,
+                       minX - 0.1f, yTestPos, zTestPos);
 
             // Check the ray and add the contact point if it exists
             addContactPointFromRay(ray, ySpacing * zSpacing);
             // swap ray direction and check again
-            ray.start.X = minX - 0.1;
-            ray.end.X = maxX + 0.1;
+            ray.start.x = minX - 0.1f;
+            ray.end.x = maxX + 0.1f;
             addContactPointFromRay(ray, ySpacing * zSpacing);
         }
     }
@@ -787,14 +853,16 @@ void OwnShip::load(OwnShipData ownShipData, irr::core::vector3di numberOfContact
     device->getLogger()->log(irr::core::stringw((int)contactPoints.size()).c_str());
 }
 
-void OwnShip::addContactPointFromRay(irr::core::line3d<irr::f32> ray, irr::f32 contactArea)
+void OwnShip::addContactPointFromRay(Line3d ray, float contactArea)
 {
+    // Convert to Irrlicht types for collision detection
+    irr::core::line3df irrRay = toIrrLine(ray);
     irr::core::vector3df intersection;
     irr::core::triangle3df hitTriangle;
 
     irr::scene::ISceneNode *selectedSceneNode =
         device->getSceneManager()->getSceneCollisionManager()->getSceneNodeAndCollisionPointFromRay(
-            ray,
+            irrRay,
             intersection,      // This will be the position of the collision
             hitTriangle,       // This will be the triangle hit in the collision
             IDFlag_IsPickable, // (bitmask)
@@ -803,22 +871,23 @@ void OwnShip::addContactPointFromRay(irr::core::line3d<irr::f32> ray, irr::f32 c
     if (selectedSceneNode)
     {
         ContactPoint contactPoint;
-        contactPoint.position = intersection;
-        contactPoint.normal = hitTriangle.getNormal().normalize();
-        contactPoint.position.Y -= heightCorrection; // Adjust for height correction
+        contactPoint.position = fromIrrVec(intersection);
+        irr::core::vector3df normalIrr = hitTriangle.getNormal().normalize();
+        contactPoint.normal = fromIrrVec(normalIrr);
+        contactPoint.position.y -= heightCorrection; // Adjust for height correction
 
         // Check if the normal is pointing 'towards' the incoming ray used to find the contact point, i.e. if it is pointing in roughly the right direction
         // 0.707 is approximately cos(45deg), so should be within +- 45 degrees of the incoming ray.
-        if (contactPoint.normal.dotProduct(ray.getVector().normalize()) < -0.707)
+        if (normalIrr.dotProduct(irrRay.getVector().normalize()) < -0.707)
         {
 
             // Find an internal node position, i.e. a point at which a ray check for internal intersection can start
-            ray.start = contactPoint.position;
-            // leave ray.end as the same as before
+            irrRay.start = intersection;
+            // leave irrRay.end as the same as before
             // Check for the internal node
             selectedSceneNode =
                 device->getSceneManager()->getSceneCollisionManager()->getSceneNodeAndCollisionPointFromRay(
-                    ray,
+                    irrRay,
                     intersection,      // This will be the position of the collision
                     hitTriangle,       // This will be the triangle hit in the collision
                     IDFlag_IsPickable, // (bitmask)
@@ -826,15 +895,15 @@ void OwnShip::addContactPointFromRay(irr::core::line3d<irr::f32> ray, irr::f32 c
 
             if (selectedSceneNode)
             {
-                contactPoint.internalPosition = intersection;
-                contactPoint.internalPosition.Y -= heightCorrection; // Adjust for height correction
+                contactPoint.internalPosition = fromIrrVec(intersection);
+                contactPoint.internalPosition.y -= heightCorrection; // Adjust for height correction
 
                 // Adjust internal position, so it's only 1/2 way to the opposite boundary of the model
-                contactPoint.internalPosition = 0.5 * contactPoint.internalPosition + 0.5 * contactPoint.position;
+                contactPoint.internalPosition = contactPoint.internalPosition * 0.5f + contactPoint.position * 0.5f;
 
                 // Find cross product, for torque component
-                irr::core::vector3df crossProduct = contactPoint.position.crossProduct(contactPoint.normal);
-                contactPoint.torqueEffect = crossProduct.Y;
+                Vec3 crossProduct = contactPoint.position.cross(contactPoint.normal);
+                contactPoint.torqueEffect = crossProduct.y;
 
                 // Store effective area represented by the contact
                 contactPoint.effectiveArea = contactArea;
@@ -846,18 +915,18 @@ void OwnShip::addContactPointFromRay(irr::core::line3d<irr::f32> ray, irr::f32 c
     }
 }
 
-void OwnShip::setRateOfTurn(irr::f32 rateOfTurn) // Sets the rate of turn (used when controlled as secondary)
+void OwnShip::setRateOfTurn(float rateOfTurn) // Sets the rate of turn (used when controlled as secondary)
 {
     controlMode = MODE_AUTO; // Switch to controlled mode
     this->rateOfTurn = rateOfTurn;
 }
 
-irr::f32 OwnShip::getRateOfTurn() const
+float OwnShip::getRateOfTurn() const
 {
     return rateOfTurn;
 }
 
-void OwnShip::setRudder(irr::f32 rudder)
+void OwnShip::setRudder(float rudder)
 {
     controlMode = MODE_ENGINE; // Switch to engine and rudder mode
     // Set the rudder (-ve is port, +ve is stbd)
@@ -872,7 +941,7 @@ void OwnShip::setRudder(irr::f32 rudder)
     }
 }
 
-void OwnShip::setWheel(irr::f32 wheel, bool force)
+void OwnShip::setWheel(float wheel, bool force)
 {
     controlMode = MODE_ENGINE; // Switch to engine and rudder mode
     // Set the wheel (-ve is port, +ve is stbd), unless follow up rudder isn't working (overrideable with 'force')
@@ -890,7 +959,7 @@ void OwnShip::setWheel(irr::f32 wheel, bool force)
     }
 }
 
-void OwnShip::setPortAzimuthAngle(irr::f32 angle)
+void OwnShip::setPortAzimuthAngle(float angle)
 {
     if (azimuth2Master)
     {
@@ -906,7 +975,7 @@ void OwnShip::followupPortAzimuthDrive()
 {
 
     // DEE_NOV22 vvvv temporary variables could probably be done a lot more neatly
-    irr::f32 newPortAzimuthAngle;
+    float newPortAzimuthAngle;
     // DEE_NOV22 ^^^^
 
     //    azimuthDriveSameDirectionAsSchottel=true; //DEBUG
@@ -932,7 +1001,7 @@ void OwnShip::followupPortAzimuthDrive()
         commandedPortAngle = commandedPortAngle - 360;
     }
 
-    irr::f32 maxChangeInAzimuthDriveAngleThisCycle = deltaTime * azimuthDriveMaxDegPerSecond; // DEE_NOV22 the maximum rotation possible in this cycle
+    float maxChangeInAzimuthDriveAngleThisCycle = deltaTime * azimuthDriveMaxDegPerSecond; // DEE_NOV22 the maximum rotation possible in this cycle
 
     // DEE_NOV22 now determine if it needs to move clockwise or anticlockwise
 
@@ -995,7 +1064,7 @@ void OwnShip::followupStbdAzimuthDrive()
 {
 
     // DEE_NOV22 vvvv temporary variables could probably be done a lot more neatly
-    irr::f32 newStbdAzimuthAngle;
+    float newStbdAzimuthAngle;
     // DEE_NOV22 ^^^^
 
     if (azimuthDriveSameDirectionAsSchottel)
@@ -1020,7 +1089,7 @@ void OwnShip::followupStbdAzimuthDrive()
         commandedStbdAngle = commandedStbdAngle - 360;
     }
 
-    irr::f32 maxChangeInAzimuthDriveAngleThisCycle = deltaTime * azimuthDriveMaxDegPerSecond; // DEE_NOV22 the maximum rotation possible in this cycle
+    float maxChangeInAzimuthDriveAngleThisCycle = deltaTime * azimuthDriveMaxDegPerSecond; // DEE_NOV22 the maximum rotation possible in this cycle
 
     // DEE_NOV22 now determine if it needs to move clockwise or anticlockwise
     int shortestAngularDistance = int(commandedStbdAngle - stbdAzimuthAngle) % 360; // approximated by integer
@@ -1078,7 +1147,7 @@ void OwnShip::followupStbdAzimuthDrive()
 } // end of followup code for azimuth drive
 // DEE_NOV22 ^^^^
 
-void OwnShip::setStbdAzimuthAngle(irr::f32 angle)
+void OwnShip::setStbdAzimuthAngle(float angle)
 {
 
     if (azimuth1Master)
@@ -1140,7 +1209,7 @@ bool OwnShip::getAzimuth2Master() const
     return azimuth2Master;
 }
 
-void OwnShip::setPortEngine(irr::f32 port)
+void OwnShip::setPortEngine(float port)
 {
 
     if (azimuthDrive && azimuth2Master)
@@ -1181,7 +1250,7 @@ void OwnShip::setPortEngine(irr::f32 port)
 
 } // end setPortEngine
 
-void OwnShip::setStbdEngine(irr::f32 stbd)
+void OwnShip::setStbdEngine(float stbd)
 {
 
     if (azimuthDrive && azimuth1Master)
@@ -1230,7 +1299,7 @@ void OwnShip::setStbdEngine(irr::f32 stbd)
     }
 } // end setStbdEngine
 
-void OwnShip::setBowThruster(irr::f32 proportion)
+void OwnShip::setBowThruster(float proportion)
 {
     // Proportion is -1 to +1
     bowThruster = proportion;
@@ -1244,7 +1313,7 @@ void OwnShip::setBowThruster(irr::f32 proportion)
     }
 }
 
-void OwnShip::setSternThruster(irr::f32 proportion)
+void OwnShip::setSternThruster(float proportion)
 {
     // Proportion is -1 to +1
     sternThruster = proportion;
@@ -1258,13 +1327,13 @@ void OwnShip::setSternThruster(irr::f32 proportion)
     }
 }
 
-void OwnShip::setBowThrusterRate(irr::f32 bowThrusterRate)
+void OwnShip::setBowThrusterRate(float bowThrusterRate)
 {
     // Sets the rate of increase of bow thruster, used for joystick button control
     this->bowThrusterRate = bowThrusterRate;
 }
 
-void OwnShip::setSternThrusterRate(irr::f32 sternThrusterRate)
+void OwnShip::setSternThrusterRate(float sternThrusterRate)
 {
     // Sets the rate of increase of stern thruster, used for joystick button control
     this->sternThrusterRate = sternThrusterRate;
@@ -1308,62 +1377,62 @@ bool OwnShip::getFollowUpRudderWorking()
 }
 // DEE_NOV22 ^^^^
 
-irr::f32 OwnShip::getPortEngine() const
+float OwnShip::getPortEngine() const
 { // DEE_NOV22 note range -1 .. 1 needs to be 0 .. 1 for azimuth drive
     return portEngine;
 }
 
-irr::f32 OwnShip::getStbdEngine() const
+float OwnShip::getStbdEngine() const
 {
     return stbdEngine;
 }
 
-irr::f32 OwnShip::getBowThruster() const
+float OwnShip::getBowThruster() const
 {
     return bowThruster;
 }
 
-irr::f32 OwnShip::getSternThruster() const
+float OwnShip::getSternThruster() const
 {
     return sternThruster;
 }
 
-irr::f32 OwnShip::getPortEngineRPM() const
+float OwnShip::getPortEngineRPM() const
 {
     return portEngine * maxEngineRevs;
 }
 
-irr::f32 OwnShip::getStbdEngineRPM() const
+float OwnShip::getStbdEngineRPM() const
 {
     return stbdEngine * maxEngineRevs;
 }
 
-irr::f32 OwnShip::getRudder() const
+float OwnShip::getRudder() const
 {
     return rudder;
 }
 
-irr::f32 OwnShip::getWheel() const
+float OwnShip::getWheel() const
 {
     return wheel;
 }
 
-irr::f32 OwnShip::getPortAzimuthAngle() const
+float OwnShip::getPortAzimuthAngle() const
 {
     return portAzimuthAngle; // Angle in degrees
 }
 
-irr::f32 OwnShip::getStbdAzimuthAngle() const
+float OwnShip::getStbdAzimuthAngle() const
 {
     return stbdAzimuthAngle; // Angle in degrees
 }
 
-irr::f32 OwnShip::getPitch() const
+float OwnShip::getPitch() const
 {
     return pitch;
 }
 
-irr::f32 OwnShip::getRoll() const
+float OwnShip::getRoll() const
 {
     return roll;
 }
@@ -1373,37 +1442,37 @@ std::string OwnShip::getBasePath() const
     return basePath;
 }
 
-irr::core::vector3df OwnShip::getScreenDisplayPosition() const
+Vec3 OwnShip::getScreenDisplayPosition() const
 {
     return screenDisplayPosition;
 }
 
-irr::f32 OwnShip::getScreenDisplaySize() const
+float OwnShip::getScreenDisplaySize() const
 {
     return screenDisplaySize;
 }
 
-irr::f32 OwnShip::getScreenDisplayTilt() const
+float OwnShip::getScreenDisplayTilt() const
 {
     return screenDisplayTilt;
 }
 
-irr::core::vector3df OwnShip:: getPortEngineControlPosition() const
+Vec3 OwnShip::getPortEngineControlPosition() const
 {
     return portThrottlePosition;
 }
 
-irr::core::vector3df OwnShip::getStbdEngineControlPosition() const
+Vec3 OwnShip::getStbdEngineControlPosition() const
 {
     return stbdThrottlePosition;
 }
 
-irr::core::vector3df OwnShip::getWheelControlPosition() const
+Vec3 OwnShip::getWheelControlPosition() const
 {
     return wheelControlPosition;
 }
 
-irr::f32 OwnShip::getWheelControlScale() const
+float OwnShip::getWheelControlScale() const
 {
     return wheelControlScale;
 }
@@ -1433,7 +1502,7 @@ bool OwnShip::isConventionalAzidriveSchottel() const
     return azimuthDriveSameDirectionAsSchottel;
 }
 
-void OwnShip::setPortSchottel(irr::f32 portAngle)
+void OwnShip::setPortSchottel(float portAngle)
 { // sets port schottel angle -ve anticlockwise
     // DEE_NOV22    Im not sure this set is used anywhere but I will leave it in
     //		because in the future it may be needed for some sort of
@@ -1441,17 +1510,17 @@ void OwnShip::setPortSchottel(irr::f32 portAngle)
     this->portSchottel = portAngle;
 }
 
-void OwnShip::setStbdSchottel(irr::f32 stbdAngle)
+void OwnShip::setStbdSchottel(float stbdAngle)
 { // sets starboard azimuth drive angle -ve anticlockwise
     this->stbdSchottel = stbdAngle;
 }
 
-irr::f32 OwnShip::getPortSchottel() const
+float OwnShip::getPortSchottel() const
 { // gets port      azimuth drive angle -ve anticlockwise
     return portSchottel;
 }
 
-irr::f32 OwnShip::getStbdSchottel() const
+float OwnShip::getStbdSchottel() const
 { // gets starboard azimuth drive angle -ve anticlockwise
     return stbdSchottel;
 }
@@ -1510,7 +1579,7 @@ void OwnShip::disengageStbdClutch()
     this->setStbdClutch(false);
 }
 
-void OwnShip::setPortAzimuthThrustLever(irr::f32 thrustLever)
+void OwnShip::setPortAzimuthThrustLever(float thrustLever)
 { // sets port thrust lever 0..1 or -1..1
     if (azimuthAsternAllowed) {
         if (thrustLever < -1) {
@@ -1529,7 +1598,7 @@ void OwnShip::setPortAzimuthThrustLever(irr::f32 thrustLever)
     this->portAzimuthThrustLever = thrustLever;
 }
 
-void OwnShip::setStbdAzimuthThrustLever(irr::f32 thrustLever)
+void OwnShip::setStbdAzimuthThrustLever(float thrustLever)
 { // sets port thrust lever 0..1 or -1..1
     if (azimuthAsternAllowed) {
         if (thrustLever < -1) {
@@ -1547,12 +1616,12 @@ void OwnShip::setStbdAzimuthThrustLever(irr::f32 thrustLever)
     this->stbdAzimuthThrustLever = thrustLever;
 }
 
-irr::f32 OwnShip::getPortAzimuthThrustLever()
+float OwnShip::getPortAzimuthThrustLever()
 { // gets position of port thrust lever 0..1 or -1..1
     return this->portAzimuthThrustLever;
 }
 
-irr::f32 OwnShip::getStbdAzimuthThrustLever()
+float OwnShip::getStbdAzimuthThrustLever()
 { // gets position of stbd thrust lever 0..1 or -1..1
     return this->stbdAzimuthThrustLever;
 }
@@ -1634,7 +1703,7 @@ void OwnShip::btnIncrementPortThrustLever()
 
 void OwnShip::btnDecrementPortThrustLever()
 { // decrements the port thrust lever
-    irr::f32 tempvar;
+    float tempvar;
     tempvar = getPortAzimuthThrustLever() - getLastDeltaTime() * thrustLeverMaxChangePerSecond;
     setPortAzimuthThrustLever(tempvar);
 }
@@ -1679,19 +1748,19 @@ void OwnShip::enableTriangleSelector(bool selectorEnabled)
     }
 }
 
-irr::f32 OwnShip::getShipMass() const
+float OwnShip::getShipMass() const
 {
     return shipMass;
 }
 
-irr::f32 OwnShip::getScaleFactor() const
+float OwnShip::getScaleFactor() const
 {
     return scaleFactor;
 }
 
-irr::f32 OwnShip::requiredEngineProportion(irr::f32 speed)
+float OwnShip::requiredEngineProportion(float speed)
 {
-    irr::f32 proportion = 0;
+    float proportion = 0;
     if (speed >= 0)
     {
         proportion = (dynamicsSpeedA * speed * speed + dynamicsSpeedB * speed) / (2 * maxForce);
@@ -1706,19 +1775,19 @@ irr::f32 OwnShip::requiredEngineProportion(irr::f32 speed)
 // DEE_NOV22 vvvv
 // the delta time of the previous cycle, good enough for movement of shcottels and levers
 
-irr::f32 OwnShip::getLastDeltaTime()
+float OwnShip::getLastDeltaTime()
 {
     return deltaTime;
 }
 
-void OwnShip::setLastDeltaTime(irr::f32 myDeltaTime)
+void OwnShip::setLastDeltaTime(float myDeltaTime)
 {
     deltaTime = myDeltaTime;
 }
 
 // DEE_NOV22 ^^^^
 
-void OwnShip::update(irr::f32 deltaTime, irr::f32 scenarioTime, irr::f32 tideHeight, irr::f32 weather, irr::core::vector3df linesForce, irr::core::vector3df linesTorque)
+void OwnShip::update(float deltaTime, float scenarioTime, float tideHeight, float weather, Vec3 linesForce, Vec3 linesTorque)
 {
 
     #ifdef WITH_PROFILING
@@ -1734,43 +1803,43 @@ void OwnShip::update(irr::f32 deltaTime, irr::f32 scenarioTime, irr::f32 tideHei
     {
 
         // Check depth and update collision response forces and torque
-        irr::f32 groundingAxialDrag = 0;
-        irr::f32 groundingLateralDrag = 0;
-        irr::f32 groundingTurnDrag = 0;
+        float groundingAxialDrag = 0;
+        float groundingLateralDrag = 0;
+        float groundingTurnDrag = 0;
         collisionDetectAndRespond(groundingAxialDrag, groundingLateralDrag, groundingTurnDrag); // The drag values will get modified by this call
 
         // Add in response from mooring lines here
-        groundingAxialDrag -= linesForce.Z;
-        groundingLateralDrag -= linesForce.X;
-        groundingTurnDrag -= linesTorque.Y;
+        groundingAxialDrag -= linesForce.z;
+        groundingLateralDrag -= linesForce.x;
+        groundingTurnDrag -= linesTorque.y;
 
         // std::cout << "Collision forces (Time/axial/lateral/turn)," << scenarioTime << "," << groundingAxialDrag << "," << groundingLateralDrag << "," << groundingTurnDrag << std::endl;
 
         // Add drag from wind and stream
-        irr::f32 windSpeed = model->getWindSpeed() * KTS_TO_MPS;
-        irr::f32 windDirection = model->getWindDirection();
+        float windSpeed = model->getWindSpeed() * KTS_TO_MPS;
+        float windDirection = model->getWindDirection();
         // Convert this into wind axial speed and wind lateral speed
-        irr::f32 windFlowDirection = windDirection + 180; // Wind direction is where the wind is from. We want where it is flowing towards
-        irr::f32 relativeWindFlowDirection = windFlowDirection - hdg;
-        irr::f32 axialWind = windSpeed * cos(relativeWindFlowDirection * irr::core::DEGTORAD);
-        irr::f32 lateralWind = windSpeed * sin(relativeWindFlowDirection * irr::core::DEGTORAD);
+        float windFlowDirection = windDirection + 180; // Wind direction is where the wind is from. We want where it is flowing towards
+        float relativeWindFlowDirection = windFlowDirection - hdg;
+        float axialWind = windSpeed * cos(relativeWindFlowDirection * irr::core::DEGTORAD);
+        float lateralWind = windSpeed * sin(relativeWindFlowDirection * irr::core::DEGTORAD);
 
-        irr::f32 relWindAxial_mps = (axialWind - axialSpd) * KTS_TO_MPS;
-        irr::f32 relWindLateral_mps = (lateralWind - lateralSpd) * KTS_TO_MPS;
-        irr::f32 frontalArea = breadth * airDraught;
-        irr::f32 sideArea = length * airDraught;
+        float relWindAxial_mps = (axialWind - axialSpd) * KTS_TO_MPS;
+        float relWindLateral_mps = (lateralWind - lateralSpd) * KTS_TO_MPS;
+        float frontalArea = breadth * airDraught;
+        float sideArea = length * airDraught;
 
-        irr::f32 axialWindDrag = -1 * pow(relWindAxial_mps, 2) * sign(relWindAxial_mps) * 0.5 * RHO_AIR * frontalArea;
-        irr::f32 lateralWindDrag = -1 * pow(relWindLateral_mps, 2) * sign(relWindLateral_mps) * 0.5 * RHO_AIR * sideArea;
+        float axialWindDrag = -1 * pow(relWindAxial_mps, 2) * sign(relWindAxial_mps) * 0.5 * RHO_AIR * frontalArea;
+        float lateralWindDrag = -1 * pow(relWindLateral_mps, 2) * sign(relWindLateral_mps) * 0.5 * RHO_AIR * sideArea;
 
         // Find tidal stream, based on our current absolute position
-        irr::core::vector2df stream = model->getTidalStream(model->getLong(), model->getLat(), model->getTimestamp());
-        //std::cout << "Tidal stream x:" << stream.X << ", z:" << stream.Y << std::endl;
-        irr::f32 streamScaling = fmax(0, fmin(1, getDepth())); // Reduce effect as water gets shallower
+        bc::graphics::Vec2 stream = model->getTidalStream(model->getLong(), model->getLat(), model->getTimestamp());
+        //std::cout << "Tidal stream x:" << stream.x << ", z:" << stream.y << std::endl;
+        float streamScaling = fmax(0, fmin(1, getDepth())); // Reduce effect as water gets shallower
         stream *= streamScaling;
         // Convert this into stream axial and lateral speed
-        irr::f32 axialStream = stream.X * sin(hdg * irr::core::DEGTORAD) + stream.Y * cos(hdg * irr::core::DEGTORAD); // Stream in ahead direction
-        irr::f32 lateralStream = stream.X * cos(hdg * irr::core::DEGTORAD) - stream.Y * sin(hdg * irr::core::DEGTORAD);// Stream in stbd direction
+        float axialStream = stream.x * sin(hdg * irr::core::DEGTORAD) + stream.y * cos(hdg * irr::core::DEGTORAD); // Stream in ahead direction
+        float lateralStream = stream.x * cos(hdg * irr::core::DEGTORAD) - stream.y * sin(hdg * irr::core::DEGTORAD);// Stream in stbd direction
 
         speedThroughWater = axialSpd - axialStream;
 
@@ -1812,20 +1881,20 @@ void OwnShip::update(irr::f32 deltaTime, irr::f32 scenarioTime, irr::f32 tideHei
         // Ixx = mass * (centreGravityTemporal^2 + length^2) / 12, for pitching motion
 
         // Update axialSpd and hdg with rudder and engine controls - assume two engines, should also work with single engine
-        irr::f32 portThrust = 0; // DEE_DEC22 changed meaning to scalar not vector
-        irr::f32 stbdThrust = 0; // DEE_DEC22 changed meaning to scalar not vector
+        float portThrust = 0; // DEE_DEC22 changed meaning to scalar not vector
+        float stbdThrust = 0; // DEE_DEC22 changed meaning to scalar not vector
 
         // DEE_DEC22 vvvv
-        irr::f32 portAxialThrust = 0;
-        irr::f32 stbdAxialThrust = 0;
-        irr::f32 portLateralThrust = 0;
-        irr::f32 stbdLateralThrust = 0;
-        irr::f32 portTemporalThrust = 0; // probably temporal not needed at present but for future use as trim of outboard engine
-        irr::f32 stbdTemporalThrust = 0; // and for some configuration of sails and kites
+        float portAxialThrust = 0;
+        float stbdAxialThrust = 0;
+        float portLateralThrust = 0;
+        float stbdLateralThrust = 0;
+        float portTemporalThrust = 0; // probably temporal not needed at present but for future use as trim of outboard engine
+        float stbdTemporalThrust = 0; // and for some configuration of sails and kites
 
-        irr::f32 axialThrust = 0;    // sum of axial thrusts
-        irr::f32 lateralThrust = 0;  // sum of lateral thrusts
-        irr::f32 temporalThrust = 0; // sum of temporal thrusts
+        float axialThrust = 0;    // sum of axial thrusts
+        float lateralThrust = 0;  // sum of lateral thrusts
+        float temporalThrust = 0; // sum of temporal thrusts
                                      // DEE_DEV22 ^^^^
 
         if (azimuthDrive)
@@ -2044,219 +2113,317 @@ void OwnShip::update(irr::f32 deltaTime, irr::f32 scenarioTime, irr::f32 tideHei
 
         } // DEE_NOV22 end if conventional controls then calculate thrust thus
 
-        // Ignore stbd slider if single engine (internally modelled as 2 engines, each with half the max force)
-        if (singleEngine)
-        {
-            stbdThrust = portThrust;
-            // DEE_DEC22 vvvv
-            stbdAxialThrust = portAxialThrust;
-            stbdLateralThrust = portLateralThrust;
-            // stbdTemporalThrust = portTemporalThrust; // DEE_DEC22 not yet implemented
-            // DEE_DEC22 ^^^^
-        }
+        if (useMMG && !azimuthDrive) {
+            // ── MMG Physics Model (fixed-timestep sub-stepping) ──────────
+            // MMG handles: hull drag, propeller thrust, rudder forces, Coriolis coupling
+            // External forces (wind, collision, thrusters) are added as corrections after MMG steps
 
-        // DEE_DEC22 vvvv old code deleted not commented out for clarity
-        //		drag	replaced by	axialDrag
-        //		spd	replaced by	axialSpd but spd is updated for the ancestor object
-        //		acceleration	"	axialAcceleration
-        //		groundingDrag	"	groundingAxialDrag
+            static constexpr float PHYSICS_DT = 0.02f; // 50Hz fixed timestep
 
-        irr::f32 axialDrag;
-        if (speedThroughWater < 0)
-        { // Compensate for loss of sign when squaring
-            axialDrag = -1 * dynamicsSpeedA * speedThroughWater * speedThroughWater + dynamicsSpeedB * speedThroughWater;
-        }
-        else
-        {
-            axialDrag = dynamicsSpeedA * speedThroughWater * speedThroughWater + dynamicsSpeedB * speedThroughWater;
-        }
-        irr::f32 axialAcceleration = (portAxialThrust + stbdAxialThrust - axialDrag - groundingAxialDrag - axialWindDrag) / shipMass;
-        // Check acceleration plausibility (not more than 1g = 9.81ms/2)
-        if (axialAcceleration > 9.81)
-        {
-            axialAcceleration = 9.81;
-        }
-        else if (axialAcceleration < -9.81)
-        {
-            axialAcceleration = -9.81;
-        }
-        axialSpd += axialAcceleration * deltaTime;
-        // Also check speed for plausibility, limit to 50m/s
-        if (axialSpd > 50)
-        {
-            axialSpd = 50;
-        }
-        else if (axialSpd < -50)
-        {
-            axialSpd = -50;
-        }
+            PhysicsInput mmgInput;
+            mmgInput.portEngine = portEngine;
+            mmgInput.stbdEngine = stbdEngine;
+            mmgInput.rudderAngle = rudder; // degrees, +ve starboard
+            mmgInput.waterDepth = std::max(0.1f, getDepth()); // Depth below keel (m)
+            mmgInput.windSpeed = windSpeed;  // m/s (already converted above)
+            mmgInput.windDirection = windDirection; // degrees, FROM direction
+            mmgInput.currentSurge = axialStream;    // body-frame tidal stream (m/s)
+            mmgInput.currentSway = lateralStream;   // body-frame tidal stream (m/s)
 
-        // DEE_DEC22 not commenting out old code for clarity
-        // Lateral dynamics
-        lateralThrust = bowThruster * bowThrusterMaxForce + sternThruster * sternThrusterMaxForce;
-        if (azimuthDrive)
-        {
+            physicsAccumulator += deltaTime;
+            while (physicsAccumulator >= PHYSICS_DT) {
+                PhysicsState mmgState;
+                mmgState.surge = axialSpd;
+                mmgState.sway = lateralSpd;
+                mmgState.yawRate = rateOfTurn * irr::core::RADTODEG; // MMG uses deg/s
+                mmgState.heading = hdg;
+                mmgState.posX = xPos;
+                mmgState.posZ = zPos;
+
+                mmgModel->step(PHYSICS_DT, mmgInput, mmgState);
+
+                // Read back velocities (position/heading handled by existing code below)
+                axialSpd = mmgState.surge;
+                lateralSpd = mmgState.sway;
+                rateOfTurn = mmgState.yawRate * irr::core::DEGTORAD; // Convert back to rad/s
+
+                physicsAccumulator -= PHYSICS_DT;
+            }
+
+            // Add external force corrections: collision/grounding, thrusters
+            // Wind is now handled by Isherwood model inside MMG step, so not added here
+            float extAxialForce = -groundingAxialDrag;
+            float extLateralForce = -groundingLateralDrag
+                + bowThruster * bowThrusterMaxForce + sternThruster * sternThrusterMaxForce;
+            float extTorque = -groundingTurnDrag
+                + bowThruster * bowThrusterMaxForce * bowThrusterDistance
+                - sternThruster * sternThrusterMaxForce * sternThrusterDistance;
+
+            // Added Resistance in Waves (Stawave-1 ITTC)
+            {
+                float windDirDeg = model->getWindDirection();
+                float wavePropRad = (windDirDeg + 180.0f) * irr::core::DEGTORAD;
+                float mu = hdg * irr::core::DEGTORAD - wavePropRad; // heading relative to waves
+                float beaufort = weather; // weather is already 0-12 Beaufort
+                float Hs = bc::WaveMotion::beaufortToHs(beaufort);
+                float raw = bc::WaveMotion::addedResistanceInWaves(Hs, breadth, length, mu);
+                extAxialForce -= raw; // opposes forward motion
+            }
+
+            axialSpd += extAxialForce / shipMass * deltaTime;
+            lateralSpd += extLateralForce / shipMass * deltaTime;
+            rateOfTurn += extTorque / Izz * deltaTime;
+
+            speedThroughWater = axialSpd - axialStream;
+
+            // Directional yaw buffeting: beam seas cause more disturbance than head/following
+            {
+                float windDirDeg = model->getWindDirection();
+                float wavePropRad = (windDirDeg + 180.0f) * irr::core::DEGTORAD;
+                float mu = hdg * irr::core::DEGTORAD - wavePropRad;
+                float beamSeaFactor = std::abs(sin(mu)); // max in beam seas
+                rateOfTurn += irr::core::DEGTORAD * buffet * weather * beamSeaFactor * ((float)std::rand() / RAND_MAX - 0.5f) * 2.0f * deltaTime;
+            }
+
+            // Apply turn (heading integration uses existing code)
+            hdg += rateOfTurn * deltaTime * irr::core::RADTODEG;
+
+        } else {
+            // ── Legacy Physics ─────────────────────────────────────────────
+
+            // Ignore stbd slider if single engine (internally modelled as 2 engines, each with half the max force)
             if (singleEngine)
             {
-                // double effect of 'port' engine
-                // DEE_DEC22 never seen a vessel with just one azi, however with a limit of rotation
-                // then its similar to an outboard engine
-                // DEE_NOV22 vvvv comment out original and replace with below
-                // lateralThrust += portEngine * maxForce * sin(portAzimuthAngle*irr::core::DEGTORAD);
-                if (portClutch)
+                stbdThrust = portThrust;
+                // DEE_DEC22 vvvv
+                stbdAxialThrust = portAxialThrust;
+                stbdLateralThrust = portLateralThrust;
+                // stbdTemporalThrust = portTemporalThrust; // DEE_DEC22 not yet implemented
+                // DEE_DEC22 ^^^^
+            }
+
+            // DEE_DEC22 vvvv old code deleted not commented out for clarity
+            //		drag	replaced by	axialDrag
+            //		spd	replaced by	axialSpd but spd is updated for the ancestor object
+            //		acceleration	"	axialAcceleration
+            //		groundingDrag	"	groundingAxialDrag
+
+            float axialDrag;
+            if (speedThroughWater < 0)
+            { // Compensate for loss of sign when squaring
+                axialDrag = -1 * dynamicsSpeedA * speedThroughWater * speedThroughWater + dynamicsSpeedB * speedThroughWater;
+            }
+            else
+            {
+                axialDrag = dynamicsSpeedA * speedThroughWater * speedThroughWater + dynamicsSpeedB * speedThroughWater;
+            }
+            // Added Resistance in Waves (Stawave-1 ITTC)
+            float waveResistance = 0.0f;
+            {
+                float windDirDeg = model->getWindDirection();
+                float wavePropRad = (windDirDeg + 180.0f) * irr::core::DEGTORAD;
+                float mu = hdg * irr::core::DEGTORAD - wavePropRad;
+                float beaufort = weather; // weather is already 0-12 Beaufort
+                float Hs = bc::WaveMotion::beaufortToHs(beaufort);
+                waveResistance = bc::WaveMotion::addedResistanceInWaves(Hs, breadth, length, mu);
+            }
+            float axialAcceleration = (portAxialThrust + stbdAxialThrust - axialDrag - groundingAxialDrag - axialWindDrag - waveResistance) / shipMass;
+            // Check acceleration plausibility (not more than 1g = 9.81ms/2)
+            if (axialAcceleration > 9.81)
+            {
+                axialAcceleration = 9.81;
+            }
+            else if (axialAcceleration < -9.81)
+            {
+                axialAcceleration = -9.81;
+            }
+            axialSpd += axialAcceleration * deltaTime;
+            // Also check speed for plausibility, limit to 50m/s
+            if (axialSpd > 50)
+            {
+                axialSpd = 50;
+            }
+            else if (axialSpd < -50)
+            {
+                axialSpd = -50;
+            }
+
+            // DEE_DEC22 not commenting out old code for clarity
+            // Lateral dynamics
+            lateralThrust = bowThruster * bowThrusterMaxForce + sternThruster * sternThrusterMaxForce;
+            if (azimuthDrive)
+            {
+                if (singleEngine)
                 {
-                    // port engine is clutched in , as only a single engine let it act for both
-                    lateralThrust += 2 * portLateralThrust;
+                    // double effect of 'port' engine
+                    // DEE_DEC22 never seen a vessel with just one azi, however with a limit of rotation
+                    // then its similar to an outboard engine
+                    // DEE_NOV22 vvvv comment out original and replace with below
+                    // lateralThrust += portEngine * maxForce * sin(portAzimuthAngle*irr::core::DEGTORAD);
+                    if (portClutch)
+                    {
+                        // port engine is clutched in , as only a single engine let it act for both
+                        lateralThrust += 2 * portLateralThrust;
+                    }
+                }
+                else
+                { // DEE else two independent azimuth drives
+                    // DEE_NOV22 there are two azi each should be calculated independently
+                    lateralThrust += portLateralThrust + stbdLateralThrust; // sin takes care of the +ve -ve
+                }                                                           // DEE_NOV22 end if else single engine azimuth drive else twin azimuth drive
+            }                                                               // DEE_NOV22 end if azimuth drive
+
+            // DEE_DEC22 todo upon load ship then calculate DONE earlier
+            // 	dynamicsLateralDragA as dynamicsSpeedA * (L/B)
+            //	dynamicsLateralDragB as dynamicsSppedB * (B/L)
+            //	the submerged depth being constant we dont need to take it into account
+
+            // DEE_DEC22 this does the sway of the vessel when turning it probably models centrifugal drift too
+            float lateralDrag;
+            float lateralRelSpd = lateralSpd - lateralStream;
+            if (lateralRelSpd < 0)
+            { // Compensate for loss of sign when squaring
+                lateralDrag = -1 * dynamicsLateralDragA * lateralRelSpd * lateralRelSpd + dynamicsLateralDragB * lateralRelSpd;
+            }
+            else
+            {
+                lateralDrag = dynamicsLateralDragA * lateralRelSpd * lateralRelSpd + dynamicsLateralDragB * lateralRelSpd;
+            } //  end if lateral drag
+            float lateralAcceleration = (lateralThrust - lateralDrag - groundingLateralDrag - lateralWindDrag) / shipMass;
+            // std::cout << "Lateral acceleration (m/s2): " << lateralAcceleration << std::endl;
+            // Check acceleration plausibility (not more than 1g = 9.81ms/2)
+            if (lateralAcceleration > 9.81)
+            {
+                lateralAcceleration = 9.81;
+            }
+            else if (lateralAcceleration < -9.81)
+            {
+                lateralAcceleration = -9.81;
+            }
+            lateralSpd += lateralAcceleration * deltaTime;
+            // Also check speed for plausibility, limit to 50m/s
+            if (lateralSpd > 50)
+            {
+                lateralSpd = 50;
+            }
+            else if (lateralSpd < -50)
+            {
+                lateralSpd = -50;
+            }
+
+            // Turn dynamics
+            //  Azimuth Drive
+            if (azimuthDrive)
+            {
+                rudderTorque = 0;
+                engineTorque = 0; // Will build up from components
+                                  // clockwise is +ve
+
+                if (singleEngine)
+                {
+                    // Double the 'port' engine effect, as we model as if we have two half power engines in the same place
+                    engineTorque += portAxialThrust * propellorSpacing / 2.0;
+                    engineTorque -= portLateralThrust * aziDriveLateralLeverArm;
+                    engineTorque *= 2;
+                }
+                else
+                {
+                    // twin azimuth drives so - the axial thrust for starboard engine and +ve the lateral as angle same direction
+                    engineTorque += portAxialThrust * propellorSpacing / 2.0;
+                    engineTorque -= portLateralThrust * aziDriveLateralLeverArm;
+                    engineTorque -= stbdAxialThrust * propellorSpacing / 2.0;
+                    engineTorque -= stbdLateralThrust * aziDriveLateralLeverArm;
                 }
             }
             else
-            { // DEE else two independent azimuth drives
-                // DEE_NOV22 there are two azi each should be calculated independently
-                lateralThrust += portLateralThrust + stbdLateralThrust; // sin takes care of the +ve -ve
-            }                                                           // DEE_NOV22 end if else single engine azimuth drive else twin azimuth drive
-        }                                                               // DEE_NOV22 end if azimuth drive
+            {
+                // Regular rudder
+                if ((portThrust + stbdThrust) > 0)
+                {
+                    rudderTorque = rudder * speedThroughWater * rudderA + rudder * (portThrust + stbdThrust) * rudderB;
+                }
+                else
+                {
+                    rudderTorque = rudder * speedThroughWater * rudderA + rudder * (portThrust + stbdThrust) * rudderBAstern; // Reduced effect of rudder when engines engaged astern
+                }
+                // Engine
+                engineTorque = (portThrust * propellorSpacing - stbdThrust * propellorSpacing) / 2.0; // propspace is spacing between propellors, so halve to get moment arm
 
-        // DEE_DEC22 todo upon load ship then calculate DONE earlier
-        // 	dynamicsLateralDragA as dynamicsSpeedA * (L/B)
-        //	dynamicsLateralDragB as dynamicsSppedB * (B/L)
-        //	the submerged depth being constant we dont need to take it into account
+                // Rudder effectiveness reduction in rough seas
+                rudderTorque *= bc::WaveMotion::rudderSeaStateFactor(weather);
+            }
 
-        // DEE_DEC22 this does the sway of the vessel when turning it probably models centrifugal drift too
-        irr::f32 lateralDrag;
-        irr::f32 lateralRelSpd = lateralSpd - lateralStream;
-        if (lateralRelSpd < 0)
-        { // Compensate for loss of sign when squaring
-            lateralDrag = -1 * dynamicsLateralDragA * lateralRelSpd * lateralRelSpd + dynamicsLateralDragB * lateralRelSpd;
-        }
-        else
-        {
-            lateralDrag = dynamicsLateralDragA * lateralRelSpd * lateralRelSpd + dynamicsLateralDragB * lateralRelSpd;
-        } //  end if lateral drag
-        irr::f32 lateralAcceleration = (lateralThrust - lateralDrag - groundingLateralDrag - lateralWindDrag) / shipMass;
-        // std::cout << "Lateral acceleration (m/s2): " << lateralAcceleration << std::endl;
-        // Check acceleration plausibility (not more than 1g = 9.81ms/2)
-        if (lateralAcceleration > 9.81)
-        {
-            lateralAcceleration = 9.81;
-        }
-        else if (lateralAcceleration < -9.81)
-        {
-            lateralAcceleration = -9.81;
-        }
-        lateralSpd += lateralAcceleration * deltaTime;
-        // Also check speed for plausibility, limit to 50m/s
-        if (lateralSpd > 50)
-        {
-            lateralSpd = 50;
-        }
-        else if (lateralSpd < -50)
-        {
-            lateralSpd = -50;
-        }
-
-        // Turn dynamics
-        //  Azimuth Drive
-        if (azimuthDrive)
-        {
-            rudderTorque = 0;
-            engineTorque = 0; // Will build up from components
-                              // clockwise is +ve
-
+            // Prop walk
+            float propWalkTorquePort, propWalkTorqueStbd;
+            if (portThrust > 0)
+            {
+                propWalkTorquePort = 1 * propWalkAhead * (portThrust / maxForce); // Had modification for 'invertspeed'
+            }
+            else
+            {
+                propWalkTorquePort = 1 * propWalkAstern * (portThrust / maxForce);
+            }
+            if (stbdThrust > 0)
+            {
+                propWalkTorqueStbd = -1 * propWalkAhead * (stbdThrust / maxForce); // Had modification for 'invertspeed'
+            }
+            else
+            {
+                propWalkTorqueStbd = -1 * propWalkAstern * (stbdThrust / maxForce);
+            }
             if (singleEngine)
             {
-                // Double the 'port' engine effect, as we model as if we have two half power engines in the same place
-                engineTorque += portAxialThrust * propellorSpacing / 2.0;
-                engineTorque -= portLateralThrust * aziDriveLateralLeverArm;
-                engineTorque *= 2;
+                // Special case for single engine, as we are just controlling the port engine for the internal model
+                // 2* because the internal model is two engines with zero spacing and half power each.
+                propWalkTorque = 2 * propWalkTorquePort;
             }
             else
             {
-                // twin azimuth drives so - the axial thrust for starboard engine and +ve the lateral as angle same direction
-                engineTorque += portAxialThrust * propellorSpacing / 2.0;
-                engineTorque -= portLateralThrust * aziDriveLateralLeverArm;
-                engineTorque -= stbdAxialThrust * propellorSpacing / 2.0;
-                engineTorque -= stbdLateralThrust * aziDriveLateralLeverArm;
+                propWalkTorque = propWalkTorquePort + propWalkTorqueStbd;
             }
-        }
-        else
-        {
-            // Regular rudder
-            if ((portThrust + stbdThrust) > 0)
+            // Thrusters
+            float thrusterTorque;
+            thrusterTorque = bowThruster * bowThrusterMaxForce * bowThrusterDistance - sternThruster * sternThrusterMaxForce * sternThrusterDistance;
+            // Turn drag
+            if (rateOfTurn < 0)
             {
-                rudderTorque = rudder * speedThroughWater * rudderA + rudder * (portThrust + stbdThrust) * rudderB;
+                dragTorque = -1 * (-1 * dynamicsTurnDragA * rateOfTurn * rateOfTurn + dynamicsTurnDragB * rateOfTurn);
             }
             else
             {
-                rudderTorque = rudder * speedThroughWater * rudderA + rudder * (portThrust + stbdThrust) * rudderBAstern; // Reduced effect of rudder when engines engaged astern
+                dragTorque = -1 * (dynamicsTurnDragA * rateOfTurn * rateOfTurn + dynamicsTurnDragB * rateOfTurn);
             }
-            // Engine
-            engineTorque = (portThrust * propellorSpacing - stbdThrust * propellorSpacing) / 2.0; // propspace is spacing between propellors, so halve to get moment arm
-        }
+            // Turn dynamics
 
-        // Prop walk
-        irr::f32 propWalkTorquePort, propWalkTorqueStbd;
-        if (portThrust > 0)
-        {
-            propWalkTorquePort = 1 * propWalkAhead * (portThrust / maxForce); // Had modification for 'invertspeed'
-        }
-        else
-        {
-            propWalkTorquePort = 1 * propWalkAstern * (portThrust / maxForce);
-        }
-        if (stbdThrust > 0)
-        {
-            propWalkTorqueStbd = -1 * propWalkAhead * (stbdThrust / maxForce); // Had modification for 'invertspeed'
-        }
-        else
-        {
-            propWalkTorqueStbd = -1 * propWalkAstern * (stbdThrust / maxForce);
-        }
-        if (singleEngine)
-        {
-            // Special case for single engine, as we are just controlling the port engine for the internal model
-            // 2* because the internal model is two engines with zero spacing and half power each.
-            propWalkTorque = 2 * propWalkTorquePort;
-        }
-        else
-        {
-            propWalkTorque = propWalkTorquePort + propWalkTorqueStbd;
-        }
-        // Thrusters
-        irr::f32 thrusterTorque;
-        thrusterTorque = bowThruster * bowThrusterMaxForce * bowThrusterDistance - sternThruster * sternThrusterMaxForce * sternThrusterDistance;
-        // Turn drag
-        if (rateOfTurn < 0)
-        {
-            dragTorque = -1 * (-1 * dynamicsTurnDragA * rateOfTurn * rateOfTurn + dynamicsTurnDragB * rateOfTurn);
-        }
-        else
-        {
-            dragTorque = -1 * (dynamicsTurnDragA * rateOfTurn * rateOfTurn + dynamicsTurnDragB * rateOfTurn);
-        }
-        // Turn dynamics
+            float angularAcceleration = (rudderTorque + engineTorque + propWalkTorque + thrusterTorque + dragTorque - groundingTurnDrag) / Izz;
 
-        irr::f32 angularAcceleration = (rudderTorque + engineTorque + propWalkTorque + thrusterTorque + dragTorque - groundingTurnDrag) / Izz;
+            rateOfTurn += angularAcceleration * deltaTime; // Rad/s
+            // check plausibility for rate of turn, limit to ~4Pi rad/s
+            if (rateOfTurn > 12)
+            {
+                rateOfTurn = 12;
+            }
+            else if (rateOfTurn < -12)
+            {
+                rateOfTurn = -12;
+            }
 
-        rateOfTurn += angularAcceleration * deltaTime; // Rad/s
-        // check plausibility for rate of turn, limit to ~4Pi rad/s
-        if (rateOfTurn > 12)
-        {
-            rateOfTurn = 12;
-        }
-        else if (rateOfTurn < -12)
-        {
-            rateOfTurn = -12;
-        }
+            // Directional yaw buffeting: beam seas cause more disturbance than head/following
+            {
+                float windDirDeg = model->getWindDirection();
+                float wavePropRad = (windDirDeg + 180.0f) * irr::core::DEGTORAD;
+                float mu = hdg * irr::core::DEGTORAD - wavePropRad;
+                float beamSeaFactor = std::abs(sin(mu));
+                rateOfTurn += irr::core::DEGTORAD * buffet * weather * beamSeaFactor * ((float)std::rand() / RAND_MAX - 0.5f) * 2.0f * deltaTime;
+            }
 
-        // apply buffeting to rate of turn - TODO: Check the integrals from this to work out if the end magnitude is right
-        rateOfTurn += irr::core::DEGTORAD * buffet * weather * cos(scenarioTime * 2 * PI / buffetPeriod) * ((irr::f32)std::rand() / RAND_MAX) * deltaTime; // Rad/s
-
-        // Apply turn
-        hdg += rateOfTurn * deltaTime * irr::core::RADTODEG; // Deg
+            // Apply turn
+            hdg += rateOfTurn * deltaTime * irr::core::RADTODEG; // Deg
+        } // End of MMG/Legacy dynamics branch
 
         // Limit rudder rate of turn
-        irr::f32 MaxRudderInDtime = rudder + rudderMaxSpeed * deltaTime * (rudderPump1Working * 0.5 + rudderPump2Working * 0.5);
-        irr::f32 MinRudderInDtime = rudder - rudderMaxSpeed * deltaTime * (rudderPump1Working * 0.5 + rudderPump2Working * 0.5);
+        float MaxRudderInDtime = rudder + rudderMaxSpeed * deltaTime * (rudderPump1Working * 0.5 + rudderPump2Working * 0.5);
+        float MinRudderInDtime = rudder - rudderMaxSpeed * deltaTime * (rudderPump1Working * 0.5 + rudderPump2Working * 0.5);
         if (wheel > MaxRudderInDtime)
         {
             rudder = MaxRudderInDtime; // rudder as far to starboard as time will allow
@@ -2293,8 +2460,8 @@ void OwnShip::update(irr::f32 deltaTime, irr::f32 scenarioTime, irr::f32 tideHei
         hdg += 360;
     }
 
-    irr::f32 xChange = 0;
-    irr::f32 zChange = 0;
+    float xChange = 0;
+    float zChange = 0;
 
     // move, according to heading and speed
     if (!positionManuallyUpdated)
@@ -2342,20 +2509,55 @@ void OwnShip::update(irr::f32 deltaTime, irr::f32 scenarioTime, irr::f32 tideHei
 
     // std::cout << "CoG: " << cog << " SoG: " << sog << std::endl;
 
-    // Apply up/down motion from waves, with some filtering
-    irr::f32 timeConstant = 0.5; // Time constant in s; TODO: Make dependent on vessel size
-    irr::f32 factor = deltaTime / (timeConstant + deltaTime);
-    waveHeightFiltered = (1 - factor) * waveHeightFiltered + factor * model->getWaveHeight(xPos, zPos); // TODO: Check implementation of simple filter!
-    yPos = tideHeight + heightCorrection + waveHeightFiltered;
+    // Wave-coupled ship motion: sample wave surface at 5 points and drive oscillators
+    {
+        float hCG = model->getWaveHeight(xPos, zPos);
 
-    // calculate pitch and roll - not linked to water/wave motion
-    if (pitchPeriod > 0)
-    {
-        pitch = weather * pitchAngle * sin(scenarioTime * 2 * PI / pitchPeriod);
+        // Compute bow/stern/port/stbd positions from ship CG + heading
+        float hdgRad = hdg * irr::core::DEGTORAD;
+        float sinH = sin(hdgRad);
+        float cosH = cos(hdgRad);
+        float halfL = seakeepingParams.shipLength * 0.5f;
+        float halfB = seakeepingParams.shipBreadth * 0.5f;
+
+        float bowX = xPos + sinH * halfL;
+        float bowZ = zPos + cosH * halfL;
+        float sternX = xPos - sinH * halfL;
+        float sternZ = zPos - cosH * halfL;
+        float portX = xPos - cosH * halfB;  // port is left (-cos for X)
+        float portZ = zPos + sinH * halfB;
+        float stbdX = xPos + cosH * halfB;
+        float stbdZ = zPos - sinH * halfB;
+
+        float hBow = model->getWaveHeight(bowX, bowZ);
+        float hStern = model->getWaveHeight(sternX, sternZ);
+        float hPort = model->getWaveHeight(portX, portZ);
+        float hStbd = model->getWaveHeight(stbdX, stbdZ);
+
+        bc::WaveMotion::update(waveMotionState, seakeepingParams,
+                               deltaTime, hCG, hBow, hStern, hPort, hStbd);
+
+        // Apply heave
+        yPos = tideHeight + heightCorrection + waveMotionState.heave.pos;
+
+        // Apply pitch/roll (oscillator outputs are in radians, convert to degrees)
+        pitch = waveMotionState.pitch.pos * irr::core::RADTODEG;
+        roll = waveMotionState.roll.pos * irr::core::RADTODEG;
     }
-    if (rollPeriod > 0)
-    {
-        roll = weather * rollAngle * sin(scenarioTime * 2 * PI / rollPeriod);
+
+    // Apply Barras squat (MMG only): bodily sinkage + trim
+    if (useMMG && mmgModel) {
+        float depth = getDepth();
+        float hT_ratio = (depth + draught) / std::max(0.1f, draught);
+        float stwKnots = std::abs(speedThroughWater) / 0.5144f;
+        float squat = (float)mmgModel->computeSquat(stwKnots, hT_ratio);
+        yPos -= squat;
+
+        // Trim: bow-down for full-form (Cb > 0.7), stern-down for fine-form
+        float Cb = (float)mmgModel->getDimensions().blockCoefficient;
+        float L = (float)mmgModel->getDimensions().length;
+        float trimSign = (Cb > 0.7f) ? 1.0f : -1.0f;
+        pitch += trimSign * std::atan2(squat * 0.7f, L * 0.5f) * irr::core::RADTODEG;
     }
 
     // Set position & angles
@@ -2363,31 +2565,31 @@ void OwnShip::update(irr::f32 deltaTime, irr::f32 scenarioTime, irr::f32 tideHei
     // DEE_DEC22 vvvv the original remains however this could be a replacement
     //    ship->setRotation(Angles::irrAnglesFromYawPitchRoll(hdg+angleCorrection,angleCorrectionPitch+pitch,angleCorrectionRoll+roll)); // attempt 1
     //    ship->setRotation(irr::core::vector3df(angleCorrectionPitch+pitch, hdg+angleCorrection,angleCorrectionRoll+roll));
-    ship->setRotation(Angles::irrAnglesFromYawPitchRoll(hdg + angleCorrection, pitch, roll)); // this is the original
+    ship->setRotation(toIrrVec(Angles::irrAnglesFromYawPitchRoll(hdg + angleCorrection, pitch, roll))); // this is the original
     // DEE_DEC22 ^^^^
 }
 
-irr::f32 OwnShip::getCOG() const
+float OwnShip::getCOG() const
 {
     return cog;
 }
 
-irr::f32 OwnShip::getSOG() const
+float OwnShip::getSOG() const
 {
     return sog; // m/s
 }
 
-irr::f32 OwnShip::getSpeedThroughWater() const
+float OwnShip::getSpeedThroughWater() const
 {
     return speedThroughWater; // m/s
 }
 
-irr::f32 OwnShip::getDepth() const
+float OwnShip::getDepth() const
 {
-    return -1 * terrain->getHeight(xPos, zPos) + getPosition().Y;
+    return -1 * terrain->getHeight(xPos, zPos) + getPosition().y;
 }
 
-void OwnShip::collisionDetectAndRespond(irr::f32 &reaction, irr::f32 &lateralReaction, irr::f32 &turnReaction)
+void OwnShip::collisionDetectAndRespond(float &reaction, float &lateralReaction, float &turnReaction)
 {
 
     #ifdef WITH_PROFILING
@@ -2405,8 +2607,8 @@ void OwnShip::collisionDetectAndRespond(irr::f32 &reaction, irr::f32 &lateralRea
     {
         // Simple method, check contact at the depth point only, to be updated to match updates in the main section
 
-        irr::f32 localIntersection = 0;   // Ready to use
-        irr::f32 localDepth = getDepth(); // Simple one point method
+        float localIntersection = 0;   // Ready to use
+        float localDepth = getDepth(); // Simple one point method
         // Contact model (proof of principle!)
         if (localDepth < 0)
         {
@@ -2460,9 +2662,10 @@ void OwnShip::collisionDetectAndRespond(irr::f32 &reaction, irr::f32 &lateralRea
 
         for (int i = 0; i < contactPoints.size(); i++)
         {
-            irr::core::vector3df pointPosition = contactPoints.at(i).position;
-            irr::core::vector3df pointPositionForNormal = pointPosition + contactPoints.at(i).normal;
-            irr::core::vector3df internalPointPosition = contactPoints.at(i).internalPosition;
+            // Convert Vec3 contact point data to Irrlicht types for collision detection
+            irr::core::vector3df pointPosition = toIrrVec(contactPoints.at(i).position);
+            irr::core::vector3df pointPositionForNormal = pointPosition + toIrrVec(contactPoints.at(i).normal);
+            irr::core::vector3df internalPointPosition = toIrrVec(contactPoints.at(i).internalPosition);
 
             // Rotate with own ship
             rot.transformVect(pointPosition);
@@ -2473,22 +2676,22 @@ void OwnShip::collisionDetectAndRespond(irr::f32 &reaction, irr::f32 &lateralRea
             pointPositionForNormal += shipAbsolutePosition;
             internalPointPosition += shipAbsolutePosition;
 
-            irr::f32 localIntersection = 0; // Ready to use
+            float localIntersection = 0; // Ready to use
 
             // Find depth below the contact point
-            irr::f32 localDepth = -1 * terrain->getHeight(pointPosition.X, pointPosition.Z) + pointPosition.Y;
+            float localDepth = -1 * terrain->getHeight(pointPosition.X, pointPosition.Z) + pointPosition.Y;
 
             // Contact model (proof of principle!)
             if (localDepth < 0)
             {
-                localIntersection = -1 * localDepth * std::abs(contactPoints.at(i).normal.Y); // Projected based on normal, so we get an estimate of the intersection normal to the contact point. Ideally this vertical component of the normal would react to the ship's motion, but probably not too important
+                localIntersection = -1 * localDepth * std::abs(contactPoints.at(i).normal.y); // Projected based on normal, so we get an estimate of the intersection normal to the contact point. Ideally this vertical component of the normal would react to the ship's motion, but probably not too important
             }
 
-            irr::f32 remotePointAxialSpeed = 0;
-            irr::f32 remotePointLateralSpeed = 0;
+            float remotePointAxialSpeed = 0;
+            float remotePointLateralSpeed = 0;
 
             // Also check contact with pickable scenery elements here (or other ships?)
-            irr::core::line3d<irr::f32> ray(internalPointPosition, pointPosition);
+            irr::core::line3d<float> ray(internalPointPosition, pointPosition);
             irr::core::vector3df intersection;
             irr::core::triangle3df hitTriangle;
             irr::scene::ISceneNode *selectedSceneNode =
@@ -2515,7 +2718,7 @@ void OwnShip::collisionDetectAndRespond(irr::f32 &reaction, irr::f32 &lateralRea
             if (selectedSceneNode && std::string(selectedSceneNode->getName()).find("LandObject") == 0)
             {
 
-                irr::f32 collisionDistance = pointPosition.getDistanceFrom(intersection);
+                float collisionDistance = pointPosition.getDistanceFrom(intersection);
 
                 // If we're more collided with an object than the terrain, use this
                 if (collisionDistance > localIntersection)
@@ -2535,17 +2738,17 @@ void OwnShip::collisionDetectAndRespond(irr::f32 &reaction, irr::f32 &lateralRea
             {
                 otherShipCollision = true;
 
-                irr::s32 otherShipID = -1;
+                int32_t otherShipID = -1;
                 // Find other ship ID from name (should be OtherShip_#)
                 std::vector<std::string> splitName = Utilities::split(std::string(selectedSceneNode->getName()), '_');
                 if (splitName.size() == 2)
                 {
-                    otherShipID = Utilities::lexical_cast<irr::s32>(splitName.at(1));
+                    otherShipID = Utilities::lexical_cast<int32_t>(splitName.at(1));
                 }
                 // std::cout << "In contact with " << std::string(selectedSceneNode->getName()) << " Length of split: " << splitName.size() << std::endl;
 
                 // Testing: behave as if other ship is solid. In multiplayer, the other ship (if another 'player') should also respond
-                irr::f32 collisionDistance = pointPosition.getDistanceFrom(intersection);
+                float collisionDistance = pointPosition.getDistanceFrom(intersection);
                 // If we're more collided with an object than the terrain, use this
                 if (collisionDistance > localIntersection)
                 {
@@ -2554,9 +2757,9 @@ void OwnShip::collisionDetectAndRespond(irr::f32 &reaction, irr::f32 &lateralRea
                     // Calculate velocity of other ship, in our reference frame
                     if (otherShipID >= 0)
                     {
-                        irr::f32 otherShipHeading = model->getOtherShipHeading(otherShipID);
-                        irr::f32 otherShipSpeed = model->getOtherShipSpeed(otherShipID);
-                        irr::f32 otherShipRelativeHeading = otherShipHeading - hdg;
+                        float otherShipHeading = model->getOtherShipHeading(otherShipID);
+                        float otherShipSpeed = model->getOtherShipSpeed(otherShipID);
+                        float otherShipRelativeHeading = otherShipHeading - hdg;
 
                         // TODO: Initially ignore rate of turn of other ship, but should be included
                         remotePointAxialSpeed = otherShipSpeed * cos(irr::core::DEGTORAD * otherShipRelativeHeading);
@@ -2579,37 +2782,38 @@ void OwnShip::collisionDetectAndRespond(irr::f32 &reaction, irr::f32 &lateralRea
                 // turnReaction += localIntersection*100*maxForce * sign(rateOfTurn,0.1);
 
                 // Find effective area of contact point
-                irr::f32 contactArea = contactPoints.at(i).effectiveArea;
+                float contactArea = contactPoints.at(i).effectiveArea;
 
                 // Define stiffness & damping
-                irr::f32 contactStiffness = contactStiffnessFactor * contactArea;                         // N/m per m2 * area
-                irr::f32 contactDamping = contactDampingFactor * 2.0 * sqrt(contactStiffness * shipMass); // Critical damping, assuming that only one point is in contact, and that mass of own ship is the smaller in two body contact...
+                float contactStiffness = contactStiffnessFactor * contactArea;                         // N/m per m2 * area
+                float contactDamping = contactDampingFactor * 2.0 * sqrt(contactStiffness * shipMass); // Critical damping, assuming that only one point is in contact, and that mass of own ship is the smaller in two body contact...
 
                 // Local speed at this point (TODO, include y component from pitch and roll?)
                 //  Relative to the speed of the point we're in contact with
                 irr::core::vector3df localSpeedVector;
-                localSpeedVector.X = lateralSpd + rateOfTurn * contactPoints.at(i).position.Z - remotePointLateralSpeed;
+                localSpeedVector.X = lateralSpd + rateOfTurn * contactPoints.at(i).position.z - remotePointLateralSpeed;
                 localSpeedVector.Y = 0;
-                localSpeedVector.Z = axialSpd - rateOfTurn * contactPoints.at(i).position.X - remotePointAxialSpeed;
+                localSpeedVector.Z = axialSpd - rateOfTurn * contactPoints.at(i).position.x - remotePointAxialSpeed;
 
                 // Find the speed component, tangential to the contact plane (for friction)
                 irr::core::vector3df tangentialSpeedComponent;
+                irr::core::vector3df normalIrr = toIrrVec(contactPoints.at(i).normal);
                 // Find this here, by subtracting the part normal to the contact plane
                 // part normal to the contact plane is speedVector.normal * normal (normal is already normalised length)
-                tangentialSpeedComponent = localSpeedVector - localSpeedVector.dotProduct(contactPoints.at(i).normal) * contactPoints.at(i).normal;
+                tangentialSpeedComponent = localSpeedVector - localSpeedVector.dotProduct(normalIrr) * normalIrr;
 
-                irr::f32 tangentialSpeedAmplitude = tangentialSpeedComponent.getLength();
+                float tangentialSpeedAmplitude = tangentialSpeedComponent.getLength();
                 irr::core::vector3df normalisedTangentialSpeedComponent = tangentialSpeedComponent; // Normalised, so we just have the direction
                 normalisedTangentialSpeedComponent.normalize();
 
                 // Simple 'stiffness' based response
-                irr::f32 reactionForce = localIntersection * contactStiffness;
+                float reactionForce = localIntersection * contactStiffness;
                 // Damping: Project localSpeedVector onto contact normal. Damping reaction force is proportional to this, and can be applied like the main reaction force
-                irr::f32 normalSpeed = localSpeedVector.dotProduct(contactPoints.at(i).normal);
-                irr::f32 dampingForce = normalSpeed * contactDamping;
+                float normalSpeed = localSpeedVector.dotProduct(normalIrr);
+                float dampingForce = normalSpeed * contactDamping;
 
                 // Find combined stiffness and damping effect. Only allow to be positive, so no 'sticking'
-                irr::f32 combinedStiffnessDamping = reactionForce + dampingForce;
+                float combinedStiffnessDamping = reactionForce + dampingForce;
                 if (combinedStiffnessDamping < 0.0)
                 {
                     combinedStiffnessDamping = 0.0;
@@ -2617,12 +2821,12 @@ void OwnShip::collisionDetectAndRespond(irr::f32 &reaction, irr::f32 &lateralRea
 
                 // Apply this force
                 turnReaction += combinedStiffnessDamping * contactPoints.at(i).torqueEffect;
-                reaction += combinedStiffnessDamping * contactPoints.at(i).normal.Z;
-                lateralReaction += combinedStiffnessDamping * contactPoints.at(i).normal.X;
+                reaction += combinedStiffnessDamping * contactPoints.at(i).normal.z;
+                lateralReaction += combinedStiffnessDamping * contactPoints.at(i).normal.x;
 
                 // Friction response. Use tanh function for better stability at low speed
-                irr::f32 frictionTorqueFactor = (contactPoints.at(i).position.crossProduct(normalisedTangentialSpeedComponent)).Y; // Effect of unit friction force on ship's turning. TODO: Check this, I think it's correct
-                irr::f32 frictionCoeff = frictionCoefficient * tanh(tanhFrictionFactor * tangentialSpeedAmplitude);
+                float frictionTorqueFactor = (toIrrVec(contactPoints.at(i).position).crossProduct(normalisedTangentialSpeedComponent)).Y; // Effect of unit friction force on ship's turning. TODO: Check this, I think it's correct
+                float frictionCoeff = frictionCoefficient * tanh(tanhFrictionFactor * tangentialSpeedAmplitude);
                 turnReaction += combinedStiffnessDamping * frictionCoeff * frictionTorqueFactor;
                 reaction += combinedStiffnessDamping * frictionCoeff * normalisedTangentialSpeedComponent.Z;
                 lateralReaction += combinedStiffnessDamping * frictionCoeff * normalisedTangentialSpeedComponent.X;
@@ -2632,9 +2836,9 @@ void OwnShip::collisionDetectAndRespond(irr::f32 &reaction, irr::f32 &lateralRea
                 if (showDebugData)
                 {
                     // Show points in contact in red
-                    irr::core::position2d<irr::s32> contactPoint2d = device->getSceneManager()->getSceneCollisionManager()->getScreenCoordinatesFrom3DPosition(
+                    irr::core::position2d<int32_t> contactPoint2d = device->getSceneManager()->getSceneCollisionManager()->getScreenCoordinatesFrom3DPosition(
                         pointPosition, device->getSceneManager()->getActiveCamera(), false);
-                    irr::core::position2d<irr::s32> contactPoint2dNormal = device->getSceneManager()->getSceneCollisionManager()->getScreenCoordinatesFrom3DPosition(
+                    irr::core::position2d<int32_t> contactPoint2dNormal = device->getSceneManager()->getSceneCollisionManager()->getScreenCoordinatesFrom3DPosition(
                         pointPositionForNormal, device->getSceneManager()->getActiveCamera(), false);
                     device->getVideoDriver()->draw2DPolygon(contactPoint2d, 10, irr::video::SColor(100, 255, 0, 0));
                     device->getVideoDriver()->draw2DLine(contactPoint2d, contactPoint2dNormal, irr::video::SColor(100, 255, 0, 0));
@@ -2656,9 +2860,9 @@ void OwnShip::collisionDetectAndRespond(irr::f32 &reaction, irr::f32 &lateralRea
                         pointColour = irr::video::SColor(100, 0, 0, 255);
                     }
 
-                    irr::core::position2d<irr::s32> contactPoint2d = device->getSceneManager()->getSceneCollisionManager()->getScreenCoordinatesFrom3DPosition(
+                    irr::core::position2d<int32_t> contactPoint2d = device->getSceneManager()->getSceneCollisionManager()->getScreenCoordinatesFrom3DPosition(
                         pointPosition, device->getSceneManager()->getActiveCamera(), false);
-                    irr::core::position2d<irr::s32> contactPoint2dNormal = device->getSceneManager()->getSceneCollisionManager()->getScreenCoordinatesFrom3DPosition(
+                    irr::core::position2d<int32_t> contactPoint2dNormal = device->getSceneManager()->getSceneCollisionManager()->getScreenCoordinatesFrom3DPosition(
                         pointPositionForNormal, device->getSceneManager()->getActiveCamera(), false);
                     device->getVideoDriver()->draw2DPolygon(contactPoint2d, 10, pointColour);
                     device->getVideoDriver()->draw2DLine(contactPoint2d, contactPoint2dNormal, pointColour);
@@ -2671,7 +2875,7 @@ void OwnShip::collisionDetectAndRespond(irr::f32 &reaction, irr::f32 &lateralRea
         // If showing debug data, draw a big circle series for the model centre
         if (showDebugData)
         {
-            irr::core::position2d<irr::s32> centrePosition2d = device->getSceneManager()->getSceneCollisionManager()->getScreenCoordinatesFrom3DPosition(
+            irr::core::position2d<int32_t> centrePosition2d = device->getSceneManager()->getSceneCollisionManager()->getScreenCoordinatesFrom3DPosition(
                 ship->getAbsolutePosition(), device->getSceneManager()->getActiveCamera(), false);
             device->getVideoDriver()->draw2DPolygon(centrePosition2d, 5, irr::video::SColor(100, 0, 255, 0));
             device->getVideoDriver()->draw2DPolygon(centrePosition2d, 10, irr::video::SColor(100, 0, 255, 0));
@@ -2683,7 +2887,7 @@ void OwnShip::collisionDetectAndRespond(irr::f32 &reaction, irr::f32 &lateralRea
     // std::cout << "Reaction: " << reaction << " Lateral reaction: " << lateralReaction << " Turn reaction: " << turnReaction << std::endl;
 }
 
-irr::f32 OwnShip::getAngleCorrection() const
+float OwnShip::getAngleCorrection() const
 {
     return angleCorrection;
 }
@@ -2713,12 +2917,12 @@ bool OwnShip::hasTurnIndicator() const
     return turnIndicatorPresent;
 }
 
-irr::f32 OwnShip::getMaxSounderDepth() const
+float OwnShip::getMaxSounderDepth() const
 {
     return maxSounderDepth;
 }
 
-std::vector<irr::core::vector3df> OwnShip::getCameraViews() const
+std::vector<Vec3> OwnShip::getCameraViews() const
 {
     return views;
 }
@@ -2728,7 +2932,7 @@ std::vector<bool> OwnShip::getCameraIsHighView() const
     return isHighView;
 }
 
-void OwnShip::setViewVisibility(irr::u32 view)
+void OwnShip::setViewVisibility(uint32_t view)
 {
     if (is360textureShip)
     {
@@ -2758,7 +2962,7 @@ std::string OwnShip::getRadarConfigFile() const
     return radarConfigFile;
 }
 
-irr::f32 OwnShip::sign(irr::f32 inValue) const
+float OwnShip::sign(float inValue) const
 {
     if (inValue > 0)
     {
@@ -2771,7 +2975,7 @@ irr::f32 OwnShip::sign(irr::f32 inValue) const
     return 0.0;
 }
 
-irr::f32 OwnShip::sign(irr::f32 inValue, irr::f32 threshold) const
+float OwnShip::sign(float inValue, float threshold) const
 {
     if (threshold <= 0)
     {

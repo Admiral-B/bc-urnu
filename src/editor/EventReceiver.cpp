@@ -39,7 +39,7 @@
 
         if (event.EventType == irr::EET_GUI_EVENT)
 		{
-			irr::s32 id = event.GUIEvent.Caller->getID();
+			int32_t id = event.GUIEvent.Caller->getID();
 
             
             if (event.GUIEvent.EventType==irr::gui::EGET_EDITBOX_CHANGED) {
@@ -64,7 +64,7 @@
                 }
 
                 if (id == GUIMain::GUI_ID_SETMMSI_BUTTON) {
-                    irr::u32 mmsi = gui->getEditBoxMMSI();
+                    uint32_t mmsi = gui->getEditBoxMMSI();
                     int ship = gui->getSelectedShip();
                     model->setMMSI(ship,mmsi);
                 }
@@ -72,9 +72,9 @@
                 if (id == GUIMain::GUI_ID_CHANGE_BUTTON) {
                     //Get data from gui
 
-                    irr::f32 legCourse = gui->getEditBoxCourse();
-                    irr::f32 legSpeed = gui->getEditBoxSpeed();
-                    irr::f32 legDistance = gui->getEditBoxDistance();
+                    float legCourse = gui->getEditBoxCourse();
+                    float legSpeed = gui->getEditBoxSpeed();
+                    float legDistance = gui->getEditBoxDistance();
 
                     int ship = gui->getSelectedShip();
                     int leg = gui->getSelectedLeg();
@@ -94,9 +94,9 @@
 
                 if (id == GUIMain::GUI_ID_ADDLEG_BUTTON) {
 
-                    irr::f32 legCourse = gui->getEditBoxCourse();
-                    irr::f32 legSpeed = gui->getEditBoxSpeed();
-                    irr::f32 legDistance = gui->getEditBoxDistance();
+                    float legCourse = gui->getEditBoxCourse();
+                    float legSpeed = gui->getEditBoxSpeed();
+                    float legDistance = gui->getEditBoxDistance();
 
                     int ship = gui->getSelectedShip();
                     int leg = gui->getSelectedLeg();
@@ -111,7 +111,7 @@
                     irr::core::vector2df screenCentrePos = gui->getScreenCentrePosition(); //Check screen centre
 
                     //Use model method to apply change in ownship position
-                    model->setShipPosition(ship, screenCentrePos);
+                    model->setShipPosition(ship, bc::graphics::Vec2(screenCentrePos.X, screenCentrePos.Y));
 
                     //If moving own ship, reset offset, so the map doesn't jump
                     if (ship==0) {
@@ -124,7 +124,7 @@
                     irr::core::vector2df screenCentrePos = gui->getScreenCentrePosition();
                     std::string newShipName = gui->getOtherShipTypeSelected();
 
-                    model->addShip(newShipName,screenCentrePos);
+                    model->addShip(newShipName, bc::graphics::Vec2(screenCentrePos.X, screenCentrePos.Y));
                 }
 				if (id == GUIMain::GUI_ID_DELETESHIP_BUTTON) {
 					int ship = gui->getSelectedShip();
@@ -207,7 +207,20 @@
 
             } else {
                 //Shift and Ctrl not down
-
+                // Only handle tile map keys when not focused on a GUI edit box
+                irr::gui::IGUIElement* focused = device->getGUIEnvironment()->getFocus();
+                bool inEditBox = focused && focused->getType() == irr::gui::EGUIET_EDIT_BOX;
+                if (!inEditBox) {
+                    if (event.KeyInput.Key == irr::KEY_KEY_M) {
+                        model->toggleTileMapSource();
+                    }
+                    if (event.KeyInput.Key == irr::KEY_KEY_T) {
+                        model->setTileMapEnabled(!model->isTileMapEnabled());
+                    }
+                    if (event.KeyInput.Key == irr::KEY_KEY_L) {
+                        model->setCoastlineEnabled(!model->isCoastlineEnabled());
+                    }
+                }
             }
 		} //end of key down event
 

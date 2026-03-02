@@ -1,0 +1,995 @@
+Resolution: 1536x864 fullScreen=0 fakeFullScreen=1
+Driver screen size: 1536x864
+before paHostApiInitializers[0].
+after paHostApiInitializers[0].
+before paHostApiInitializers[1].
+WASAPI: device idx: 00
+WASAPI: ---------------
+WASAPI:0| name[Speakers (Realtek(R) Audio)]
+WASAPI:0| form-factor[1]
+WASAPI: getting Windows version with RtlGetVersion()
+WASAPI: Windows version = 5
+WASAPI: IAudioClient version = 3
+WASAPI:0| def.SR[48000] max.CH[2] latency{hi[0.010000] lo[0.003000]}
+WASAPI: device idx: 01
+WASAPI: ---------------
+WASAPI:1| name[Speakers (Steam Streaming Microphone)]
+WASAPI:1| form-factor[1]
+WASAPI:1| def.SR[48000] max.CH[2] latency{hi[0.010000] lo[0.003000]}
+WASAPI: device idx: 02
+WASAPI: ---------------
+WASAPI:2| name[Speakers (Steam Streaming Speakers)]
+WASAPI:2| form-factor[1]
+WASAPI:2| def.SR[48000] max.CH[2] latency{hi[0.010000] lo[0.003000]}
+WASAPI: device idx: 03
+WASAPI: ---------------
+WASAPI:3| name[Microphone Array (Realtek(R) Audio)]
+WASAPI:3| form-factor[4]
+WASAPI:3| def.SR[48000] max.CH[2] latency{hi[0.010000] lo[0.003000]}
+WASAPI: device idx: 04
+WASAPI: ---------------
+WASAPI:4| name[Microphone (Steam Streaming Microphone)]
+WASAPI:4| form-factor[4]
+WASAPI:4| def.SR[44100] max.CH[1] latency{hi[0.010000] lo[0.003000]}
+WASAPI: device list ok - found 5 devices
+WASAPI: initialized ok
+after paHostApiInitializers[1].
+before paHostApiInitializers[2].
+Setup called
+Enum called
+noError = 0
+Device 0 has capture alias
+Enum called
+noError = 0
+Device 1 has capture alias
+Enum called
+noError = 1
+Device 2 has render alias
+Device 2 has capture alias
+Enum called
+noError = 0
+Enum called
+noError = 0
+Enum called
+noError = 0
+Device 5 has capture alias
+Enum called
+noError = 0
+Enum called
+noError = 1
+Device 7 has render alias
+Device 7 has capture alias
+Enum called
+noError = 0
+Enum called
+noError = 0
+Enum called
+noError = 0
+Enum called
+noError = 1
+Device 11 has render alias
+Device 11 has capture alias
+Enum called
+noError = 1
+Device 12 has render alias
+Device 12 has capture alias
+Enum called
+noError = 0
+Enum called
+noError = 0
+Enum called
+noError = 0
+Enum called
+noError = 1
+Device 16 has render alias
+Device 16 has capture alias
+Enum called
+noError = 0
+Enum called
+noError = 1
+Device 18 has render alias
+Device 18 has capture alias
+Enum called
+noError = 0
+Enum called
+noError = 1
+Device 20 has render alias
+Device 20 has capture alias
+Enum called
+noError = 0
+Enum called
+Interfaces found: 10
+Device 0 has capture alias
+Device 0 has realtime alias
+Interface 0, Name: R
+FilterNew: Creating filter 'Realtek HD Audio Stereo input'
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=2, nodes=1
+  Connection: 0 - FromNode=4294967295,FromPin=1 -> ToNode=0,ToPin=1
+  Connection: 1 - FromNode=0,FromPin=0 -> ToNode=4294967295,ToPin=0
+  Node: 0 - {4D837FE0-C555-11D0-8A2B-00A0C9255AC1}
+PinNew: Creating pin 0:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 2
+PinNew: Format PCM 16 bit supported
+PinNew: Default sample rate = 48000 Hz
+Failed PinQueryNotificationSupport
+PinNew: Finding topology pin...
+FindStartConnectionFrom: Startpin 0, Checking 2 connections...
+FindStartConnectionFrom: returning 000001D9A78724B8
+GetConnectedPin: count=1, forward=0, muxPosition=-1
+GetConnectionFrom: Checking 2 connections... (pTo = 000001D9A78724B8)
+GetConnectionFrom: Returning 000001D9A78724A8
+PinNew: Getting physical connection...
+PinNew: Physical connection found!
+PinNew: Creating topology filter '\\?\HDAUDIO#FUNC_01&VEN_10EC&DEV_0257&SUBSYS_17AA3BFA&REV_1000#5&356038ab&0&0001#{6994ad04-93ef-11d0-a3cc-00a0c9223196}\RtStereoMixTopo_C2D2'
+FilterNew: Creating filter ''
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=3, nodes=2
+  Connection: 0 - FromNode=4294967295,FromPin=1 -> ToNode=1,ToPin=1
+  Connection: 1 - FromNode=1,FromPin=0 -> ToNode=0,ToPin=1
+  Connection: 2 - FromNode=0,FromPin=0 -> ToNode=4294967295,ToPin=0
+  Node: 0 - {3A5ACC00-C557-11D0-8A2B-00A0C9255AC1}
+  Node: 1 - {02B223C0-C557-11D0-8A2B-00A0C9255AC1}
+PinNew: Opening topology filter...PinNew: Checking for input endpoint pin id (0)...
+FindStartConnectionFrom: Startpin 0, Checking 3 connections...
+FindStartConnectionFrom: returning 000001D9A60FB8B8
+GetConnectedPin: count=2, forward=0, muxPosition=0
+GetConnectionFrom: Checking 3 connections... (pTo = 000001D9A60FB8B8)
+GetConnectionFrom: Returning 000001D9A60FB8A8
+GetConnectedPin: count=2, forward=0, muxPosition=0
+GetConnectionFrom: Checking 3 connections... (pTo = 000001D9A60FB8A8)
+GetConnectionFrom: Returning 000001D9A60FB898
+PinNew: Found endpoint pin id 1
+PinNew: Input friendly name 'Stereo Mix'
+PinNew: Releasing topology filter...
+Pin created successfully
+PinNew: Creating pin 1:
+PinNew: Not source/sink
+PinNew: Error -9996
+Filter (WaveRT) created with 1 valid pins (total I/Os: 1)
+Device 1 has capture alias
+Device 1 has realtime alias
+Interface 1, Name: M
+FilterNew: Creating filter 'Mic in at front panel (black)'
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=2, nodes=1
+  Connection: 0 - FromNode=4294967295,FromPin=1 -> ToNode=0,ToPin=1
+  Connection: 1 - FromNode=0,FromPin=0 -> ToNode=4294967295,ToPin=0
+  Node: 0 - {4D837FE0-C555-11D0-8A2B-00A0C9255AC1}
+PinNew: Creating pin 0:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 2
+PinNew: Format PCM 16 bit supported
+PinNew: Default sample rate = 44100 Hz
+Failed PinQueryNotificationSupport
+PinNew: Finding topology pin...
+FindStartConnectionFrom: Startpin 0, Checking 2 connections...
+FindStartConnectionFrom: returning 000001D9A78725D8
+GetConnectedPin: count=1, forward=0, muxPosition=-1
+GetConnectionFrom: Checking 2 connections... (pTo = 000001D9A78725D8)
+GetConnectionFrom: Returning 000001D9A78725C8
+PinNew: Getting physical connection...
+PinNew: Physical connection found!
+PinNew: Creating topology filter '\\?\HDAUDIO#FUNC_01&VEN_10EC&DEV_0257&SUBSYS_17AA3BFA&REV_1000#5&356038ab&0&0001#{6994ad04-93ef-11d0-a3cc-00a0c9223196}\FrontMicInBlackTopo_C2D2'
+FilterNew: Creating filter ''
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=3, nodes=2
+  Connection: 0 - FromNode=4294967295,FromPin=1 -> ToNode=1,ToPin=1
+  Connection: 1 - FromNode=1,FromPin=0 -> ToNode=0,ToPin=1
+  Connection: 2 - FromNode=0,FromPin=0 -> ToNode=4294967295,ToPin=0
+  Node: 0 - {3A5ACC00-C557-11D0-8A2B-00A0C9255AC1}
+  Node: 1 - {02B223C0-C557-11D0-8A2B-00A0C9255AC1}
+PinNew: Opening topology filter...PinNew: Checking for input endpoint pin id (0)...
+FindStartConnectionFrom: Startpin 0, Checking 3 connections...
+FindStartConnectionFrom: returning 000001D9A60FB8F8
+GetConnectedPin: count=2, forward=0, muxPosition=0
+GetConnectionFrom: Checking 3 connections... (pTo = 000001D9A60FB8F8)
+GetConnectionFrom: Returning 000001D9A60FB8E8
+GetConnectedPin: count=2, forward=0, muxPosition=0
+GetConnectionFrom: Checking 3 connections... (pTo = 000001D9A60FB8E8)
+GetConnectionFrom: Returning 000001D9A60FB8D8
+PinNew: Found endpoint pin id 1
+PinNew: Input friendly name 'Mic in at front panel (black)'
+PinNew: Releasing topology filter...
+Pin created successfully
+PinNew: Creating pin 1:
+PinNew: Not source/sink
+PinNew: Error -9996
+Filter (WaveRT) created with 1 valid pins (total I/Os: 1)
+Device 2 has render alias
+Device 2 has capture alias
+Device 2 has realtime alias
+Interface 2, Name: R
+FilterNew: Creating filter 'Realtek HD Audio output with HAP'
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=5, nodes=2
+  Connection: 0 - FromNode=1,FromPin=0 -> ToNode=0,ToPin=1
+  Connection: 1 - FromNode=4294967295,FromPin=0 -> ToNode=1,ToPin=1
+  Connection: 2 - FromNode=4294967295,FromPin=2 -> ToNode=1,ToPin=2
+  Connection: 3 - FromNode=1,FromPin=3 -> ToNode=4294967295,ToPin=3
+  Connection: 4 - FromNode=0,FromPin=0 -> ToNode=4294967295,ToPin=1
+  Node: 0 - {507AE360-C554-11D0-8A2B-00A0C9255AC1}
+  Node: 1 - {35CAF6E4-F3B3-4168-BB4B-55E77A461C7E}
+PinNew: Creating pin 0:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 2
+PinNew: Format PCM 16 bit supported
+PinNew: Default sample rate = 48000 Hz
+Failed PinQueryNotificationSupport
+PinNew: Finding topology pin...
+FindStartConnectionTo: Startpin 0, Checking 5 connections...
+FindStartConnectionTo: returning 000001D9ADD37108
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 5 connections... (pFrom = 000001D9ADD37108)GetConnectionTo: Returning 000001D9ADD370F8
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 5 connections... (pFrom = 000001D9ADD370F8)GetConnectionTo: Returning 000001D9ADD37138
+PinNew: Getting physical connection...
+PinNew: Physical connection found!
+PinNew: Creating topology filter '\\?\HDAUDIO#FUNC_01&VEN_10EC&DEV_0257&SUBSYS_17AA3BFA&REV_1000#5&356038ab&0&0001#{6994ad04-93ef-11d0-a3cc-00a0c9223196}\RearLineOutTopoHAP_C2D2'
+FilterNew: Creating filter ''
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=1, nodes=0
+  Connection: 0 - FromNode=4294967295,FromPin=0 -> ToNode=4294967295,ToPin=1
+PinNew: Opening topology filter...PinNew: Checking for output endpoint pin id...
+FindStartConnectionTo: Startpin 0, Checking 1 connections...
+FindStartConnectionTo: returning 000001D9A526E118
+PinNew: Found endpoint pin id 1
+GetNameFromCategory: USB GUID 0301 -> 'Speakers'
+PinNew: Pin name 'Speakers'
+PinNew: Releasing topology filter...
+Pin created successfully
+PinNew: Creating pin 1:
+PinNew: Not source/sink
+PinNew: Error -9996
+PinNew: Creating pin 2:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 2
+PinNew: Format PCM 16 bit supported
+PinNew: Format PCM 24 bit supported
+PinNew: Default sample rate = 44100 Hz
+Failed PinQueryNotificationSupport
+PinNew: Finding topology pin...
+FindStartConnectionTo: Startpin 2, Checking 5 connections...
+FindStartConnectionTo: returning 000001D9ADD37118
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 5 connections... (pFrom = 000001D9ADD37118)GetConnectionTo: Returning 000001D9ADD370F8
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 5 connections... (pFrom = 000001D9ADD370F8)GetConnectionTo: Returning 000001D9ADD37138
+PinNew: Getting physical connection...
+PinNew: Physical connection found!
+PinNew: Opening topology filter...PinNew: Checking for output endpoint pin id...
+FindStartConnectionTo: Startpin 0, Checking 1 connections...
+FindStartConnectionTo: returning 000001D9A526E118
+PinNew: Found endpoint pin id 1
+GetNameFromCategory: USB GUID 0301 -> 'Speakers'
+PinNew: Pin name 'Speakers'
+PinNew: Releasing topology filter...
+Pin created successfully
+PinNew: Creating pin 3:
+PinNew: Checking 2 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 2
+PinNew: Format PCM 16 bit supported
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 2
+PinNew: Format PCM 16 bit supported
+PinNew: Format PCM 24 bit supported
+PinNew: Format PCM 32 bit supported
+PinNew: Default sample rate = 44100 Hz
+Failed PinQueryNotificationSupport
+PinNew: Finding topology pin...
+FindStartConnectionFrom: Startpin 3, Checking 5 connections...
+FindStartConnectionFrom: returning 000001D9ADD37128
+GetConnectedPin: count=2, forward=0, muxPosition=-1
+GetConnectionFrom: Checking 5 connections... (pTo = 000001D9ADD37128)
+GetConnectionFrom: Returning 000001D9ADD37108
+PinNew: Getting physical connection...
+PinNew: No physical connection! Getting the pin name
+Pin created successfully
+Filter (WaveRT) created with 3 valid pins (total I/Os: 3)
+Device 5 has capture alias
+Device 5 has realtime alias
+Interface 5, Name: R
+FilterNew: Creating filter 'Realtek HD Audio Mic input'
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=2, nodes=1
+  Connection: 0 - FromNode=4294967295,FromPin=1 -> ToNode=0,ToPin=1
+  Connection: 1 - FromNode=0,FromPin=0 -> ToNode=4294967295,ToPin=0
+  Node: 0 - {4D837FE0-C555-11D0-8A2B-00A0C9255AC1}
+PinNew: Creating pin 0:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 2
+PinNew: Format PCM 16 bit supported
+PinNew: Default sample rate = 44100 Hz
+Failed PinQueryNotificationSupport
+PinNew: Finding topology pin...
+FindStartConnectionFrom: Startpin 0, Checking 2 connections...
+FindStartConnectionFrom: returning 000001D9B1927C38
+GetConnectedPin: count=1, forward=0, muxPosition=-1
+GetConnectionFrom: Checking 2 connections... (pTo = 000001D9B1927C38)
+GetConnectionFrom: Returning 000001D9B1927C28
+PinNew: Getting physical connection...
+PinNew: Physical connection found!
+PinNew: Creating topology filter '\\?\HDAUDIO#FUNC_01&VEN_10EC&DEV_0257&SUBSYS_17AA3BFA&REV_1000#5&356038ab&0&0001#{6994ad04-93ef-11d0-a3cc-00a0c9223196}\RtMicInTopo_C2D2'
+FilterNew: Creating filter ''
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=3, nodes=2
+  Connection: 0 - FromNode=4294967295,FromPin=1 -> ToNode=1,ToPin=1
+  Connection: 1 - FromNode=1,FromPin=0 -> ToNode=0,ToPin=1
+  Connection: 2 - FromNode=0,FromPin=0 -> ToNode=4294967295,ToPin=0
+  Node: 0 - {3A5ACC00-C557-11D0-8A2B-00A0C9255AC1}
+  Node: 1 - {02B223C0-C557-11D0-8A2B-00A0C9255AC1}
+PinNew: Opening topology filter...PinNew: Checking for input endpoint pin id (0)...
+FindStartConnectionFrom: Startpin 0, Checking 3 connections...
+FindStartConnectionFrom: returning 000001D9A60FBAF8
+GetConnectedPin: count=2, forward=0, muxPosition=0
+GetConnectionFrom: Checking 3 connections... (pTo = 000001D9A60FBAF8)
+GetConnectionFrom: Returning 000001D9A60FBAE8
+GetConnectedPin: count=2, forward=0, muxPosition=0
+GetConnectionFrom: Checking 3 connections... (pTo = 000001D9A60FBAE8)
+GetConnectionFrom: Returning 000001D9A60FBAD8
+PinNew: Found endpoint pin id 1
+PinNew: Input friendly name 'Microphone Array'
+PinNew: Releasing topology filter...
+Pin created successfully
+PinNew: Creating pin 1:
+PinNew: Not source/sink
+PinNew: Error -9996
+Filter (WaveRT) created with 1 valid pins (total I/Os: 1)
+Device 7 has render alias
+Device 7 has capture alias
+Device 7 has realtime alias
+Interface 7, Name: R
+FilterNew: Creating filter 'Realtek HD Audio 2nd output with HAP'
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=5, nodes=2
+  Connection: 0 - FromNode=1,FromPin=0 -> ToNode=0,ToPin=1
+  Connection: 1 - FromNode=4294967295,FromPin=0 -> ToNode=1,ToPin=1
+  Connection: 2 - FromNode=4294967295,FromPin=2 -> ToNode=1,ToPin=2
+  Connection: 3 - FromNode=1,FromPin=3 -> ToNode=4294967295,ToPin=3
+  Connection: 4 - FromNode=0,FromPin=0 -> ToNode=4294967295,ToPin=1
+  Node: 0 - {507AE360-C554-11D0-8A2B-00A0C9255AC1}
+  Node: 1 - {35CAF6E4-F3B3-4168-BB4B-55E77A461C7E}
+PinNew: Creating pin 0:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 2
+PinNew: Format PCM 16 bit supported
+PinNew: Default sample rate = 48000 Hz
+Failed PinQueryNotificationSupport
+PinNew: Finding topology pin...
+FindStartConnectionTo: Startpin 0, Checking 5 connections...
+FindStartConnectionTo: returning 000001D9ADD37468
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 5 connections... (pFrom = 000001D9ADD37468)GetConnectionTo: Returning 000001D9ADD37458
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 5 connections... (pFrom = 000001D9ADD37458)GetConnectionTo: Returning 000001D9ADD37498
+PinNew: Getting physical connection...
+PinNew: Physical connection found!
+PinNew: Creating topology filter '\\?\HDAUDIO#FUNC_01&VEN_10EC&DEV_0257&SUBSYS_17AA3BFA&REV_1000#5&356038ab&0&0001#{6994ad04-93ef-11d0-a3cc-00a0c9223196}\RearLineOutTopoHAP3_C2D2'
+FilterNew: Creating filter ''
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=1, nodes=0
+  Connection: 0 - FromNode=4294967295,FromPin=0 -> ToNode=4294967295,ToPin=1
+PinNew: Opening topology filter...PinNew: Checking for output endpoint pin id...
+FindStartConnectionTo: Startpin 0, Checking 1 connections...
+FindStartConnectionTo: returning 000001D9A526E3F8
+PinNew: Found endpoint pin id 1
+GetNameFromCategory: USB GUID 0302 -> 'Headphones'
+PinNew: Pin name 'Headphones'
+PinNew: Releasing topology filter...
+Pin created successfully
+PinNew: Creating pin 1:
+PinNew: Not source/sink
+PinNew: Error -9996
+PinNew: Creating pin 2:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 2
+PinNew: Format PCM 16 bit supported
+PinNew: Format PCM 24 bit supported
+PinNew: Default sample rate = 44100 Hz
+Failed PinQueryNotificationSupport
+PinNew: Finding topology pin...
+FindStartConnectionTo: Startpin 2, Checking 5 connections...
+FindStartConnectionTo: returning 000001D9ADD37478
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 5 connections... (pFrom = 000001D9ADD37478)GetConnectionTo: Returning 000001D9ADD37458
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 5 connections... (pFrom = 000001D9ADD37458)GetConnectionTo: Returning 000001D9ADD37498
+PinNew: Getting physical connection...
+PinNew: Physical connection found!
+PinNew: Opening topology filter...PinNew: Checking for output endpoint pin id...
+FindStartConnectionTo: Startpin 0, Checking 1 connections...
+FindStartConnectionTo: returning 000001D9A526E3F8
+PinNew: Found endpoint pin id 1
+GetNameFromCategory: USB GUID 0302 -> 'Headphones'
+PinNew: Pin name 'Headphones'
+PinNew: Releasing topology filter...
+Pin created successfully
+PinNew: Creating pin 3:
+PinNew: Checking 2 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 2
+PinNew: Format PCM 16 bit supported
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 2
+PinNew: Format PCM 16 bit supported
+PinNew: Format PCM 24 bit supported
+PinNew: Format PCM 32 bit supported
+PinNew: Default sample rate = 44100 Hz
+Failed PinQueryNotificationSupport
+PinNew: Finding topology pin...
+FindStartConnectionFrom: Startpin 3, Checking 5 connections...
+FindStartConnectionFrom: returning 000001D9ADD37488
+GetConnectedPin: count=2, forward=0, muxPosition=-1
+GetConnectionFrom: Checking 5 connections... (pTo = 000001D9ADD37488)
+GetConnectionFrom: Returning 000001D9ADD37468
+PinNew: Getting physical connection...
+PinNew: No physical connection! Getting the pin name
+Pin created successfully
+Filter (WaveRT) created with 3 valid pins (total I/Os: 3)
+Device 11 has render alias
+Device 11 has capture alias
+Device 11 has realtime alias
+Interface 11, Name: N
+FilterNew: Creating filter 'Nahimic Easy Surround'
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=3, nodes=2
+  Connection: 0 - FromNode=4294967295,FromPin=0 -> ToNode=1,ToPin=1
+  Connection: 1 - FromNode=1,FromPin=0 -> ToNode=0,ToPin=1
+  Connection: 2 - FromNode=0,FromPin=0 -> ToNode=4294967295,ToPin=1
+  Node: 0 - {507AE360-C554-11D0-8A2B-00A0C9255AC1}
+  Node: 1 - {9DB7B9E0-C555-11D0-8A2B-00A0C9255AC1}
+PinNew: Creating pin 0:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 8
+PinNew: Format PCM 16 bit supported
+PinNew: Default sample rate = 48000 Hz
+Failed PinQueryNotificationSupport
+PinNew: Finding topology pin...
+FindStartConnectionTo: Startpin 0, Checking 3 connections...
+FindStartConnectionTo: returning 000001D9A60FBB18
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 3 connections... (pFrom = 000001D9A60FBB18)GetConnectionTo: Returning 000001D9A60FBB28
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 3 connections... (pFrom = 000001D9A60FBB28)GetConnectionTo: Returning 000001D9A60FBB38
+PinNew: Getting physical connection...
+PinNew: Physical connection found!
+PinNew: Creating topology filter '\\?\SWD#DRIVERENUM#{741a2100-1023-11e9-b56e-0800200c9a66}#Nahimic_BTLink&6&1445909f&0#{6994ad04-93ef-11d0-a3cc-00a0c9223196}\TopologySpeaker'
+FilterNew: Creating filter ''
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=1, nodes=0
+  Connection: 0 - FromNode=4294967295,FromPin=0 -> ToNode=4294967295,ToPin=1
+PinNew: Opening topology filter...PinNew: Checking for output endpoint pin id...
+FindStartConnectionTo: Startpin 0, Checking 1 connections...
+FindStartConnectionTo: returning 000001D9A526E4B8
+PinNew: Found endpoint pin id 1
+GetNameFromCategory: USB GUID 0301 -> 'Speakers'
+PinNew: Pin name 'Speakers'
+PinNew: Releasing topology filter...
+Pin created successfully
+PinNew: Creating pin 1:
+PinNew: Not source/sink
+PinNew: Error -9996
+Filter (WaveRT) created with 1 valid pins (total I/Os: 1)
+Device 12 has render alias
+Device 12 has capture alias
+Interface 12, Name: S
+FilterNew: Creating filter 'Steam Streaming Microphone Wave'
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=4, nodes=2
+  Connection: 0 - FromNode=4294967295,FromPin=1 -> ToNode=0,ToPin=1
+  Connection: 1 - FromNode=0,FromPin=0 -> ToNode=4294967295,ToPin=0
+  Connection: 2 - FromNode=4294967295,FromPin=2 -> ToNode=1,ToPin=1
+  Connection: 3 - FromNode=1,FromPin=0 -> ToNode=4294967295,ToPin=3
+  Node: 0 - {4D837FE0-C555-11D0-8A2B-00A0C9255AC1}
+  Node: 1 - {507AE360-C554-11D0-8A2B-00A0C9255AC1}
+PinNew: Creating pin 0:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 8
+PinNew: Format PCM 8 bit supported
+PinNew: Format PCM 16 bit supported
+PinNew: Format PCM 24 bit supported
+PinNew: Format PCM 32 bit supported
+PinNew: Default sample rate = 44100 Hz
+PinNew: Finding topology pin...
+FindStartConnectionFrom: Startpin 0, Checking 4 connections...
+FindStartConnectionFrom: returning 000001D9A8D14018
+GetConnectedPin: count=2, forward=0, muxPosition=-1
+GetConnectionFrom: Checking 4 connections... (pTo = 000001D9A8D14018)
+GetConnectionFrom: Returning 000001D9A8D14008
+PinNew: Getting physical connection...
+PinNew: Physical connection found!
+PinNew: Creating topology filter '\\?\ROOT#SteamStreamingMicrophone#0000#{6994ad04-93ef-11d0-a3cc-00a0c9223196}\Topology'
+FilterNew: Creating filter ''
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=8, nodes=6
+  Connection: 0 - FromNode=4294967295,FromPin=0 -> ToNode=0,ToPin=1
+  Connection: 1 - FromNode=0,FromPin=0 -> ToNode=1,ToPin=1
+  Connection: 2 - FromNode=1,FromPin=0 -> ToNode=3,ToPin=1
+  Connection: 3 - FromNode=4294967295,FromPin=1 -> ToNode=2,ToPin=1
+  Connection: 4 - FromNode=2,FromPin=0 -> ToNode=5,ToPin=4
+  Connection: 5 - FromNode=3,FromPin=0 -> ToNode=4,ToPin=1
+  Connection: 6 - FromNode=4,FromPin=0 -> ToNode=4294967295,ToPin=2
+  Connection: 7 - FromNode=5,FromPin=0 -> ToNode=4294967295,ToPin=3
+  Node: 0 - {3A5ACC00-C557-11D0-8A2B-00A0C9255AC1}
+  Node: 1 - {02B223C0-C557-11D0-8A2B-00A0C9255AC1}
+  Node: 2 - {3A5ACC00-C557-11D0-8A2B-00A0C9255AC1}
+  Node: 3 - {DA441A60-C556-11D0-8A2B-00A0C9255AC1}
+  Node: 4 - {3A5ACC00-C557-11D0-8A2B-00A0C9255AC1}
+  Node: 5 - {2CEAF780-C556-11D0-8A2B-00A0C9255AC1}
+PinNew: Opening topology filter...PinNew: Checking for input endpoint pin id (0)...
+FindStartConnectionFrom: Startpin 3, Checking 8 connections...
+FindStartConnectionFrom: returning 000001D9BDF13EB8
+GetConnectedPin: count=6, forward=0, muxPosition=0
+GetNumberOfConnectionsTo: Checking 8 connections...
+GetNumberOfConnectionsTo: Returning 1
+GetConnectionFrom: Checking 8 connections... (pTo = 000001D9BDF13EB8)
+GetConnectionFrom: Returning 000001D9BDF13E88
+GetConnectionFrom: Checking 8 connections... (pTo = 000001D9BDF13E88)
+GetConnectionFrom: Returning 000001D9BDF13E78
+PinNew: Found endpoint pin id 1
+GetNameFromCategory: USB GUID 0201 -> 'Microphone'
+PinNew: Checking for input endpoint pin id (1)...
+FindStartConnectionFrom: Startpin 3, Checking 8 connections...
+FindStartConnectionFrom: returning 000001D9BDF13EB8
+GetConnectedPin: count=6, forward=0, muxPosition=1
+GetNumberOfConnectionsTo: Checking 8 connections...
+GetNumberOfConnectionsTo: Returning 1
+GetConnectionFrom: Checking 8 connections... (pTo = 000001D9BDF13EB8)
+GetConnectionFrom: Returning 0000000000000000
+PinNew: Done with inputs.
+PinNew: Setting up 1 inputs
+PinNew: Setting up input 0...
+FindStartConnectionFrom: Startpin 3, Checking 8 connections...
+FindStartConnectionFrom: returning 000001D9BDF13EB8
+GetConnectedPin: count=6, forward=0, muxPosition=0
+GetNumberOfConnectionsTo: Checking 8 connections...
+GetNumberOfConnectionsTo: Returning 1
+GetConnectionFrom: Checking 8 connections... (pTo = 000001D9BDF13EB8)
+GetConnectionFrom: Returning 000001D9BDF13E88
+GetConnectionFrom: Checking 8 connections... (pTo = 000001D9BDF13E88)
+GetConnectionFrom: Returning 000001D9BDF13E78
+PinNew: Input (0) friendly name 'Microphone'
+PinNew: Releasing topology filter...
+Pin created successfully
+PinNew: Creating pin 1:
+PinNew: Not source/sink
+PinNew: Error -9996
+PinNew: Creating pin 2:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 8
+PinNew: Format PCM 8 bit supported
+PinNew: Format PCM 16 bit supported
+PinNew: Format PCM 24 bit supported
+PinNew: Format PCM 32 bit supported
+PinNew: Default sample rate = 44100 Hz
+PinNew: Finding topology pin...
+FindStartConnectionTo: Startpin 2, Checking 4 connections...
+FindStartConnectionTo: returning 000001D9A8D14028
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 4 connections... (pFrom = 000001D9A8D14028)GetConnectionTo: Returning 000001D9A8D14038
+PinNew: Getting physical connection...
+PinNew: Physical connection found!
+PinNew: Opening topology filter...PinNew: Checking for output endpoint pin id...
+FindStartConnectionTo: Startpin 0, Checking 8 connections...
+FindStartConnectionTo: returning 000001D9BDF13E48
+GetConnectedPin: count=6, forward=1, muxPosition=-1
+GetConnectionTo: Checking 8 connections... (pFrom = 000001D9BDF13E48)GetConnectionTo: Returning 000001D9BDF13E58
+GetConnectedPin: count=6, forward=1, muxPosition=-1
+GetConnectionTo: Checking 8 connections... (pFrom = 000001D9BDF13E58)GetConnectionTo: Returning 000001D9BDF13E68
+GetConnectedPin: count=6, forward=1, muxPosition=-1
+GetConnectionTo: Checking 8 connections... (pFrom = 000001D9BDF13E68)GetConnectionTo: Returning 000001D9BDF13E98
+GetConnectedPin: count=6, forward=1, muxPosition=-1
+GetConnectionTo: Checking 8 connections... (pFrom = 000001D9BDF13E98)GetConnectionTo: Returning 000001D9BDF13EA8
+PinNew: Found endpoint pin id 2
+GetNameFromCategory: USB GUID 0301 -> 'Speakers'
+PinNew: Pin name 'Speakers'
+PinNew: Releasing topology filter...
+Pin created successfully
+PinNew: Creating pin 3:
+PinNew: Not source/sink
+PinNew: Error -9996
+Filter (WaveCyclic) created with 2 valid pins (total I/Os: 2)
+Device 16 has render alias
+Device 16 has capture alias
+Device 16 has realtime alias
+Interface 16, Name: N
+FilterNew: Creating filter 'Nahimic mirroring Wave Speaker'
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=3, nodes=2
+  Connection: 0 - FromNode=4294967295,FromPin=0 -> ToNode=1,ToPin=1
+  Connection: 1 - FromNode=1,FromPin=0 -> ToNode=0,ToPin=1
+  Connection: 2 - FromNode=0,FromPin=0 -> ToNode=4294967295,ToPin=1
+  Node: 0 - {507AE360-C554-11D0-8A2B-00A0C9255AC1}
+  Node: 1 - {9DB7B9E0-C555-11D0-8A2B-00A0C9255AC1}
+PinNew: Creating pin 0:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 2
+PinNew: Format PCM 16 bit supported
+PinNew: Default sample rate = 44100 Hz
+Failed PinQueryNotificationSupport
+PinNew: Finding topology pin...
+FindStartConnectionTo: Startpin 0, Checking 3 connections...
+FindStartConnectionTo: returning 000001D9A60FB858
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 3 connections... (pFrom = 000001D9A60FB858)GetConnectionTo: Returning 000001D9A60FB868
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 3 connections... (pFrom = 000001D9A60FB868)GetConnectionTo: Returning 000001D9A60FB878
+PinNew: Getting physical connection...
+PinNew: Physical connection found!
+PinNew: Creating topology filter '\\?\SWD#DRIVERENUM#{741a2100-1023-11e9-b56e-0800200c9a66}#Nahimic_Mirroring&6&1445909f&0#{6994ad04-93ef-11d0-a3cc-00a0c9223196}\TopologySpeaker'
+FilterNew: Creating filter ''
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=1, nodes=0
+  Connection: 0 - FromNode=4294967295,FromPin=0 -> ToNode=4294967295,ToPin=1
+PinNew: Opening topology filter...PinNew: Checking for output endpoint pin id...
+FindStartConnectionTo: Startpin 0, Checking 1 connections...
+FindStartConnectionTo: returning 000001D9A526E138
+PinNew: Found endpoint pin id 1
+GetNameFromCategory: USB GUID 0301 -> 'Speakers'
+PinNew: Pin name 'Speakers'
+PinNew: Releasing topology filter...
+Pin created successfully
+PinNew: Creating pin 1:
+PinNew: Not source/sink
+PinNew: Error -9996
+Filter (WaveRT) created with 1 valid pins (total I/Os: 1)
+Device 18 has render alias
+Device 18 has capture alias
+Device 18 has realtime alias
+Interface 18, Name: N
+FilterNew: Creating filter 'Nahimic Wave Speaker'
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=3, nodes=2
+  Connection: 0 - FromNode=4294967295,FromPin=0 -> ToNode=1,ToPin=1
+  Connection: 1 - FromNode=1,FromPin=0 -> ToNode=0,ToPin=1
+  Connection: 2 - FromNode=0,FromPin=0 -> ToNode=4294967295,ToPin=1
+  Node: 0 - {507AE360-C554-11D0-8A2B-00A0C9255AC1}
+  Node: 1 - {9DB7B9E0-C555-11D0-8A2B-00A0C9255AC1}
+PinNew: Creating pin 0:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 8
+PinNew: Format PCM 16 bit supported
+PinNew: Default sample rate = 48000 Hz
+Failed PinQueryNotificationSupport
+PinNew: Finding topology pin...
+FindStartConnectionTo: Startpin 0, Checking 3 connections...
+FindStartConnectionTo: returning 000001D9A60FB798
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 3 connections... (pFrom = 000001D9A60FB798)GetConnectionTo: Returning 000001D9A60FB7A8
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 3 connections... (pFrom = 000001D9A60FB7A8)GetConnectionTo: Returning 000001D9A60FB7B8
+PinNew: Getting physical connection...
+PinNew: Physical connection found!
+PinNew: Creating topology filter '\\?\SWD#DRIVERENUM#{741a2100-1023-11e9-b56e-0800200c9a66}#Nahimic_XVAD&6&1445909f&0#{6994ad04-93ef-11d0-a3cc-00a0c9223196}\TopologySpeaker'
+FilterNew: Creating filter ''
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=1, nodes=0
+  Connection: 0 - FromNode=4294967295,FromPin=0 -> ToNode=4294967295,ToPin=1
+PinNew: Opening topology filter...PinNew: Checking for output endpoint pin id...
+FindStartConnectionTo: Startpin 0, Checking 1 connections...
+FindStartConnectionTo: returning 000001D9A526E398
+PinNew: Found endpoint pin id 1
+GetNameFromCategory: USB GUID 0301 -> 'Speakers'
+PinNew: Pin name 'Speakers'
+PinNew: Releasing topology filter...
+Pin created successfully
+PinNew: Creating pin 1:
+PinNew: Not source/sink
+PinNew: Error -9996
+Filter (WaveRT) created with 1 valid pins (total I/Os: 1)
+Device 20 has render alias
+Device 20 has capture alias
+Interface 20, Name: S
+FilterNew: Creating filter 'Steam Streaming Speakers Wave'
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=4, nodes=2
+  Connection: 0 - FromNode=4294967295,FromPin=1 -> ToNode=0,ToPin=1
+  Connection: 1 - FromNode=0,FromPin=0 -> ToNode=4294967295,ToPin=0
+  Connection: 2 - FromNode=4294967295,FromPin=2 -> ToNode=1,ToPin=1
+  Connection: 3 - FromNode=1,FromPin=0 -> ToNode=4294967295,ToPin=3
+  Node: 0 - {4D837FE0-C555-11D0-8A2B-00A0C9255AC1}
+  Node: 1 - {507AE360-C554-11D0-8A2B-00A0C9255AC1}
+PinNew: Creating pin 0:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 8
+PinNew: Format PCM 8 bit supported
+PinNew: Format PCM 16 bit supported
+PinNew: Format PCM 24 bit supported
+PinNew: Format PCM 32 bit supported
+PinNew: Default sample rate = 44100 Hz
+PinNew: Finding topology pin...
+FindStartConnectionFrom: Startpin 0, Checking 4 connections...
+FindStartConnectionFrom: returning 000001D9A8D14748
+GetConnectedPin: count=2, forward=0, muxPosition=-1
+GetConnectionFrom: Checking 4 connections... (pTo = 000001D9A8D14748)
+GetConnectionFrom: Returning 000001D9A8D14738
+PinNew: Getting physical connection...
+PinNew: No physical connection! Getting the pin name
+PinNew: Setting pin friendly name to 'Input'
+Pin created successfully
+PinNew: Creating pin 1:
+PinNew: Not source/sink
+PinNew: Error -9996
+PinNew: Creating pin 2:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 8
+PinNew: Format PCM 8 bit supported
+PinNew: Format PCM 16 bit supported
+PinNew: Format PCM 24 bit supported
+PinNew: Format PCM 32 bit supported
+PinNew: Default sample rate = 44100 Hz
+PinNew: Finding topology pin...
+FindStartConnectionTo: Startpin 2, Checking 4 connections...
+FindStartConnectionTo: returning 000001D9A8D14758
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 4 connections... (pFrom = 000001D9A8D14758)GetConnectionTo: Returning 000001D9A8D14768
+PinNew: Getting physical connection...
+PinNew: Physical connection found!
+PinNew: Creating topology filter '\\?\ROOT#SteamStreamingSpeakers#0000#{6994ad04-93ef-11d0-a3cc-00a0c9223196}\Topology'
+FilterNew: Creating filter ''
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=8, nodes=6
+  Connection: 0 - FromNode=4294967295,FromPin=0 -> ToNode=0,ToPin=1
+  Connection: 1 - FromNode=0,FromPin=0 -> ToNode=1,ToPin=1
+  Connection: 2 - FromNode=1,FromPin=0 -> ToNode=3,ToPin=1
+  Connection: 3 - FromNode=4294967295,FromPin=1 -> ToNode=2,ToPin=1
+  Connection: 4 - FromNode=2,FromPin=0 -> ToNode=5,ToPin=4
+  Connection: 5 - FromNode=3,FromPin=0 -> ToNode=4,ToPin=1
+  Connection: 6 - FromNode=4,FromPin=0 -> ToNode=4294967295,ToPin=2
+  Connection: 7 - FromNode=5,FromPin=0 -> ToNode=4294967295,ToPin=3
+  Node: 0 - {3A5ACC00-C557-11D0-8A2B-00A0C9255AC1}
+  Node: 1 - {02B223C0-C557-11D0-8A2B-00A0C9255AC1}
+  Node: 2 - {3A5ACC00-C557-11D0-8A2B-00A0C9255AC1}
+  Node: 3 - {DA441A60-C556-11D0-8A2B-00A0C9255AC1}
+  Node: 4 - {3A5ACC00-C557-11D0-8A2B-00A0C9255AC1}
+  Node: 5 - {2CEAF780-C556-11D0-8A2B-00A0C9255AC1}
+PinNew: Opening topology filter...PinNew: Checking for output endpoint pin id...
+FindStartConnectionTo: Startpin 0, Checking 8 connections...
+FindStartConnectionTo: returning 000001D9BDF150D8
+GetConnectedPin: count=6, forward=1, muxPosition=-1
+GetConnectionTo: Checking 8 connections... (pFrom = 000001D9BDF150D8)GetConnectionTo: Returning 000001D9BDF150E8
+GetConnectedPin: count=6, forward=1, muxPosition=-1
+GetConnectionTo: Checking 8 connections... (pFrom = 000001D9BDF150E8)GetConnectionTo: Returning 000001D9BDF150F8
+GetConnectedPin: count=6, forward=1, muxPosition=-1
+GetConnectionTo: Checking 8 connections... (pFrom = 000001D9BDF150F8)GetConnectionTo: Returning 000001D9BDF15128
+GetConnectedPin: count=6, forward=1, muxPosition=-1
+GetConnectionTo: Checking 8 connections... (pFrom = 000001D9BDF15128)GetConnectionTo: Returning 000001D9BDF15138
+PinNew: Found endpoint pin id 2
+GetNameFromCategory: USB GUID 0301 -> 'Speakers'
+PinNew: Pin name 'Speakers'
+PinNew: Releasing topology filter...
+Pin created successfully
+PinNew: Creating pin 3:
+PinNew: Not source/sink
+PinNew: Error -9996
+Filter (WaveCyclic) created with 2 valid pins (total I/Os: 2)
+after paHostApiInitializers[2].
+WickedModelImporter: Unsupported format '.x' for file: Models/Ownship/Alkmini/boat.x
+  MB[0]: 3564 verts, 11175 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (1.01014,0.698567) (1.03295,0.698468) (1.03755,0.624716) (-0.0494722,0.622084) (1.04594,0.628825) 
+  MB[1]: 535 verts, 1047 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.242086,0.920362) (0.242065,0.824349) (0.496355,0.917772) (0.496335,0.82176) (0.416929,0.922742) 
+  MB[2]: 25783 verts, 43305 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.000499517,0.9995) (0.999501,0.9995) (0.9995,0.9995) (0.000499517,0.000499606) (0.999501,0.000499606) 
+  MB[3]: 394 verts, 726 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.262953,0.999501) (0.735571,0.999501) (0.966062,0.999501) (0.127679,0.892211) (0.0278366,0.892211) 
+  MB[4]: 732 verts, 930 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.000499547,0.999501) (0.9995,0.999501) (0.9995,0.999501) (0.9995,0.999501) (0.000499547,0.000499547) 
+  MB[5]: 4074 verts, 8766 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.52871,0.106931) (0.330911,0.0988787) (0.346569,0.15093) (0.530311,0.0321802) (0.181361,0.233426) 
+  MB[6]: 264 verts, 1512 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.280892,0.0603535) (0.106646,0.196291) (0.106646,0.196291) (0.280892,0.0603535) (0.000629961,0.351434) 
+  MB[7]: 718 verts, 1296 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.00053069,0.970722) (0.000826418,0.996759) (0.000857562,0.999501) (0.000857562,0.9995) (0.9995,0.96798) 
+  MB[8]: 13 verts, 18 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.011834,0.682976) (0.971854,0.682976) (0.011834,0.183355) (0.971854,0.183355) (0.133684,0.196256) 
+  MB[9]: 61 verts, 150 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.0257337,0.658696) (0.703426,0.658696) (0.0257337,0.258776) (0.703426,0.258776) (0.236869,0.321321) 
+  MB[10]: 30 verts, 30 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.545977,0.361496) (0.143946,0.361496) (0.143946,-0.00929213) (0.545977,0.361496) (0.143946,-0.00929213) 
+  MB[11]: 12 verts, 24 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (-0.00608927,0.674443) (0.500242,0.673414) (0.500203,0.326127) (-0.00568289,0.326696) (1.00613,0.672845) 
+  MB[12]: 2121 verts, 3282 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.331087,0.0255445) (0.668913,0.0255445) (0.339603,0.0255444) (0.367482,0.0255446) (0.398111,0.0255445) 
+  MB[13]: 87 verts, 210 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.985986,1.06768) (0.0140142,1.06768) (0.0285633,1.06768) (0.0699989,1.06768) (0.135003,1.06768) 
+  MB[14]: 84 verts, 171 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (-1.61229,-0.651472) (2.72559,-0.655495) (-1.61229,-0.651472) (2.72559,-0.655495) (2.72759,-1.89654) 
+  MB[15]: 10 verts, 24 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (2.36322,-2.30738) (0.0787388,-2.29958) (0.0827597,-1.16969) (-0.472194,-0.0986915) (-1.37222,-0.098448) 
+  MB[16]: 42 verts, 54 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.999217,0.9995) (0.020649,0.997959) (0.227956,0.997959) (0.0372511,0.99897) (0.9995,0.0020417) 
+  MB[17]: 146 verts, 762 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.644175,0.213326) (0.786647,0.282218) (0.644175,0.213326) (0.786674,0.281744) (0.359178,0.213326) 
+  MB[18]: 8 verts, 12 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (-0.0730751,0.267982) (0.989393,0.265358) (-0.0734735,0.106979) (0.988994,0.104355) (1.11436,0.54996) 
+  MB[19]: 2076 verts, 3540 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.0611162,0.000499845) (0.938883,0.000499606) (0.9995,0.0649856) (0.9995,0.935014) (0.938884,0.9995) 
+  MB[20]: 4 verts, 6 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.00667527,0.999499) (0.993325,0.9995) (0.993325,0.0244994) (0.00667533,0.0244985) 
+  MB[21]: 88 verts, 96 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.000499517,0.999501) (0.9995,0.999501) (0.9995,0.999501) (0.9995,0.999501) (0.000499517,0.000499547) 
+  MB[22]: 1008 verts, 3120 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.0331517,0.000507474) (0.0290701,0.000507474) (0.0249887,0.000507474) (0.0168256,0.000507474) (0.00866255,0.000507474) 
+  MB[23]: 19 verts, 30 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.0217544,0.9995) (0.531883,0.9995) (0.331294,0.9995) (0.642242,0.9995) (0.999501,0.9995) 
+  MB[24]: 19 verts, 30 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.0217544,0.9995) (0.531883,0.9995) (0.331294,0.9995) (0.642242,0.9995) (0.999501,0.9995) 
+  MB[25]: 9 verts, 12 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.999501,0.999501) (0.000499547,0.9995) (0.000499547,0.000499487) (0.871948,0.000499845) (0.000499547,0.999501) 
+  MB[26]: 9 verts, 12 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.000499517,0.9995) (0.9995,0.000499606) (0.000500292,0.000499547) (0.128052,0.000499606) (0.9995,0.9995) 
+  MB[27]: 8 verts, 12 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (-0.00494981,1.01478) (1.00495,1.01478) (1.00495,-0.0147784) (-0.00494975,-0.0147792) (-0.00494981,1.01478) 
+  MB[28]: 294 verts, 1002 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.97626,0.779839) (0.984206,0.779702) (0.984206,0.779556) (1.08446,0.412616) (1.07399,0.451416) 
+  MB[29]: 330 verts, 1956 idx, type=STANDARD, idx16, tex=no
+    UV samples: (1.27655e-37,1) (-0.984204,1.17583) (0.995625,0.908862) (-0.999787,1) (-0.984204,1.17583) 
+  MB[30]: 8 verts, 12 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.0072954,1.02873) (0.764661,1.02873) (0.764661,0.0237186) (0.00729552,0.0237181) (0.0072954,1.02873) 
+  MB[31]: 8 verts, 30 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.9995,0.130984) (0.000499815,0.130984) (0.000499547,0.999501) (0.9995,0.999501) (0.999501,0.000499845) 
+  MB[32]: 4 verts, 6 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.0153576,-0.00747514) (0.984978,-0.00747514) (0.0153576,0.853992) (0.984978,0.853992) 
+  MB[33]: 8 verts, 12 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (1.00475,0.000499785) (-0.00474757,0.000499487) (-0.00474781,0.9995) (1.00475,0.999501) (1.00475,0.000499785) 
+  MB[34]: 4 verts, 6 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.9995,0.000500023) (0.000499636,0.000499606) (0.000499487,0.9995) (0.9995,0.9995) 
+  MB[35]: 4 verts, 6 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (1.00475,0.000499785) (-0.00474757,0.000499487) (-0.00474781,0.9995) (1.00475,0.999501) 
+  MB[36]: 4 verts, 6 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.9995,0.0176425) (0.000499487,0.0176426) (0.000499725,0.607209) (0.9995,0.607209) 
+  MB[37]: 1248 verts, 3672 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (-0.316253,-0.300474) (1.31625,-0.300473) (-0.316254,1.30047) (1.31625,1.30047) (-0.316253,-0.331212) 
+  MB[38]: 4452 verts, 13014 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.918769,0.977466) (0.919026,0.970275) (0.919283,0.963085) (0.974191,0.080061) (0.966823,0.0794051) 
+  MB[39]: 47 verts, 84 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.0069111,0.00801039) (0.993089,0.00801015) (0.993089,0.99199) (0.00691131,0.99199) (0.000499547,0.000499725) 
+WickedModelImporter: Unsupported format '.x' for file: Models/Othership/Cargoship1/boat.x
+  MB[0]: 4360 verts, 8106 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.749996,0.499992) (0.500008,0.499992) (0.749996,0.250004) (0.500008,0.499992) (0.500008,0.499992) 
+  MB[1]: 7442 verts, 14226 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.0684825,0.500008) (0.000503548,0.00050354) (0,1) (0,1) (0,1) 
+  MB[2]: 10570 verts, 12078 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0,1) (0.966278,1) (0.0343786,1) (0,0) (0.0641794,1) 
+  MB[3]: 12920 verts, 17394 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.0171817,0.974685) (0.0171817,0.949386) (0.0343786,0.949386) (0,0.892256) (0.0343786,0.974685) 
+  MB[4]: 480 verts, 549 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.749996,1) (0.749996,0) (0.500008,1) (0,1) (0.534371,1) 
+  MB[5]: 1688 verts, 1746 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0,0.499992) (0.500008,1) (0.500008,1) (0,1) (1,0) 
+  MB[6]: 96 verts, 216 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0,1) (0,0) (1,1) (1,0) (0.5,1) 
+  MB[7]: 160 verts, 900 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0,1) (0,0) (0.25,1) (0.25,0) (0.5,1) 
+  MB[0]: 26 verts, 132 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0,0) (0,0) (0,0) (0,0) (0,0) 
+  MB[0]: 26 verts, 132 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0,0.75) (0.99754,0.10716) (0.08333,0.75) (0.07945,0.1058) (0.16667,0.75) 
+  MB[0]: 57 verts, 90 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0,0) (0,0) (0,0) (0,0) (0,0) 
+  MB[1]: 87 verts, 120 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0,0) (0,0) (0,0) (0,0) (0,0) 
+  MB[2]: 91 verts, 189 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0,0) (0,0) (0,0) (0,0) (0,0) 
+  MB[3]: 64 verts, 87 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0,0) (0,0) (0,0) (0,0) (0,0) 
+  MB[4]: 115 verts, 504 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0,1) (0,0.875) (0,0.75) (0,0.625) (0,0.5) 
+  MB[5]: 8 verts, 30 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0,1) (0,1) (0,0) (0,0) (1,1) 
+  MB[6]: 6 verts, 6 idx, type=STANDARD, idx16, tex=no
+    UV samples: (1,1) (0,1) (0,1) (1,1) (0,1) 
+Unable to open file Models/LandObject/Masts/object.ini
+Unable to open file Models/LandObject/Masts/object.ini
+WickedModelImporter: Unsupported format '.x' for file: Models/LandObject/Masts/object.x
+  MB[0]: 542 verts, 2808 idx, type=STANDARD, idx16, tex=no
+    UV samples: (-0.5,0.5) (0.5,0.5) (-0.666667,0.5) (-0.833333,0.5) (-1,0.5) 
+  MB[1]: 542 verts, 2808 idx, type=STANDARD, idx16, tex=no
+    UV samples: (-0.5,0.5) (0.5,0.5) (-0.666667,0.5) (-0.833333,0.5) (-1,0.5) 
+  MB[2]: 542 verts, 2808 idx, type=STANDARD, idx16, tex=no
+    UV samples: (-0.5,0.5) (0.5,0.5) (-0.666667,0.5) (-0.833333,0.5) (-1,0.5) 
+  MB[3]: 542 verts, 2808 idx, type=STANDARD, idx16, tex=no
+    UV samples: (-0.5,0.5) (0.5,0.5) (-0.666667,0.5) (-0.833333,0.5) (-1,0.5) 
+  MB[4]: 542 verts, 2808 idx, type=STANDARD, idx16, tex=no
+    UV samples: (-0.5,0.5) (0.5,0.5) (-0.666667,0.5) (-0.833333,0.5) (-1,0.5) 
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+WickedModelImporter: Unsupported format '.x' for file: Models/LandObject/Tower/object.x
+  MB[0]: 8 verts, 36 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0,0) (0,1) (1,0) (1,1) (1,1) 
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Chimneys/object.ini
+Unable to open file Models/LandObject/Chimneys/object.ini
+WickedModelImporter: Unsupported format '.x' for file: Models/LandObject/Chimneys/object.x
+  MB[0]: 542 verts, 2808 idx, type=STANDARD, idx16, tex=no
+    UV samples: (-0.5,0.5) (0.5,0.5) (-0.666667,0.5) (-0.833333,0.5) (-1,0.5) 
+  MB[1]: 542 verts, 2808 idx, type=STANDARD, idx16, tex=no
+    UV samples: (-0.5,0.5) (0.5,0.5) (-0.666667,0.5) (-0.833333,0.5) (-1,0.5) 
+WickedModelImporter: Unsupported format '.3ds' for file: Models/LandObject/Church/church.3ds
+  MB[0]: 432 verts, 432 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.723773,1) (0.835069,1) (0.835069,0.925951) (0.835069,0.888704) (0.779421,0.814902) 
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Chimneys/object.ini
+Unable to open file Models/LandObject/Chimneys/object.ini
+Unable to open file Models/LandObject/Chimneys/object.ini
+Unable to open file Models/LandObject/Chimneys/object.ini
+Unable to open file Models/LandObject/Chimneys/object.ini
+Unable to open file Models/LandObject/Chimneys/object.ini
+Unable to open file Models/LandObject/Chimneys/object.ini
+Unable to open file Models/LandObject/Chimneys/object.ini
+Unable to open file Models/LandObject/Masts//object.ini
+Unable to open file Models/LandObject/Masts//object.ini
+Unable to open file Models/LandObject/Tower//object.ini
+Unable to open file Models/LandObject/Tower//object.ini
+Unable to open file Models/LandObject/Tower//object.ini
+Unable to open file Models/LandObject/Tower//object.ini
+Unable to open file Models/LandObject/Tower//object.ini
+Unable to open file Models/LandObject/Tower//object.ini
+Unable to open file Models/LandObject/Tower//object.ini
+Unable to open file Models/LandObject/Tower//object.ini
+Unable to open file Models/LandObject/Tower//object.ini
+Unable to open file Models/LandObject/Tower//object.ini
+Unable to open file Models/LandObject/Tower//object.ini
+Unable to open file Models/LandObject/Tower//object.ini
+Unable to open file Models/LandObject/Tower//object.ini
+Unable to open file Models/LandObject/Tower//object.ini
+Unable to open file Models/LandObject/Tower//object.ini
+Unable to open file Models/LandObject/Tower//object.ini
+Unable to open file Models/LandObject/Tower//object.ini
+Unable to open file Models/LandObject/Tower//object.ini
+Unable to open file Models/LandObject/Tower//object.ini
+Unable to open file Models/LandObject/Tower//object.ini
+Unable to open file Models/LandObject/Tower//object.ini
+Unable to open file Models/LandObject/Tower//object.ini
+Unable to open file Models/LandObject/Chimneys//object.ini
+Unable to open file Models/LandObject/Chimneys//object.ini
+Unable to open file Models/LandObject/Tower//object.ini
+Unable to open file Models/LandObject/Tower//object.ini
+Unable to open file Models/LandObject/Chimneys//object.ini
+Unable to open file Models/LandObject/Chimneys//object.ini
+Unable to open file Models/LandObject/Chimneys//object.ini
+Unable to open file Models/LandObject/Chimneys//object.ini
+Unable to open file Models/LandObject/Chimneys//object.ini
+Unable to open file Models/LandObject/Chimneys//object.ini
+Unable to open file Models/LandObject/Chimneys//object.ini
+Unable to open file Models/LandObject/Chimneys//object.ini
+WinMME AbortStream: waiting for background thread.
+TerminateHostApis in 
+TerminateHostApis out
