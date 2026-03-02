@@ -67,6 +67,11 @@ float Ship::getBreadth() const
     return breadth;
 }
 
+float Ship::getDraught() const
+{
+    return draught;
+}
+
 float Ship::getHeightCorrection() const
 {
     return heightCorrection;

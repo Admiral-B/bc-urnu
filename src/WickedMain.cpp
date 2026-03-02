@@ -23,6 +23,7 @@
 #include "Sound.hpp"
 #include "TextureUpscaler.hpp"
 #include "MapScreen.hpp"
+#include "WaveMotionModel.hpp"
 
 // ImGui header needed for IO access in game loop
 #include "graphics/wicked/imgui/imgui.h"
@@ -1531,6 +1532,13 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     float bridgeHalfW = 3.0f, bridgeHalfD = 3.0f; // walkable bridge bounds (meters, ship-local)
     wi::ecs::Entity ownShipEntity = wi::ecs::INVALID_ENTITY; // stored to toggle visibility
 
+    // WE-side wave motion: drives visual positioning from WE ocean (not Irrlicht water)
+    bc::WaveMotion::SeakeepingParams weSeakeeping{};
+    bc::WaveMotion::MotionState weMotionState{};
+    bool weSeakeepingInitialized = false;
+    float iniRollPeriod = 8.0f, iniPitchPeriod = 12.0f;
+    float iniGM = 0, iniRollDamping = 0, iniPitchDamping = 0;
+
     // Radar screen
     static const int RADAR_TEX_SIZE = 1024;
     static uint8_t radarPixels[RADAR_TEX_SIZE * RADAR_TEX_SIZE * 4];
@@ -1564,6 +1572,10 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
         float rollCorr = 0;    // roll correction from boat.ini
         int currentLeg;        // index into legs
         float distTravelled;   // nautical miles along current leg
+        // WE-side wave motion
+        bc::WaveMotion::SeakeepingParams seakeeping{};
+        bc::WaveMotion::MotionState waveState{};
+        bool seakeepingInit = false;
     };
     std::vector<OtherShipState> otherShipStates;
 
@@ -1941,6 +1953,15 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
         ownShipAngleCorr = ownAngleCorrection;
         ownShipPitchCorr = ownAngleCorrectionPitch;
         ownShipRollCorr = ownAngleCorrectionRoll;
+
+        // Read wave motion params from boat.ini for WE-side oscillator
+        iniRollPeriod = IniFile::iniFileTof32(boatIni, "RollPeriod");
+        iniPitchPeriod = IniFile::iniFileTof32(boatIni, "PitchPeriod");
+        iniGM = IniFile::iniFileTof32(boatIni, "GM");
+        iniRollDamping = IniFile::iniFileTof32(boatIni, "RollDamping");
+        iniPitchDamping = IniFile::iniFileTof32(boatIni, "PitchDamping");
+        if (iniRollPeriod == 0) iniRollPeriod = 8.0f;
+        if (iniPitchPeriod == 0) iniPitchPeriod = 12.0f;
         maxSpeedAhead = IniFile::iniFileTof32(boatIni, "maxSpeedAhead");
         if (maxSpeedAhead <= 0) maxSpeedAhead = 14.0f;
 
@@ -2342,6 +2363,21 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
         otherShipStates[s].rollCorr = angleCorrectionRoll;
         otherShipStates[s].currentLeg = 0;
         otherShipStates[s].distTravelled = 0;
+
+        // Read wave motion params from boat.ini for WE-side oscillator
+        {
+            float rp = IniFile::iniFileTof32(boatIni, "RollPeriod");
+            float pp = IniFile::iniFileTof32(boatIni, "PitchPeriod");
+            float gm = IniFile::iniFileTof32(boatIni, "GM");
+            float rd = IniFile::iniFileTof32(boatIni, "RollDamping");
+            float pd = IniFile::iniFileTof32(boatIni, "PitchDamping");
+            if (rp == 0) rp = 8.0f;
+            if (pp == 0) pp = 12.0f;
+            // Use other ship dimensions from SimBridge (deferred init below)
+            otherShipStates[s].seakeeping = bc::WaveMotion::computeFromDimensions(
+                50.0f, 10.0f, 3.0f, rp, pp, gm, rd, pd); // placeholder dims
+            otherShipStates[s].waveState = {};
+        }
 
         weLog("  Other ship " + std::to_string(s) + ": " + shipName +
               " speed=" + std::to_string(speed) + "kn heading=" + std::to_string(heading));
@@ -2957,6 +2993,39 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     // Enable ARPA auto-detection so radar contacts can be clicked to track
     SimBridge::setArpaMode(1);
 
+    // Initialize WE-side wave motion from ship dimensions (now available via SimBridge)
+    {
+        float shipL = SimBridge::getShipLength();
+        float shipB = SimBridge::getShipBreadth();
+        float shipT = SimBridge::getShipDraught();
+        weSeakeeping = bc::WaveMotion::computeFromDimensions(
+            shipL, shipB, shipT, iniRollPeriod, iniPitchPeriod,
+            iniGM, iniRollDamping, iniPitchDamping);
+        weMotionState = {};
+        weSeakeepingInitialized = true;
+        weLog("  WE wave motion: L=" + std::to_string(shipL) +
+              " B=" + std::to_string(shipB) +
+              " T=" + std::to_string(shipT) +
+              " rollP=" + std::to_string(iniRollPeriod) +
+              " pitchP=" + std::to_string(iniPitchPeriod));
+    }
+
+    // Update other ship seakeeping with actual dimensions from SimBridge
+    {
+        int numOther = SimBridge::getNumberOfOtherShips();
+        for (int s = 0; s < numOther && s < (int)otherShipStates.size(); s++) {
+            float oL = SimBridge::getOtherShipLength(s);
+            float oB = SimBridge::getOtherShipBreadth(s);
+            float oT = std::max(1.0f, oL * 0.04f); // approximate draught
+            auto& sk = otherShipStates[s].seakeeping;
+            sk = bc::WaveMotion::computeFromDimensions(
+                oL, oB, oT, sk.omega_roll > 0 ? 6.283f / sk.omega_roll : 8.0f,
+                sk.omega_pitch > 0 ? 6.283f / sk.omega_pitch : 12.0f,
+                sk.GM, sk.zeta_roll, sk.zeta_pitch);
+            otherShipStates[s].seakeepingInit = true;
+        }
+    }
+
     weLog("  SimulationBridge ready (initial engine: " +
           std::to_string(ownShipPortEngine) + "/" + std::to_string(ownShipStbdEngine) + ")");
 
@@ -3079,23 +3148,36 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             }
 
             // ===== OWN SHIP CONTROLS =====
-            // Skip keyboard controls if ImGui wants input, GUI slider is active, or overlay is open
-            bool imguiWantsKB = bc::graphics::wicked::ImGuiWantsKeyboard() || showEscMenu || showSettings || showRadarFullscreen;
+            // Block keyboard when a modal overlay is active or user is dragging a GUI slider.
+            // Note: ImGuiWantsKeyboard() is NOT used here because HUD overlay windows
+            // can inadvertently set WantCaptureKeyboard even without text inputs.
+            // Arrow keys are never consumed by our ImGui widgets.
+            bool controlsBlocked = showEscMenu || showSettings || showRadarFullscreen;
             bool guiControlActive = overlay.isControlActive();
+
+            // Diagnostic: log control state every 500 frames
+            if (frameCount % 500 == 0) {
+                weLog("  [CTRL] blocked=" + std::to_string(controlsBlocked) +
+                      " gui=" + std::to_string(guiControlActive) +
+                      " imguiKB=" + std::to_string(bc::graphics::wicked::ImGuiWantsKeyboard()) +
+                      " eng=" + std::to_string(ownShipPortEngine) +
+                      " rudder=" + std::to_string(ownShipRudder));
+            }
+
             // Arrow Up/Down: engine ahead/astern (telegraph-style, ~5s full travel)
             // Both engines move together via keyboard
-            if (!imguiWantsKB && !guiControlActive && GetAsyncKeyState(VK_UP) & 0x8000) {
+            if (!controlsBlocked && !guiControlActive && GetAsyncKeyState(VK_UP) & 0x8000) {
                 ownShipPortEngine = std::min(1.0f, ownShipPortEngine + 0.2f * dt);
                 ownShipStbdEngine = std::min(1.0f, ownShipStbdEngine + 0.2f * dt);
             }
-            if (!imguiWantsKB && !guiControlActive && GetAsyncKeyState(VK_DOWN) & 0x8000) {
+            if (!controlsBlocked && !guiControlActive && GetAsyncKeyState(VK_DOWN) & 0x8000) {
                 ownShipPortEngine = std::max(-1.0f, ownShipPortEngine - 0.2f * dt);
                 ownShipStbdEngine = std::max(-1.0f, ownShipStbdEngine - 0.2f * dt);
             }
             // Arrow Left/Right: wheel (helm rate ~10 deg/s for responsive feel)
-            if (!imguiWantsKB && !guiControlActive && GetAsyncKeyState(VK_LEFT) & 0x8000) {
+            if (!controlsBlocked && !guiControlActive && GetAsyncKeyState(VK_LEFT) & 0x8000) {
                 ownShipRudder = std::max(-30.0f, ownShipRudder - 10.0f * dt);
-            } else if (!imguiWantsKB && !guiControlActive && GetAsyncKeyState(VK_RIGHT) & 0x8000) {
+            } else if (!controlsBlocked && !guiControlActive && GetAsyncKeyState(VK_RIGHT) & 0x8000) {
                 ownShipRudder = std::min(30.0f, ownShipRudder + 10.0f * dt);
             } else if (!guiControlActive) {
                 // Rudder returns to center slowly when no key pressed
@@ -3336,15 +3418,45 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
 
             float headRad = ownShipHeading * (float)M_PI / 180.0f;
 
-            // Ship sits at tide height + height correction. No wave heave, pitch,
-            // or roll applied -- the bridge view must be rock-solid with zero sway.
-            float tideY = SimBridge::getTideHeight();
-            float ownShipY = ownShipHeightCorr + tideY;
+            // Ship visual positioning from WE ocean surface (not Irrlicht water)
+            float ownShipY = ownShipHeightCorr;
+            float ownShipPitch = 0;
+            float ownShipRoll = 0;
+
+            if (weSeakeepingInitialized) {
+                // Sample WE ocean at 5 points around the ship
+                float halfL = weSeakeeping.shipLength * 0.5f;
+                float halfB = weSeakeeping.shipBreadth * 0.5f;
+                float sinH = std::sin(headRad);
+                float cosH = std::cos(headRad);
+
+                float hCG = ocean.getWaveHeight(ownShipX, ownShipZ);
+                float hBow = ocean.getWaveHeight(ownShipX + sinH * halfL, ownShipZ + cosH * halfL);
+                float hStern = ocean.getWaveHeight(ownShipX - sinH * halfL, ownShipZ - cosH * halfL);
+                float hPort = ocean.getWaveHeight(ownShipX - cosH * halfB, ownShipZ + sinH * halfB);
+                float hStbd = ocean.getWaveHeight(ownShipX + cosH * halfB, ownShipZ - sinH * halfB);
+
+                // Sanitize wave readbacks (NaN from GPU readback timing -> oscillator divergence)
+                auto sanitize = [](float& v) { if (std::isnan(v) || std::isinf(v)) v = 0.0f; };
+                sanitize(hCG); sanitize(hBow); sanitize(hStern); sanitize(hPort); sanitize(hStbd);
+
+                bc::WaveMotion::update(weMotionState, weSeakeeping,
+                    dt, hCG, hBow, hStern, hPort, hStbd);
+
+                ownShipY = ownShipHeightCorr + weMotionState.heave.pos;
+                ownShipPitch = weMotionState.pitch.pos * 180.0f / (float)M_PI;
+                ownShipRoll = weMotionState.roll.pos * 180.0f / (float)M_PI;
+
+                // Guard wave motion outputs against NaN/inf (corrupts GPU transform -> DX12 crash)
+                if (std::isnan(ownShipY) || std::isinf(ownShipY)) { weLogErr("NaN/inf ownShipY"); ownShipY = ownShipHeightCorr; weMotionState = {}; }
+                if (std::isnan(ownShipPitch) || std::isinf(ownShipPitch)) { weLogErr("NaN/inf pitch"); ownShipPitch = 0; weMotionState = {}; }
+                if (std::isnan(ownShipRoll) || std::isinf(ownShipRoll)) { weLogErr("NaN/inf roll"); ownShipRoll = 0; weMotionState = {}; }
+            }
 
             if (ownShipEntity != wi::ecs::INVALID_ENTITY) {
                 setEntityTransform(scene, ownShipEntity, ownShipX, ownShipY, ownShipZ,
                                    ownShipHeading + ownShipAngleCorr, ownShipScaleFactor,
-                                   ownShipPitchCorr, ownShipRollCorr);
+                                   ownShipPitchCorr + ownShipPitch, ownShipRollCorr + ownShipRoll);
             }
 
             // Shader-based Kelvin wake: write ship data into ocean static wake storage
@@ -3362,7 +3474,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 }
             }
 
-            // Bridge camera: locked to ship with no wave-induced motion
+            // Bridge camera: locked to ship, moves with wave heave/pitch/roll
             if (!camOrbitMode) {
                 float vxScaled = viewLocalX * ownShipScaleFactor;
                 float vzScaled = viewLocalZ * ownShipScaleFactor;
@@ -3380,9 +3492,39 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                     st.x = SimBridge::getOtherShipPosX(s);
                     st.z = SimBridge::getOtherShipPosZ(s);
                     st.heading = SimBridge::getOtherShipHeading(s);
-                    setEntityTransform(scene, st.entity, st.x, st.heightCorr, st.z,
+
+                    // WE ocean-driven wave motion for other ships
+                    float otherY = st.heightCorr;
+                    float otherPitch = 0, otherRoll = 0;
+                    if (st.seakeepingInit) {
+                        float oHeadRad = st.heading * (float)M_PI / 180.0f;
+                        float oSinH = std::sin(oHeadRad);
+                        float oCosH = std::cos(oHeadRad);
+                        float oHalfL = st.seakeeping.shipLength * 0.5f;
+                        float oHalfB = st.seakeeping.shipBreadth * 0.5f;
+
+                        float ohCG = ocean.getWaveHeight(st.x, st.z);
+                        float ohBow = ocean.getWaveHeight(st.x + oSinH * oHalfL, st.z + oCosH * oHalfL);
+                        float ohStern = ocean.getWaveHeight(st.x - oSinH * oHalfL, st.z - oCosH * oHalfL);
+                        float ohPort = ocean.getWaveHeight(st.x - oCosH * oHalfB, st.z + oSinH * oHalfB);
+                        float ohStbd = ocean.getWaveHeight(st.x + oCosH * oHalfB, st.z - oSinH * oHalfB);
+
+                        bc::WaveMotion::update(st.waveState, st.seakeeping,
+                            dt, ohCG, ohBow, ohStern, ohPort, ohStbd);
+
+                        otherY = st.heightCorr + st.waveState.heave.pos;
+                        otherPitch = st.waveState.pitch.pos * 180.0f / (float)M_PI;
+                        otherRoll = st.waveState.roll.pos * 180.0f / (float)M_PI;
+
+                        // Guard other ship wave motion
+                        if (std::isnan(otherY) || std::isinf(otherY)) { otherY = st.heightCorr; st.waveState = {}; }
+                        if (std::isnan(otherPitch) || std::isinf(otherPitch)) { otherPitch = 0; st.waveState = {}; }
+                        if (std::isnan(otherRoll) || std::isinf(otherRoll)) { otherRoll = 0; st.waveState = {}; }
+                    }
+
+                    setEntityTransform(scene, st.entity, st.x, otherY, st.z,
                                        st.heading + st.angleCorr, st.scaleFactor,
-                                       st.pitchCorr, st.rollCorr);
+                                       st.pitchCorr + otherPitch, st.rollCorr + otherRoll);
                     float otherSpeedMps = SimBridge::getOtherShipSpeed(s);
                     if (otherSpeedMps > 0.5f && wakeIdx < 8) {
                         float hRad = st.heading * (float)M_PI / 180.0f;
@@ -3799,6 +3941,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             }
 
             float camX, camY, camZ, lookX, lookY, lookZ;
+            DirectX::XMVECTOR camUpVec = DirectX::XMVectorSet(0, 1, 0, 0); // world up default (orbit)
 
             if (camOrbitMode) {
                 // WASD moves the orbit target
@@ -3860,18 +4003,41 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 walkLocalX = std::max(-bridgeHalfW, std::min(bridgeHalfW, walkLocalX));
                 walkLocalZ = std::max(-bridgeHalfD, std::min(bridgeHalfD, walkLocalZ));
 
-                // Transform ship-local walk offset to world space and apply
-                float cosH = std::cos(headRad);
-                float sinH = std::sin(headRad);
-                camX = camPosX + walkLocalX * cosH + walkLocalZ * sinH;
-                camY = camPosY;
-                camZ = camPosZ - walkLocalX * sinH + walkLocalZ * cosH;
+                // Ship rotation quaternion (heading + pitch + roll) -- same as entity transform
+                float shipPitchRad = (ownShipPitchCorr + ownShipPitch) * (float)M_PI / 180.0f;
+                float shipRollRad = (ownShipRollCorr + ownShipRoll) * (float)M_PI / 180.0f;
+                DirectX::XMVECTOR shipQuat = DirectX::XMQuaternionRotationRollPitchYaw(
+                    shipPitchRad, headRad, shipRollRad);
 
-                // Look direction from yaw/pitch
-                float pitchRad = camPitch * (float)M_PI / 180.0f;
-                lookX = camX + std::sin(yawRad) * std::cos(pitchRad) * 100.0f;
-                lookY = camY - std::sin(pitchRad) * 100.0f;
-                lookZ = camZ + std::cos(yawRad) * std::cos(pitchRad) * 100.0f;
+                // Bridge offset in ship-local coords (view position + walk offset)
+                float localX = (viewLocalX + walkLocalX) * ownShipScaleFactor;
+                float localY = viewLocalY * ownShipScaleFactor;
+                float localZ = (viewLocalZ + walkLocalZ) * ownShipScaleFactor;
+
+                // Rotate bridge offset by full ship orientation -> world space
+                DirectX::XMVECTOR offset = DirectX::XMVectorSet(localX, localY, localZ, 0);
+                DirectX::XMVECTOR worldOffset = DirectX::XMVector3Rotate(offset, shipQuat);
+                camX = ownShipX + DirectX::XMVectorGetX(worldOffset);
+                camY = ownShipY + DirectX::XMVectorGetY(worldOffset);
+                camZ = ownShipZ + DirectX::XMVectorGetZ(worldOffset);
+                camY = std::max(camY, 2.0f);
+
+                // Look direction: camera yaw/pitch offsets in ship-local space,
+                // then rotated by ship orientation
+                float lookYawRad = camYawOffset * (float)M_PI / 180.0f;
+                float lookPitchRad = camPitch * (float)M_PI / 180.0f;
+                DirectX::XMVECTOR localForward = DirectX::XMVectorSet(
+                    std::sin(lookYawRad) * std::cos(lookPitchRad),
+                    -std::sin(lookPitchRad),
+                    std::cos(lookYawRad) * std::cos(lookPitchRad), 0);
+                DirectX::XMVECTOR worldForward = DirectX::XMVector3Rotate(localForward, shipQuat);
+                lookX = camX + DirectX::XMVectorGetX(worldForward) * 100.0f;
+                lookY = camY + DirectX::XMVectorGetY(worldForward) * 100.0f;
+                lookZ = camZ + DirectX::XMVectorGetZ(worldForward) * 100.0f;
+
+                // Ship-local up rotated to world (camera tilts with ship pitch/roll)
+                DirectX::XMVECTOR localUp = DirectX::XMVectorSet(0, 1, 0, 0);
+                camUpVec = DirectX::XMVector3Rotate(localUp, shipQuat);
             }
 
             // Apply camera
@@ -3886,6 +4052,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 weLogErr("NaN/inf camera position, resetting to origin");
                 camX = 0; camY = 50; camZ = 0;
                 lookX = 0; lookY = 50; lookZ = 100;
+                camUpVec = DirectX::XMVectorSet(0, 1, 0, 0);
             }
 
             if (frameCount <= 3) weLog("  Frame " + std::to_string(frameCount) + " pre-camera cam=(" +
@@ -3893,7 +4060,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 std::to_string(lookX) + "," + std::to_string(lookY) + "," + std::to_string(lookZ) + ")");
             DirectX::XMVECTOR vEye = DirectX::XMVectorSet(camX, camY, camZ, 1.0f);
             DirectX::XMVECTOR vAt = DirectX::XMVectorSet(lookX, lookY, lookZ, 1.0f);
-            DirectX::XMVECTOR vUp = DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+            DirectX::XMVECTOR vUp = camUpVec;
             DirectX::XMMATRIX viewMat = DirectX::XMMatrixLookAtLH(vEye, vAt, vUp);
             DirectX::XMMATRIX invView = DirectX::XMMatrixInverse(nullptr, viewMat);
             camera.TransformCamera(invView);
@@ -4054,7 +4221,10 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                       " ship=(" + std::to_string(ownShipX) + "," +
                       std::to_string(ownShipY) + "," + std::to_string(ownShipZ) + ")" +
                       " hdg=" + std::to_string(ownShipHeading) +
-                      " spd=" + std::to_string(ownShipSpeed));
+                      " spd=" + std::to_string(ownShipSpeed) +
+                      " pitch=" + std::to_string(ownShipPitch) +
+                      " roll=" + std::to_string(ownShipRoll) +
+                      " heave=" + std::to_string(weMotionState.heave.pos));
             }
 
             // Flush log every 500 frames to ensure we capture data before a crash

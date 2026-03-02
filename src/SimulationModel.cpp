@@ -357,6 +357,18 @@ SimulationModel::~SimulationModel()
         return ownShip.getRoll();
     }
 
+    float SimulationModel::getOwnShipLength() const{
+        return ownShip.getLength();
+    }
+
+    float SimulationModel::getOwnShipBreadth() const{
+        return ownShip.getBreadth();
+    }
+
+    float SimulationModel::getOwnShipDraught() const{
+        return ownShip.getDraught();
+    }
+
     float SimulationModel::getWaveHeight(float posX, float posZ) const {
         return water.getWaveHeight(posX,posZ);
     }
@@ -451,6 +463,18 @@ SimulationModel::~SimulationModel()
 
     float SimulationModel::getOtherShipBreadth(int number) const{
         return otherShips.getBreadth(number);
+    }
+
+    float SimulationModel::getOtherShipPosY(int number) const{
+        return otherShips.getPosition(number).y;
+    }
+
+    float SimulationModel::getOtherShipWavePitch(int number) const{
+        return otherShips.getWavePitch(number);
+    }
+
+    float SimulationModel::getOtherShipWaveRoll(int number) const{
+        return otherShips.getWaveRoll(number);
     }
 
     void SimulationModel::setOtherShipMMSI(int number, uint32_t mmsi) {

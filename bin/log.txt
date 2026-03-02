@@ -1,4 +1,4 @@
-Created GraphicsDevice_DX12 (1994 ms)
+Created GraphicsDevice_DX12 (269 ms)
 Adapter: NVIDIA GeForce RTX 4060 Laptop GPU
 
 [wi::initializer] Initializing Wicked Engine, please wait...
@@ -16,31 +16,27 @@ No embedded shaders found, shaders will be compiled at runtime if needed.
 	Shader source path: C:/Users/PB/source/bc-urnu/bin/../../WickedEngine/WickedEngine/shaders/
 	Shader binary path: ../../WickedEngine/WickedEngine/shaders/
 
-wi::jobsystem Initialized with 16 cores in 5.27 ms
+wi::jobsystem Initialized with 16 cores in 3.28 ms
 	High priority threads: 15
 	Low priority threads: 14
 	Streaming threads: 1
 
-wi::input Initialized (0 ms)
 wi::physics Initialized [Jolt Physics 5.4.0] (0 ms)
-wi::lua Initialized [Lua 5.4.8] (2 ms)
-wi::texturehelper Initialized (4 ms)
-wi::image Initialized (5 ms)
-wi::TrailRenderer Initialized (9 ms)
-wi::shadercompiler: loaded dxcompiler.dll (version: 1.9)
-wi::GPUBVH Initialized (43 ms)
-wi::gpusortlib Initialized (84 ms)
-wi::HairParticleSystem Initialized (247 ms)
-wi::EmittedParticleSystem Initialized (249 ms)
-wi::renderer Initialized (370 ms)
-wi::audio Initialized [XAudio2] (685 ms)
-wi::font Initialized (5 ms)
-shader compiled: ../../WickedEngine/WickedEngine/shaders/oceanSurfacePS.cso
-wi::Ocean Initialized (775 ms)
+wi::input Initialized (0 ms)
+wi::lua Initialized [Lua 5.4.8] (1 ms)
+wi::texturehelper Initialized (3 ms)
+wi::TrailRenderer Initialized (67 ms)
+wi::HairParticleSystem Initialized (83 ms)
+wi::GPUBVH Initialized (112 ms)
+wi::image Initialized (189 ms)
+wi::audio Initialized [XAudio2] (249 ms)
+wi::gpusortlib Initialized (252 ms)
+wi::font Initialized (77 ms)
+wi::Ocean Initialized (332 ms)
+wi::renderer Initialized (483 ms)
+wi::EmittedParticleSystem Initialized (484 ms)
 
-[wi::initializer] Wicked Engine Initialized (780 ms)
-[Warning] File not found: C:/Users/PB/source/bc-urnu/bin/ImGuiVS.cso
-[Warning] File not found: C:/Users/PB/source/bc-urnu/bin/ImGuiPS.cso
+[wi::initializer] Wicked Engine Initialized (488 ms)
 SuballocateGPUBuffer created buffer block with size: 256.0 MB, with page size: 64.0 KB, page count: 4096
 Created volumetric cloud map: 1.1 MB
 BlockCompress created a new raw block texture to fit request: BC1_UNORM (1024, 1024)

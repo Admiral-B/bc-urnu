@@ -107,6 +107,17 @@ OtherShip::OtherShip (const std::string& name, const std::string& internalName, 
     draught = -1 * ship->getTransformedBoundingBox().MinEdge.Y;
     airDraught = ship->getTransformedBoundingBox().MaxEdge.Y;
     
+    // Initialize wave-coupled motion from bounding box dimensions
+    float rollPeriod = IniFile::iniFileTof32(iniFilename, "RollPeriod");
+    float pitchPeriod = IniFile::iniFileTof32(iniFilename, "PitchPeriod");
+    float gmIni = IniFile::iniFileTof32(iniFilename, "GM");
+    float rollDampingIni = IniFile::iniFileTof32(iniFilename, "RollDamping");
+    float pitchDampingIni = IniFile::iniFileTof32(iniFilename, "PitchDamping");
+    seakeepingParams = bc::WaveMotion::computeFromDimensions(
+        length, breadth, draught,
+        rollPeriod, pitchPeriod, gmIni, rollDampingIni, pitchDampingIni);
+    waveMotionState = {};
+
     rcs = 0.005*std::pow(length,3); //Default RCS, base radar cross section on length^3 (following RCS table Ship_RCS_table.pdf)
     float iniRCS = IniFile::iniFileTof32(iniFilename,"RadarCrossSection");
     if (iniRCS > 0) { rcs = iniRCS; } //Override with value from boat.ini if set
@@ -213,7 +224,26 @@ void OtherShip::update(float deltaTime, float scenarioTime, float tideHeight, ui
     } else {
         positionManuallyUpdated = false;
     }
-    yPos = tideHeight+heightCorrection;
+    // Wave-coupled motion: sample wave surface and drive oscillators
+    {
+        float hCG = model->getWaveHeight(xPos, zPos);
+
+        float hdgRad = hdg * irr::core::DEGTORAD;
+        float sinH = sin(hdgRad);
+        float cosH = cos(hdgRad);
+        float halfL = seakeepingParams.shipLength * 0.5f;
+        float halfB = seakeepingParams.shipBreadth * 0.5f;
+
+        float hBow = model->getWaveHeight(xPos + sinH * halfL, zPos + cosH * halfL);
+        float hStern = model->getWaveHeight(xPos - sinH * halfL, zPos - cosH * halfL);
+        float hPort = model->getWaveHeight(xPos - cosH * halfB, zPos + sinH * halfB);
+        float hStbd = model->getWaveHeight(xPos + cosH * halfB, zPos - sinH * halfB);
+
+        bc::WaveMotion::update(waveMotionState, seakeepingParams,
+                               deltaTime, hCG, hBow, hStern, hPort, hStbd);
+
+        yPos = tideHeight + heightCorrection + waveMotionState.heave.pos;
+    }
 
     if (drifting) {
         //Move with tidal stream (if not aground)
@@ -242,16 +272,26 @@ void OtherShip::update(float deltaTime, float scenarioTime, float tideHeight, ui
     //Set position & speed by calling ship methods
     //setPosition(irr::core::vector3df(xPos,yPos,zPos));
     ship->setPosition(irr::core::vector3df(xPos,yPos,zPos));
-    // DEE_DEC22 vvvv allows modelling of trim , list and models derived from other coordinate systems
-    //ship->setRotation(irr::core::vector3df(angleCorrectionPitch, hdg+angleCorrection, angleCorrectionRoll)); //Global vectors
-    ship->setRotation(irr::core::vector3df(angleCorrectionPitch, hdg+angleCorrection, angleCorrectionRoll)); //Global vectors
-    // DEE_DEC22 ^^^^
+    // Apply wave pitch/roll + static corrections
+    float wavePitchDeg = waveMotionState.pitch.pos * irr::core::RADTODEG;
+    float waveRollDeg = waveMotionState.roll.pos * irr::core::RADTODEG;
+    ship->setRotation(irr::core::vector3df(angleCorrectionPitch + wavePitchDeg, hdg+angleCorrection, angleCorrectionRoll + waveRollDeg));
 
     //for each light, find range and angle
     for(std::vector<NavLight*>::size_type currentLight = 0; currentLight<navLights.size(); currentLight++) {
         navLights[currentLight]->update(scenarioTime, lightLevel);
     }
 
+}
+
+float OtherShip::getWavePitch() const
+{
+    return waveMotionState.pitch.pos * irr::core::RADTODEG;
+}
+
+float OtherShip::getWaveRoll() const
+{
+    return waveMotionState.roll.pos * irr::core::RADTODEG;
 }
 
 float OtherShip::getHeight() const

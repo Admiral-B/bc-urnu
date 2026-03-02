@@ -34,14 +34,13 @@ namespace OceanMath {
     };
 
     /// Wave amplitude for WE ocean at each Beaufort step (WE units).
-    /// Calibrated for patch_length=250m. At this patch size, K_min drops
-    /// from 0.126 to 0.025 rad/m, and Phillips K^-6 scaling gives ~15000x
-    /// more energy per mode at K_min. Total FFT energy is ~1000x higher
-    /// than at patch=50, so amplitude values are ~15x lower to compensate.
-    /// Wind speed (via Phillips) carries the Beaufort energy scaling.
+    /// Calibrated for patch_length=250m. B0-B3 are deliberately low to
+    /// ensure calm seas look calm. Phillips spectrum wind speed is capped
+    /// to the Beaufort-implied maximum (see beaufortToOceanParams) so that
+    /// high actual wind doesn't produce excessive waves at low sea states.
     static constexpr float BEAUFORT_AMPLITUDE[13] = {
-    //  B0  B1  B2  B3  B4   B5   B6   B7   B8   B9  B10  B11  B12
-        2,   3,  5,  8, 12,  16,  20,  25,  30,  35,  40,  45,  50
+    //  B0     B1    B2    B3   B4   B5   B6   B7   B8   B9  B10  B11  B12
+        0.05f, 0.15f,0.5f, 1.5f,4,  10,  18,  27,  34,  40,  45,  48,  50
     };
 
     struct OceanParams {
@@ -70,24 +69,30 @@ namespace OceanMath {
         p.waveAmplitude = BEAUFORT_AMPLITUDE[bi] + frac * (nextAmp - BEAUFORT_AMPLITUDE[bi]);
 
         // Choppy scale: lateral displacement multiplier. Controls Jacobian folds
-        // (foam/whitecaps). Higher values at B5+ create visible wave breaking.
+        // (foam/whitecaps). Low at B0-B3 (calm-slight), ramps up from B4.
         // Simplex noise in shader breaks up the repeating grid foam pattern.
-        p.choppyScale = std::min(0.4f + beaufort * 0.07f, 1.3f);
+        if (beaufort < 3.0f) {
+            p.choppyScale = 0.1f + beaufort * 0.1f; // 0.1 at B0, 0.4 at B3
+        } else {
+            p.choppyScale = std::min(0.4f + (beaufort - 3.0f) * 0.1f, 1.3f);
+        }
 
-        // Wind speed: use actual wind if given, else estimate from Beaufort
+        // Wind speed: use actual wind, but cap to Beaufort-implied maximum.
+        // This prevents a scenario with B1 seas + B4 wind from producing B4 waves.
+        // The sea state (Beaufort) is the primary wave driver, not the instantaneous wind.
+        float beaufortMaxKts = (bi < 12) ? BEAUFORT_WIND_KTS[bi + 1] : BEAUFORT_WIND_KTS[12];
+        float beaufortMaxMps = beaufortMaxKts * KTS_TO_MPS;
+
         float windMps;
         if (windSpeedKts > 0.1f) {
-            windMps = windSpeedKts * KTS_TO_MPS;
+            windMps = std::min(windSpeedKts * KTS_TO_MPS, beaufortMaxMps);
         } else {
-            float nextKts = (bi < 12) ? BEAUFORT_WIND_KTS[bi + 1] : BEAUFORT_WIND_KTS[12];
+            float nextKts = (bi < 12) ? BEAUFORT_WIND_KTS[bi + 1] : BEAUFORT_WIND_KTS[bi];
             float approxKts = BEAUFORT_WIND_KTS[bi] + frac * (nextKts - BEAUFORT_WIND_KTS[bi]);
             windMps = approxKts * KTS_TO_MPS;
         }
         p.windSpeedMps = windMps;
         // WE wind speed for Phillips spectrum. Capped at 2000 cm/s (20 m/s).
-        // At patch=250m the Phillips peak wavelength (V^2/g = 41m at 20m/s)
-        // fits easily. The cap prevents excessive energy at B9-B12 where
-        // K_peak falls below K_min and tail energy dominates.
         p.windSpeedCmps = std::max(30.0f, std::min(windMps * 100.0f, 2000.0f));
 
         // Wind direction: meteorological FROM -> wave propagation WITH (+180 deg)

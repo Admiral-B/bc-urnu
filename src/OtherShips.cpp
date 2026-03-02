@@ -109,21 +109,8 @@ void OtherShips::update(float deltaTime, float scenarioTime, float tideHeight, u
 
     for(std::vector<OtherShip*>::iterator it = otherShips.begin(); it != otherShips.end(); ++it) {
 
-        //Find local wave height
-        bc::graphics::Vec3 prevPosition = (*it)->getPosition();
-        float waveHeightFiltered = prevPosition.y - tideHeight - (*it)->getHeightCorrection(); //Calculate the previous wave height:
-
-        //Apply up/down motion from waves, with some filtering
-        float timeConstant = 0.5;//Time constant in s; TODO: Make dependent on vessel size
-        float factor = deltaTime/(timeConstant+deltaTime);
-        waveHeightFiltered = (1-factor) * waveHeightFiltered + factor*model->getWaveHeight(prevPosition.x,prevPosition.z); //TODO: Check implementation of simple filter!
-
-        //Special case, if paused, just use the actual wave height. A bit of a bodge, but avoids having to store the previous filter value
-        if (deltaTime == 0) {
-            waveHeightFiltered = model->getWaveHeight(prevPosition.x,prevPosition.z);
-        }
-
-        (*it)->update(deltaTime, scenarioTime, tideHeight+waveHeightFiltered, lightLevel);
+        // OtherShip handles its own wave-coupled heave/pitch/roll internally
+        (*it)->update(deltaTime, scenarioTime, tideHeight, lightLevel);
 
         //Set or clear triangle selector depending on distance from own ship
         if ((*it)->getSceneNode()->getAbsolutePosition().getDistanceFrom(irrOwnShipPos) < (ownShipLength + (*it)->getLength())) {
@@ -175,6 +162,22 @@ bc::graphics::Vec3 OtherShips::getPosition(int number) const
     } else {
         return bc::graphics::Vec3(0,0,0);
     }
+}
+
+float OtherShips::getWavePitch(int number) const
+{
+    if (number < (int)otherShips.size() && number >= 0) {
+        return otherShips.at(number)->getWavePitch();
+    }
+    return 0.0f;
+}
+
+float OtherShips::getWaveRoll(int number) const
+{
+    if (number < (int)otherShips.size() && number >= 0) {
+        return otherShips.at(number)->getWaveRoll();
+    }
+    return 0.0f;
 }
 
 float OtherShips::getLength(int number) const

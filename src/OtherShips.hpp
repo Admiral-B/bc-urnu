@@ -49,6 +49,8 @@ class OtherShips
         float getBreadth(int number) const;
         float getHeading(int number) const;
         float getSpeed(int number) const; //Speed in m/s
+        float getWavePitch(int number) const; // wave-induced pitch (degrees)
+        float getWaveRoll(int number) const;  // wave-induced roll (degrees)
         uint32_t getMMSI(int number) const;
         float getEstimatedDisplacement(int number) const;
         void setSpeed(int number, float speed); //Speed in m/s

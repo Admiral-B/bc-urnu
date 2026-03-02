@@ -169,6 +169,9 @@ public:
     float getPosY() const; // Vertical position (tide + height correction + wave heave)
     float getPitch() const; // Pitch angle in degrees
     float getRoll() const; // Roll angle in degrees
+    float getOwnShipLength() const;
+    float getOwnShipBreadth() const;
+    float getOwnShipDraught() const;
 
     float getWaveHeight(float posX, float posZ) const; //Return wave height (not tide) at the world position specified
     bc::graphics::Vec2 getLocalNormals(float relPosX, float relPosZ) const;
@@ -197,6 +200,9 @@ public:
     uint32_t getOtherShipMMSI(int number) const;
     float getOtherShipLength(int number) const;
     float getOtherShipBreadth(int number) const;
+    float getOtherShipPosY(int number) const;
+    float getOtherShipWavePitch(int number) const;
+    float getOtherShipWaveRoll(int number) const;
     void setOtherShipHeading(int number, float hdg);
     void setOtherShipPos(int number, float positionX, float positionZ);
     void setOtherShipRateOfTurn(int number, float rateOfTurn);

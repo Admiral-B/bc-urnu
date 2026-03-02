@@ -56,6 +56,7 @@ set(BC_TEST_SOURCES
     test_osm_water_reader.cpp
     test_ini_file_rw.cpp
     test_ocean_math.cpp
+    test_wave_motion.cpp
     test_tile_thread_pool.cpp
     test_gba_tile_downloader.cpp
 )

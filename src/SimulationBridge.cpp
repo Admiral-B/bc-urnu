@@ -252,6 +252,9 @@ float getDepth()          { return g_model ? g_model->getDepth() : 0; }
 float getPosY()           { return g_model ? g_model->getPosY() : 0; }
 float getPitch()          { return g_model ? g_model->getPitch() : 0; }
 float getRoll()           { return g_model ? g_model->getRoll() : 0; }
+float getShipLength()     { return g_model ? g_model->getOwnShipLength() : 50; }
+float getShipBreadth()    { return g_model ? g_model->getOwnShipBreadth() : 10; }
+float getShipDraught()    { return g_model ? g_model->getOwnShipDraught() : 3; }
 float getRudder()         { return g_model ? g_model->getRudder() : 0; }
 float getWheel()          { return g_model ? g_model->getWheel() : 0; }
 float getPortEngine()     { return g_model ? g_model->getPortEngine() : 0; }
@@ -278,6 +281,9 @@ std::string getOtherShipName(int i) { return g_model ? g_model->getOtherShipName
 uint32_t getOtherShipMMSI(int i) { return g_model ? g_model->getOtherShipMMSI(i) : 0; }
 float getOtherShipLength(int i)  { return g_model ? g_model->getOtherShipLength(i) : 0; }
 float getOtherShipBreadth(int i) { return g_model ? g_model->getOtherShipBreadth(i) : 0; }
+float getOtherShipPosY(int i)      { return g_model ? g_model->getOtherShipPosY(i) : 0; }
+float getOtherShipWavePitch(int i) { return g_model ? g_model->getOtherShipWavePitch(i) : 0; }
+float getOtherShipWaveRoll(int i)  { return g_model ? g_model->getOtherShipWaveRoll(i) : 0; }
 
 // Buoys
 int getNumberOfBuoys() {

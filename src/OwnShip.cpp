@@ -168,6 +168,10 @@ void OwnShip::load(OwnShipData ownShipData, Vec3i numberOfContactPoints, float m
     pitchPeriod = IniFile::iniFileTof32(shipIniFilename, "PitchPeriod"); // Softcoded roll period Tr a function of the ships condition indpendant of Te, the wave encounter period
     pitchAngle = 0.5 * IniFile::iniFileTof32(shipIniFilename, "Swell");  // Max pitch Angle (deg @weather=1)
     buffet = IniFile::iniFileTof32(shipIniFilename, "Buffet");
+    // Wave-coupled motion parameters (all optional)
+    gmMetacentric = IniFile::iniFileTof32(shipIniFilename, "GM");         // Metacentric height (m), 0=auto from breadth
+    rollDampingIni = IniFile::iniFileTof32(shipIniFilename, "RollDamping");   // Damping ratio, 0=default 0.10
+    pitchDampingIni = IniFile::iniFileTof32(shipIniFilename, "PitchDamping"); // Damping ratio, 0=default 0.20
     depthSounder = (IniFile::iniFileTou32(shipIniFilename, "HasDepthSounder") == 1);
     maxSounderDepth = IniFile::iniFileTof32(shipIniFilename, "MaxDepth");
     gps = (IniFile::iniFileTou32(shipIniFilename, "HasGPS") == 1);
@@ -400,6 +404,13 @@ void OwnShip::load(OwnShipData ownShipData, Vec3i numberOfContactPoints, float m
 
     // Default buffet Period DEE_DEC22 to do make this a function of Izz and weather strength perhaps direction too
     buffetPeriod = 8; // Yaw period (s)
+
+    // Initialize wave-coupled motion model from ship dimensions
+    seakeepingParams = bc::WaveMotion::computeFromDimensions(
+        length, breadth, draught,
+        rollPeriod, pitchPeriod,
+        gmMetacentric, rollDampingIni, pitchDampingIni);
+    waveMotionState = {};  // zero-initialize all DOF states
 
     // Default for maxSounderDepth
     if (maxSounderDepth < 1)
@@ -2148,14 +2159,31 @@ void OwnShip::update(float deltaTime, float scenarioTime, float tideHeight, floa
                 + bowThruster * bowThrusterMaxForce * bowThrusterDistance
                 - sternThruster * sternThrusterMaxForce * sternThrusterDistance;
 
+            // Added Resistance in Waves (Stawave-1 ITTC)
+            {
+                float windDirDeg = model->getWindDirection();
+                float wavePropRad = (windDirDeg + 180.0f) * irr::core::DEGTORAD;
+                float mu = hdg * irr::core::DEGTORAD - wavePropRad; // heading relative to waves
+                float beaufort = weather; // weather is already 0-12 Beaufort
+                float Hs = bc::WaveMotion::beaufortToHs(beaufort);
+                float raw = bc::WaveMotion::addedResistanceInWaves(Hs, breadth, length, mu);
+                extAxialForce -= raw; // opposes forward motion
+            }
+
             axialSpd += extAxialForce / shipMass * deltaTime;
             lateralSpd += extLateralForce / shipMass * deltaTime;
             rateOfTurn += extTorque / Izz * deltaTime;
 
             speedThroughWater = axialSpd - axialStream;
 
-            // Buffeting
-            rateOfTurn += irr::core::DEGTORAD * buffet * weather * cos(scenarioTime * 2 * PI / buffetPeriod) * ((float)std::rand() / RAND_MAX) * deltaTime;
+            // Directional yaw buffeting: beam seas cause more disturbance than head/following
+            {
+                float windDirDeg = model->getWindDirection();
+                float wavePropRad = (windDirDeg + 180.0f) * irr::core::DEGTORAD;
+                float mu = hdg * irr::core::DEGTORAD - wavePropRad;
+                float beamSeaFactor = std::abs(sin(mu)); // max in beam seas
+                rateOfTurn += irr::core::DEGTORAD * buffet * weather * beamSeaFactor * ((float)std::rand() / RAND_MAX - 0.5f) * 2.0f * deltaTime;
+            }
 
             // Apply turn (heading integration uses existing code)
             hdg += rateOfTurn * deltaTime * irr::core::RADTODEG;
@@ -2189,7 +2217,17 @@ void OwnShip::update(float deltaTime, float scenarioTime, float tideHeight, floa
             {
                 axialDrag = dynamicsSpeedA * speedThroughWater * speedThroughWater + dynamicsSpeedB * speedThroughWater;
             }
-            float axialAcceleration = (portAxialThrust + stbdAxialThrust - axialDrag - groundingAxialDrag - axialWindDrag) / shipMass;
+            // Added Resistance in Waves (Stawave-1 ITTC)
+            float waveResistance = 0.0f;
+            {
+                float windDirDeg = model->getWindDirection();
+                float wavePropRad = (windDirDeg + 180.0f) * irr::core::DEGTORAD;
+                float mu = hdg * irr::core::DEGTORAD - wavePropRad;
+                float beaufort = weather; // weather is already 0-12 Beaufort
+                float Hs = bc::WaveMotion::beaufortToHs(beaufort);
+                waveResistance = bc::WaveMotion::addedResistanceInWaves(Hs, breadth, length, mu);
+            }
+            float axialAcceleration = (portAxialThrust + stbdAxialThrust - axialDrag - groundingAxialDrag - axialWindDrag - waveResistance) / shipMass;
             // Check acceleration plausibility (not more than 1g = 9.81ms/2)
             if (axialAcceleration > 9.81)
             {
@@ -2310,6 +2348,9 @@ void OwnShip::update(float deltaTime, float scenarioTime, float tideHeight, floa
                 }
                 // Engine
                 engineTorque = (portThrust * propellorSpacing - stbdThrust * propellorSpacing) / 2.0; // propspace is spacing between propellors, so halve to get moment arm
+
+                // Rudder effectiveness reduction in rough seas
+                rudderTorque *= bc::WaveMotion::rudderSeaStateFactor(weather);
             }
 
             // Prop walk
@@ -2367,8 +2408,14 @@ void OwnShip::update(float deltaTime, float scenarioTime, float tideHeight, floa
                 rateOfTurn = -12;
             }
 
-            // apply buffeting to rate of turn - TODO: Check the integrals from this to work out if the end magnitude is right
-            rateOfTurn += irr::core::DEGTORAD * buffet * weather * cos(scenarioTime * 2 * PI / buffetPeriod) * ((float)std::rand() / RAND_MAX) * deltaTime; // Rad/s
+            // Directional yaw buffeting: beam seas cause more disturbance than head/following
+            {
+                float windDirDeg = model->getWindDirection();
+                float wavePropRad = (windDirDeg + 180.0f) * irr::core::DEGTORAD;
+                float mu = hdg * irr::core::DEGTORAD - wavePropRad;
+                float beamSeaFactor = std::abs(sin(mu));
+                rateOfTurn += irr::core::DEGTORAD * buffet * weather * beamSeaFactor * ((float)std::rand() / RAND_MAX - 0.5f) * 2.0f * deltaTime;
+            }
 
             // Apply turn
             hdg += rateOfTurn * deltaTime * irr::core::RADTODEG; // Deg
@@ -2462,20 +2509,40 @@ void OwnShip::update(float deltaTime, float scenarioTime, float tideHeight, floa
 
     // std::cout << "CoG: " << cog << " SoG: " << sog << std::endl;
 
-    // Apply up/down motion from waves, with some filtering
-    float timeConstant = 0.5; // Time constant in s; TODO: Make dependent on vessel size
-    float factor = deltaTime / (timeConstant + deltaTime);
-    waveHeightFiltered = (1 - factor) * waveHeightFiltered + factor * model->getWaveHeight(xPos, zPos); // TODO: Check implementation of simple filter!
-    yPos = tideHeight + heightCorrection + waveHeightFiltered;
+    // Wave-coupled ship motion: sample wave surface at 5 points and drive oscillators
+    {
+        float hCG = model->getWaveHeight(xPos, zPos);
 
-    // calculate pitch and roll - not linked to water/wave motion
-    if (pitchPeriod > 0)
-    {
-        pitch = weather * pitchAngle * sin(scenarioTime * 2 * PI / pitchPeriod);
-    }
-    if (rollPeriod > 0)
-    {
-        roll = weather * rollAngle * sin(scenarioTime * 2 * PI / rollPeriod);
+        // Compute bow/stern/port/stbd positions from ship CG + heading
+        float hdgRad = hdg * irr::core::DEGTORAD;
+        float sinH = sin(hdgRad);
+        float cosH = cos(hdgRad);
+        float halfL = seakeepingParams.shipLength * 0.5f;
+        float halfB = seakeepingParams.shipBreadth * 0.5f;
+
+        float bowX = xPos + sinH * halfL;
+        float bowZ = zPos + cosH * halfL;
+        float sternX = xPos - sinH * halfL;
+        float sternZ = zPos - cosH * halfL;
+        float portX = xPos - cosH * halfB;  // port is left (-cos for X)
+        float portZ = zPos + sinH * halfB;
+        float stbdX = xPos + cosH * halfB;
+        float stbdZ = zPos - sinH * halfB;
+
+        float hBow = model->getWaveHeight(bowX, bowZ);
+        float hStern = model->getWaveHeight(sternX, sternZ);
+        float hPort = model->getWaveHeight(portX, portZ);
+        float hStbd = model->getWaveHeight(stbdX, stbdZ);
+
+        bc::WaveMotion::update(waveMotionState, seakeepingParams,
+                               deltaTime, hCG, hBow, hStern, hPort, hStbd);
+
+        // Apply heave
+        yPos = tideHeight + heightCorrection + waveMotionState.heave.pos;
+
+        // Apply pitch/roll (oscillator outputs are in radians, convert to degrees)
+        pitch = waveMotionState.pitch.pos * irr::core::RADTODEG;
+        roll = waveMotionState.roll.pos * irr::core::RADTODEG;
     }
 
     // Apply Barras squat (MMG only): bodily sinkage + trim

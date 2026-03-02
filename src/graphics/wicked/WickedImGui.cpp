@@ -131,8 +131,9 @@ void ImGuiInit(void* platformWindow) {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
 
-    // Enable keyboard nav (useful for bridge simulator controls)
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    // Do NOT enable NavEnableKeyboard -- it makes ImGui capture arrow keys,
+    // blocking ship controls (throttle, rudder). HUD is mouse-only.
+    // io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
     // Dark style suits maritime bridge displays
     ImGui::StyleColorsDark();

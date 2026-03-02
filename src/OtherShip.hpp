@@ -18,6 +18,7 @@
 #define __OTHERSHIP_HPP_INCLUDED__
 
 #include "Ship.hpp"
+#include "WaveMotionModel.hpp"
 
 #include "NavLight.hpp"
 #include "Leg.hpp"
@@ -48,6 +49,8 @@ class OtherShip : public Ship
         void update(float deltaTime, float scenarioTime, float tideHeight, uint32_t lightLevel);
         void enableTriangleSelector(bool selectorEnabled);
         void setRateOfTurn(float rateOfTurn); // This could be moved to Ship.hpp
+        float getWavePitch() const; // wave-induced pitch (degrees)
+        float getWaveRoll() const;  // wave-induced roll (degrees)
 
     protected:
     private:
@@ -64,6 +67,10 @@ class OtherShip : public Ship
         irr::scene::ITriangleSelector* selector;
         bool triangleSelectorEnabled;
         bool drifting;
+
+        // Wave-coupled motion
+        bc::WaveMotion::SeakeepingParams seakeepingParams;
+        bc::WaveMotion::MotionState waveMotionState;
 };
 
 #endif

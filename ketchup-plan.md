@@ -13,6 +13,15 @@
 - [x] Burst 39: patch_length 50->250m -- eliminates geometric tiling at root cause. K_min drops from 0.126 to 0.025 rad/m, Phillips K^-6 gives ~15000x more energy per mode. BEAUFORT_AMPLITUDE reduced from {2..1700} to {2..50}. choppy_scale 3x compensates GridLen reduction. Normal Y scale hardcoded to 0.2 (decoupled from xOceanTexelLength). Multi-scale VS/PS displacement hacks removed (single clean FFT sample). [depends: 38]
 - [ ] Burst 40: Whitecap foam -- Jacobian fold (gradient.a) values are 1-10+ at current choppy_scale, too broad for simple thresholding. Needs either: (a) reduce choppy_scale and boost fold sensitivity, (b) screen-space foam approach, or (c) separate foam compute pass with proper per-Beaufort thresholds. [depends: 39]
 
+### Phase 10: Wave-Coupled Ship Motion
+
+- [x] Burst 41: WaveMotionModel.hpp -- second-order damped oscillators for heave/pitch/roll, wavelength reduction (sinc filter), added resistance in waves (Stawave-1 ITTC), rudder sea state factor. Header-only, pure math. [depends: 39]
+- [x] Burst 42: OwnShip wave coupling -- replaced fake sinusoidal pitch/roll with wave-surface-driven oscillators. 5-point wave sampling (CG, bow, stern, port, stbd). Added RAW to both MMG and legacy drag. Directional yaw buffeting (beam seas > head seas). Rudder degradation in rough weather. [depends: 41]
+- [x] Burst 43: OtherShip wave coupling -- same oscillator model, initialized from bounding box dimensions. OtherShips wrapper now passes raw tideHeight (heave handled internally). Pitch/roll applied to rotation. [depends: 42]
+- [x] Burst 44: Catch2 tests (23 cases, 52 assertions) -- oscillator convergence, resonance amplification, wavelength reduction, RAW formula, rudder degradation, ship-type differentiation. [depends: 41]
+- [x] Burst 45: boat.ini GM + periods for key ships -- CargoShip, HMS_Clyde, USS_Perry, USS_Zumwalt, Waverley, Atlantic85. [depends: 42]
+- [ ] Burst 46: In-game tuning pass -- verify motion feel across ship types, weather levels, and heading-to-sea angles. [depends: 45]
+
 ### Phase 8: GLB Ship Model Integration
 
 - [x] Burst 29: `tools/glb_inspect.py` parses GLB, extracts geometry bounds and PBR texture inventory [depends: none]

@@ -23,6 +23,7 @@
 #include "graphics/Types.hpp"
 #include "Ship.hpp"
 #include "MMGPhysicsModel.hpp"
+#include "WaveMotionModel.hpp"
 
 // Forward declarations
 class SimulationModel;
@@ -322,6 +323,14 @@ private:
         float sog; // m/s speed over ground
 
         float waveHeightFiltered; // 1st order transfer filtered response to waves
+
+        // Wave-coupled motion model
+        bc::WaveMotion::SeakeepingParams seakeepingParams;
+        bc::WaveMotion::MotionState waveMotionState;
+        float gmMetacentric;    // Metacentric height from boat.ini (m), 0=auto
+        float rollDampingIni;   // Roll damping ratio from boat.ini, 0=default
+        float pitchDampingIni;  // Pitch damping ratio from boat.ini, 0=default
+
         // General settings
         bool gps;
         bool depthSounder;

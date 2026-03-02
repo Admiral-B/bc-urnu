@@ -47,6 +47,9 @@ float getDepth();        // metres below keel
 float getPosY();         // vertical pos (tide + heightCorr + wave heave)
 float getPitch();        // degrees
 float getRoll();         // degrees
+float getShipLength();   // metres (world scale)
+float getShipBreadth();  // metres (world scale)
+float getShipDraught();  // metres (world scale)
 float getRudder();       // degrees
 float getWheel();        // degrees
 float getPortEngine();   // -1..+1
@@ -71,6 +74,9 @@ std::string getOtherShipName(int i);
 uint32_t getOtherShipMMSI(int i);
 float getOtherShipLength(int i);
 float getOtherShipBreadth(int i);
+float getOtherShipPosY(int i);
+float getOtherShipWavePitch(int i);
+float getOtherShipWaveRoll(int i);
 
 // Buoys
 int getNumberOfBuoys();

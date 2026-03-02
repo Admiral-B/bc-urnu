@@ -37,6 +37,7 @@ class Ship
         bc::graphics::Vec3 getPosition() const;
         float getLength() const;
         float getBreadth() const;
+        float getDraught() const;
         float getHeightCorrection() const;
         float getEstimatedDisplacement() const;
         void setHeading(float hdg);
