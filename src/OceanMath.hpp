@@ -34,12 +34,14 @@ namespace OceanMath {
     };
 
     /// Wave amplitude for WE ocean at each Beaufort step (WE units).
-    /// Plateaus above B7 because Phillips spectrum energy already scales with
-    /// wind_speed^4 -- the amplitude multiplier just needs to stay moderate
-    /// to avoid overwhelming the 50m FFT tile with aliased long wavelengths.
+    /// Calibrated for patch_length=250m. At this patch size, K_min drops
+    /// from 0.126 to 0.025 rad/m, and Phillips K^-6 scaling gives ~15000x
+    /// more energy per mode at K_min. Total FFT energy is ~1000x higher
+    /// than at patch=50, so amplitude values are ~15x lower to compensate.
+    /// Wind speed (via Phillips) carries the Beaufort energy scaling.
     static constexpr float BEAUFORT_AMPLITUDE[13] = {
-    //  B0 B1  B2  B3   B4   B5   B6   B7   B8   B9   B10  B11  B12
-        2,  8, 20, 40, 100, 200, 280, 320, 350, 370, 390, 400, 410
+    //  B0  B1  B2  B3  B4   B5   B6   B7   B8   B9  B10  B11  B12
+        2,   3,  5,  8, 12,  16,  20,  25,  30,  35,  40,  45,  50
     };
 
     struct OceanParams {
@@ -68,10 +70,9 @@ namespace OceanMath {
         p.waveAmplitude = BEAUFORT_AMPLITUDE[bi] + frac * (nextAmp - BEAUFORT_AMPLITUDE[bi]);
 
         // Choppy scale: lateral displacement multiplier. Controls Jacobian folds
-        // (foam/whitecaps). Conservative range because the 50m FFT patch creates
-        // repeating grid foam at higher values. Real whitecap detail requires
-        // multi-cascade (Phase 1.1c).
-        p.choppyScale = std::min(0.4f + beaufort * 0.035f, 0.8f);
+        // (foam/whitecaps). Higher values at B5+ create visible wave breaking.
+        // Simplex noise in shader breaks up the repeating grid foam pattern.
+        p.choppyScale = std::min(0.4f + beaufort * 0.07f, 1.3f);
 
         // Wind speed: use actual wind if given, else estimate from Beaufort
         float windMps;
@@ -83,11 +84,11 @@ namespace OceanMath {
             windMps = approxKts * KTS_TO_MPS;
         }
         p.windSpeedMps = windMps;
-        // WE wind speed for Phillips spectrum. Capped at 1500 cm/s (15 m/s)
-        // so the dominant Phillips wavelength (~23m) fits within the 50m FFT
-        // patch without aliasing into standing waves. Visual wave size at high
-        // Beaufort is still controlled by wave_amplitude above.
-        p.windSpeedCmps = std::max(30.0f, std::min(windMps * 100.0f, 1500.0f));
+        // WE wind speed for Phillips spectrum. Capped at 2000 cm/s (20 m/s).
+        // At patch=250m the Phillips peak wavelength (V^2/g = 41m at 20m/s)
+        // fits easily. The cap prevents excessive energy at B9-B12 where
+        // K_peak falls below K_min and tail energy dominates.
+        p.windSpeedCmps = std::max(30.0f, std::min(windMps * 100.0f, 2000.0f));
 
         // Wind direction: meteorological FROM -> wave propagation WITH (+180 deg)
         float windRad = (windDirectionDeg + 180.0f) * PI / 180.0f;

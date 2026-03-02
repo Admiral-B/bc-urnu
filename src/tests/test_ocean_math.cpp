@@ -19,9 +19,9 @@ TEST_CASE("Beaufort 0 gives minimal waves", "[ocean][beaufort]") {
 
 TEST_CASE("Beaufort 12 gives maximum waves", "[ocean][beaufort]") {
     auto p = beaufortToOceanParams(12.0f, 68.0f, 180.0f);
-    REQUIRE(p.waveAmplitude == Approx(410.0f));
-    REQUIRE(p.choppyScale == Approx(0.8f));  // capped to prevent foam carpet
-    REQUIRE(p.windSpeedCmps == Approx(1500.0f));  // capped for Phillips spectrum
+    REQUIRE(p.waveAmplitude == Approx(50.0f));
+    REQUIRE(p.choppyScale == Approx(1.24f).margin(0.01f));  // 0.4 + 12*0.07, capped at 1.3
+    REQUIRE(p.windSpeedCmps == Approx(2000.0f));  // capped for Phillips spectrum
 }
 
 TEST_CASE("Beaufort interpolation is linear between steps", "[ocean][beaufort]") {
@@ -72,7 +72,7 @@ TEST_CASE("Beaufort clamped to 0-12 range", "[ocean][beaufort]") {
     REQUIRE(pNeg.waveAmplitude == Approx(2.0f));  // B0
 
     auto pOver = beaufortToOceanParams(15.0f, 68.0f, 0.0f);
-    REQUIRE(pOver.waveAmplitude == Approx(410.0f));  // B12 max
+    REQUIRE(pOver.waveAmplitude == Approx(50.0f));  // B12 max
 }
 
 // ── Cascade blending weights ────────────────────────────────────────────────

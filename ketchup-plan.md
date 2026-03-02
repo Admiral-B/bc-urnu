@@ -1,62 +1,47 @@
-# Ketchup Plan: Phases 4-6 (Terrain Textures, Tile Performance, GBA Heights)
+# Ketchup Plan: Phases 4-8
 
 ## TODO
 
-(none -- all bursts complete)
+### Phase 9: Ocean Shader Realism
+
+50m FFT tiling is the biggest visual weakness. Three improvements, in order:
+
+- [x] Burst 35: WE spectrumCallback + randomSeed extension -- added to OceanParameters (wiOcean.h), initHeightMap() (wiOcean.cpp). Rebuilt WE lib. [depends: none]
+- [x] Burst 36: OceanCB layout extension -- added normalOverlayIndex, cascade0/2 grad indices and weights to ShaderInterop_Ocean.h + OceanParameters. Deleted all .cso/.wishadermeta. Rebuilt WE lib. [depends: 35]
+- [x] Burst 37: Normal map overlay -- 512x512 FBM noise normal texture, bindless in oceanSurfacePS.hlsl, 500m period with slow animation [depends: 36]
+- [x] Burst 38: Multi-cascade blending -- REVERTED. Aux cascades share 50m patch_length, creating checkerboard artifacts. JONSWAP reverted: peak at typical winds outside FFT range. Phillips retained. [depends: 37]
+- [x] Burst 39: patch_length 50->250m -- eliminates geometric tiling at root cause. K_min drops from 0.126 to 0.025 rad/m, Phillips K^-6 gives ~15000x more energy per mode. BEAUFORT_AMPLITUDE reduced from {2..1700} to {2..50}. choppy_scale 3x compensates GridLen reduction. Normal Y scale hardcoded to 0.2 (decoupled from xOceanTexelLength). Multi-scale VS/PS displacement hacks removed (single clean FFT sample). [depends: 38]
+- [ ] Burst 40: Whitecap foam -- Jacobian fold (gradient.a) values are 1-10+ at current choppy_scale, too broad for simple thresholding. Needs either: (a) reduce choppy_scale and boost fold sensitivity, (b) screen-space foam approach, or (c) separate foam compute pass with proper per-Beaufort thresholds. [depends: 39]
+
+### Phase 8: GLB Ship Model Integration
+
+- [x] Burst 29: `tools/glb_inspect.py` parses GLB, extracts geometry bounds and PBR texture inventory [depends: none]
+- [x] Burst 30: Script generates starter boat.ini with estimated scale, camera views, physics, nav lights [depends: 29]
+- [x] Burst 31: Four GLB othership models added -- CargoShip (170m Handysize), HMS_Clyde (81.5m OPV), USS_Perry (FFG-7 135.6m), USS_Zumwalt (DDG-1000 186m) with hand-tuned boat.ini, nav lights, angle corrections [depends: 30]
+- [x] Burst 32: Ownship directory fallback -- WickedMain.cpp ownship loader now checks Models/Othership/ when model not found in Models/Ownship/ (mirrors existing othership fallback). boat.ini files updated with Views (bridge/wing/overhead), maxSpeedAhead, basic physics for all 4 GLB ships [depends: 31]
+- [ ] Burst 33: In-game tuning pass -- verify bridge camera positions, model waterline alignment, and physics feel for all 4 ships as ownship [depends: 32]
+- [ ] Burst 34: Ownship-specific model enhancements -- MakeTransparent for bridge windows, radar.ini, detailed bridge walk bounds [depends: 33]
 
 ## DONE
 
-### Bottle: TerrainNormalMap
+### Phase 7: Photorealism Improvements
 
-- [x] Burst 1: Sobel normal map from heightmap produces correct tangent-space normals for flat terrain [depends: none]
-- [x] Burst 2: Sobel normal map handles steep slopes and edge pixels correctly [depends: 1]
-- [x] Burst 3: Normal map output is correct dimensions and RGB encoding (128,128,255 = flat) [depends: 2]
+- [x] A1: Post-processing -- HBAO (range=2, power=2), eye adaptation (key=0.08), light shafts (0.03), exposure (1.1)
+- [x] A2: Building wall PBR at runtime -- load normal/roughness maps in createBuildingMeshEntity
+- [x] A3: Building roof PBR at runtime -- same pattern for roof material
+- [x] B1: Roof normal + roughness map generation in editor (tile-edge Sobel + per-material roughness)
+- [x] B2: Wall texture quality -- ground-floor dirt, per-type color temperature, rain streaks
+- [x] B3: Satellite zoom +1 -- REVERTED (1092 tiles exceeded 2min timeout, was 300 at zoom 15)
+- [x] C1: Terrain normal map strength increased to 1.8
 
-### Bottle: TerrainRoughnessMap
+### Phase 4-6: Terrain Textures, Tile Performance, GBA Heights
 
-- [x] Burst 4: Roughness classification returns correct value per land-use type [depends: none]
-- [x] Burst 5: Roughness map generates correct dimensions and single-channel output [depends: 4]
-
-### Bottle: DetailTextureBlending
-
-- [x] Burst 6: Slope-based weight calculation returns rock for steep, grass for flat [depends: none]
-- [x] Burst 7: Water proximity weight calculation returns sand near water, dirt in transition [depends: none]
-- [x] Burst 8: Elevation-based weight shifts grass to rock at high altitude [depends: none]
-- [x] Burst 9: TerrainTextureBlender::blend integrates all weight sources with noise modulation [depends: 6, 7, 8]
-- [x] Burst 10: Close-range detail textures blend into satellite imagery below 500m threshold [depends: 9]
-
-### Bottle: TileThreadPool
-
-- [x] Burst 11: Thread pool distributes work across N workers and completes all queued items [depends: none]
-- [x] Burst 12: Thread pool respects per-domain rate limiting (100ms between same-domain requests) [depends: 11]
-- [x] Burst 13: Thread pool graceful shutdown joins all workers without deadlock [depends: 11]
-
-### Bottle: WinHTTPConnectionPool
-
-- [x] Burst 14: Connection pool creates one HINTERNET session per TileDownloader lifetime [depends: none]
-- [x] Burst 15: Connection pool reuses HINTERNET connect handles per domain [depends: 14]
-- [x] Burst 16: Wire connection pool into TileDownloader::httpDownload replacing per-request session creation [depends: 15]
-
-### Bottle: TileDownloaderMultiThread
-
-- [x] Burst 17: TileDownloader uses thread pool (4 workers) instead of single worker [depends: 11, 12, 13, 16]
-- [x] Burst 18: SatelliteTexture and ElevationTile work correctly with multi-threaded TileDownloader [depends: 17]
-
-### Bottle: ProgressiveWorldGen
-
-- [x] Burst 19: SatelliteTexture supports two-pass generation (low-zoom fast, high-zoom detail) [depends: 17]
-- [x] Burst 20: Editor shows low-res preview immediately while high-res tiles load in background [depends: 19]
-
-### Bottle: GBATileDownloader
-
-- [x] Burst 21: GBA tile name computed correctly from lat/lon bounding box [depends: none]
-- [x] Burst 22: GBA GeoJSON parser extracts building polygons with height and variance [depends: none]
-- [x] Burst 23: GBA spatial index (grid-based) finds nearest polygon for a given centroid [depends: 22]
-- [x] Burst 24: GBA tile download from HuggingFace with disk cache [depends: 21, 23]
-
-### Bottle: GBAHeightEnrichment
-
-- [x] Burst 25: EPSG:4326 to EPSG:3857 coordinate reprojection is accurate [depends: none]
-- [x] Burst 26: OSMBuildingReader enriches footprints without OSM height using GBA data [depends: 24, 25]
-- [x] Burst 27: Buildings with high GBA variance (>threshold) fall back to type-based defaults [depends: 26]
-- [x] Burst 28: heightSource field tracks provenance (osm/gba/default) per building [depends: 26]
+- [x] Bursts 1-3: Sobel normal map from heightmap (TerrainNormalMap)
+- [x] Bursts 4-5: Roughness classification per land-use type (TerrainRoughnessMap)
+- [x] Bursts 6-10: Slope/water/elevation detail texture blending (DetailTextureBlending)
+- [x] Bursts 11-13: Thread pool with rate limiting (TileThreadPool)
+- [x] Bursts 14-16: WinHTTP connection pooling (WinHTTPConnectionPool)
+- [x] Bursts 17-18: Multi-threaded tile downloader (TileDownloaderMultiThread)
+- [x] Bursts 19-20: Two-pass progressive world generation (ProgressiveWorldGen)
+- [x] Bursts 21-24: GBA tile download + GeoJSON parser (GBATileDownloader)
+- [x] Bursts 25-28: GBA height enrichment with provenance tracking (GBAHeightEnrichment)

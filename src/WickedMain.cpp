@@ -1175,6 +1175,21 @@ static wi::ecs::Entity createBuildingMeshEntity(wi::scene::Scene& scene,
             wallMat->SetCastShadow(true);
             if (!wallTexturePath.empty()) {
                 wallMat->textures[wi::scene::MaterialComponent::BASECOLORMAP].name = wallTexturePath;
+                // Load wall PBR maps if they exist alongside the base color texture
+                size_t dirEnd = wallTexturePath.rfind('/');
+                if (dirEnd == std::string::npos) dirEnd = wallTexturePath.rfind('\\');
+                if (dirEnd != std::string::npos) {
+                    std::string dir = wallTexturePath.substr(0, dirEnd + 1);
+                    std::string wallNormal = dir + "building_wall_normal.png";
+                    std::string wallRough = dir + "building_wall_roughness.png";
+                    if (wi::helper::FileExists(wallNormal)) {
+                        wallMat->textures[wi::scene::MaterialComponent::NORMALMAP].name = wallNormal;
+                    }
+                    if (wi::helper::FileExists(wallRough)) {
+                        wallMat->textures[wi::scene::MaterialComponent::SURFACEMAP].name = wallRough;
+                        wallMat->roughness = 1.0f; // let texture drive roughness
+                    }
+                }
             }
             wallMat->CreateRenderData();
         }
@@ -1190,6 +1205,21 @@ static wi::ecs::Entity createBuildingMeshEntity(wi::scene::Scene& scene,
             roofMat->SetCastShadow(true);
             if (!roofTexturePath.empty()) {
                 roofMat->textures[wi::scene::MaterialComponent::BASECOLORMAP].name = roofTexturePath;
+                // Load roof PBR maps if they exist alongside the base color texture
+                size_t dirEnd = roofTexturePath.rfind('/');
+                if (dirEnd == std::string::npos) dirEnd = roofTexturePath.rfind('\\');
+                if (dirEnd != std::string::npos) {
+                    std::string dir = roofTexturePath.substr(0, dirEnd + 1);
+                    std::string roofNormal = dir + "building_roof_normal.png";
+                    std::string roofRough = dir + "building_roof_roughness.png";
+                    if (wi::helper::FileExists(roofNormal)) {
+                        roofMat->textures[wi::scene::MaterialComponent::NORMALMAP].name = roofNormal;
+                    }
+                    if (wi::helper::FileExists(roofRough)) {
+                        roofMat->textures[wi::scene::MaterialComponent::SURFACEMAP].name = roofRough;
+                        roofMat->roughness = 1.0f; // let texture drive roughness
+                    }
+                }
             }
             roofMat->CreateRenderData();
         }
@@ -1416,6 +1446,14 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     renderPath.setFXAAEnabled(true);
     renderPath.setBloomEnabled(true);
     renderPath.setLensFlareEnabled(true);  // depth-tested screen-space flares for nav lights
+    renderPath.setAO(wi::RenderPath3D::AO_HBAO);
+    renderPath.setAORange(2.0f);
+    renderPath.setAOPower(2.0f);
+    renderPath.setEyeAdaptionEnabled(true);
+    renderPath.setEyeAdaptionKey(0.08f);
+    renderPath.setLightShaftsEnabled(true);
+    renderPath.setLightShaftsStrength(0.03f);
+    renderPath.setExposure(1.1f);
     application.ActivatePath(&renderPath);
 
     application.infoDisplay.active = true;
@@ -1487,6 +1525,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     float sunRise = 6.0f, sunSet = 18.0f; // hours (0-24), persisted for day/night cycle
     float ownShipScaleFactor = 1.0f;
     float ownShipHeightCorr = 0;
+    float ownShipPitchCorr = 0, ownShipRollCorr = 0, ownShipAngleCorr = 0;
     float cameraViewX = 0, cameraViewY = 10.0f, cameraViewZ = 0; // bridge position in world coords
     float viewLocalX = 0, viewLocalY = 0, viewLocalZ = 0; // bridge view in ship-local coords (pre-scale)
     float bridgeHalfW = 3.0f, bridgeHalfD = 3.0f; // walkable bridge bounds (meters, ship-local)
@@ -1520,6 +1559,9 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
         float speed;           // current speed (knots)
         float heightCorr;      // Y position
         float scaleFactor;
+        float angleCorr = 0;   // yaw correction from boat.ini
+        float pitchCorr = 0;   // pitch correction from boat.ini
+        float rollCorr = 0;    // roll correction from boat.ini
         int currentLeg;        // index into legs
         float distTravelled;   // nautical miles along current leg
     };
@@ -1877,8 +1919,12 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     weLog("  Setting up own ship...");
     if (!scenarioData.ownShipData.ownShipName.empty()) {
         std::string shipName = scenarioData.ownShipData.ownShipName;
-        std::string basePath = resolveModelPath("Models/Ownship/" + shipName + "/",
-                                                 userFolder, "");
+        // Check Ownship folder first, then fall back to Othership
+        std::string basePath = "Models/Ownship/" + shipName + "/";
+        if (!Utilities::pathExists(basePath) && !Utilities::pathExists(userFolder + basePath)) {
+            basePath = "Models/Othership/" + shipName + "/";
+        }
+        basePath = resolveModelPath(basePath, userFolder, "");
 
         std::string boatIni = basePath + "boat.ini";
         std::string modelFileName = IniFile::iniFileToString(boatIni, "FileName");
@@ -1887,8 +1933,14 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
 
         float yCorrection = IniFile::iniFileTof32(boatIni, "YCorrection");
         float heightCorrection = yCorrection * scaleFactor;
+        float ownAngleCorrection = IniFile::iniFileTof32(boatIni, "AngleCorrection");
+        float ownAngleCorrectionPitch = IniFile::iniFileTof32(boatIni, "AngleCorrectionPitch");
+        float ownAngleCorrectionRoll = IniFile::iniFileTof32(boatIni, "AngleCorrectionRoll");
         ownShipScaleFactor = scaleFactor;
         ownShipHeightCorr = heightCorrection;
+        ownShipAngleCorr = ownAngleCorrection;
+        ownShipPitchCorr = ownAngleCorrectionPitch;
+        ownShipRollCorr = ownAngleCorrectionRoll;
         maxSpeedAhead = IniFile::iniFileTof32(boatIni, "maxSpeedAhead");
         if (maxSpeedAhead <= 0) maxSpeedAhead = 14.0f;
 
@@ -1942,7 +1994,8 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                                                "OwnShip", 0.5f, 0.5f, 0.6f, 20.0f,
                                                true /*allowTransparency: ship windows*/);
         setEntityTransform(scene, ownShipEntity, ownShipX, heightCorrection, ownShipZ,
-                           ownShipHeading, scaleFactor);
+                           ownShipHeading + ownAngleCorrection, scaleFactor,
+                           ownAngleCorrectionPitch, ownAngleCorrectionRoll);
         weLog("  Own ship: " + shipName + " at (" +
               std::to_string(ownShipX) + ", " + std::to_string(ownShipZ) +
               ") heading " + std::to_string(ownShipHeading));
@@ -2254,6 +2307,9 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
         if (scaleFactor <= 0) scaleFactor = 1.0f;
         float yCorrection = IniFile::iniFileTof32(boatIni, "YCorrection");
         float heightCorrection = yCorrection * scaleFactor;
+        float angleCorrection = IniFile::iniFileTof32(boatIni, "AngleCorrection");
+        float angleCorrectionPitch = IniFile::iniFileTof32(boatIni, "AngleCorrectionPitch");
+        float angleCorrectionRoll = IniFile::iniFileTof32(boatIni, "AngleCorrectionRoll");
 
         float shipX = coords.longToX(shipData.initialLong);
         float shipZ = coords.latToZ(shipData.initialLat);
@@ -2270,7 +2326,8 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                                                              objName, 0.6f, 0.6f, 0.6f, 15.0f,
                                                              true /*allowTransparency: ship windows*/);
         setEntityTransform(scene, shipEntity, shipX, heightCorrection, shipZ,
-                           heading, scaleFactor);
+                           heading + angleCorrection, scaleFactor,
+                           angleCorrectionPitch, angleCorrectionRoll);
 
         // Store state for movement simulation
         otherShipStates[s].entity = shipEntity;
@@ -2280,6 +2337,9 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
         otherShipStates[s].speed = speed;
         otherShipStates[s].heightCorr = heightCorrection;
         otherShipStates[s].scaleFactor = scaleFactor;
+        otherShipStates[s].angleCorr = angleCorrection;
+        otherShipStates[s].pitchCorr = angleCorrectionPitch;
+        otherShipStates[s].rollCorr = angleCorrectionRoll;
         otherShipStates[s].currentLeg = 0;
         otherShipStates[s].distTravelled = 0;
 
@@ -3283,8 +3343,8 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
 
             if (ownShipEntity != wi::ecs::INVALID_ENTITY) {
                 setEntityTransform(scene, ownShipEntity, ownShipX, ownShipY, ownShipZ,
-                                   ownShipHeading, ownShipScaleFactor,
-                                   0.0f, 0.0f); // zero pitch/roll
+                                   ownShipHeading + ownShipAngleCorr, ownShipScaleFactor,
+                                   ownShipPitchCorr, ownShipRollCorr);
             }
 
             // Shader-based Kelvin wake: write ship data into ocean static wake storage
@@ -3321,7 +3381,8 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                     st.z = SimBridge::getOtherShipPosZ(s);
                     st.heading = SimBridge::getOtherShipHeading(s);
                     setEntityTransform(scene, st.entity, st.x, st.heightCorr, st.z,
-                                       st.heading, st.scaleFactor);
+                                       st.heading + st.angleCorr, st.scaleFactor,
+                                       st.pitchCorr, st.rollCorr);
                     float otherSpeedMps = SimBridge::getOtherShipSpeed(s);
                     if (otherSpeedMps > 0.5f && wakeIdx < 8) {
                         float hRad = st.heading * (float)M_PI / 180.0f;

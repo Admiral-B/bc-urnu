@@ -11,12 +11,13 @@
 #ifdef WITH_WICKED_ENGINE
 
 #include "../Types.hpp"
+#include <memory>
 
 // Forward declarations
 namespace wi {
     class Ocean;
     namespace scene { struct Scene; }
-    namespace graphics { struct CommandList; }
+    namespace graphics { struct CommandList; struct Texture; }
 }
 
 namespace bc { namespace graphics { namespace wicked {
@@ -121,13 +122,15 @@ private:
     float lastWindDir_ = 0.0f;
     bool visible_ = true;
 
-    // We store cascade ocean instances as indices into the scene's weather
-    // and use the scene's built-in ocean. For additional cascades we create
-    // separate wi::Ocean instances.
     struct CascadeData {
         bool initialized = false;
+        std::unique_ptr<wi::Ocean> ocean; // null for cascade 1 (uses scene ocean)
     };
     CascadeData cascadeData[NUM_CASCADES];
+
+    // Normal map overlay for large-scale tiling breakup (Phase B)
+    int normalOverlayDescIdx_ = -1;
+    void generateNormalOverlay();
 
     void createCascade(int index, float windSpeedMps, float windDirRad);
 

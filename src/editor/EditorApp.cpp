@@ -3368,6 +3368,45 @@ void EditorApp::generateWorldFromArea() {
                                     g = (uint8_t)(g * factor);
                                     b = (uint8_t)(b * factor);
 
+                                    // Ground-floor dirt (bottom 15% of UV)
+                                    if (weatherY > 0.85f) {
+                                        float dirtAmount = (weatherY - 0.85f) / 0.15f; // 0..1
+                                        float dirtFactor = 1.0f - dirtAmount * 0.18f;
+                                        float dirtNoise = vnoise(cx * 0.04f, cy * 0.02f, 9000 + wallType) * 0.06f;
+                                        dirtFactor -= dirtNoise;
+                                        r = (uint8_t)std::clamp((int)(r * dirtFactor), 0, 255);
+                                        g = (uint8_t)std::clamp((int)(g * dirtFactor), 0, 255);
+                                        b = (uint8_t)std::clamp((int)(b * dirtFactor), 0, 255);
+                                    }
+
+                                    // Per-type color temperature (residential=warm, industrial=brownish)
+                                    if (wallType == 0) { // brick: warm residential
+                                        r = (uint8_t)std::min(255, (int)r + 6);
+                                        b = (uint8_t)std::max(0, (int)b - 3);
+                                    } else if (wallType == 2) { // stone: industrial brownish
+                                        r = (uint8_t)std::min(255, (int)r + 5);
+                                        g = (uint8_t)std::min(255, (int)g + 2);
+                                        b = (uint8_t)std::max(0, (int)b - 5);
+                                    }
+
+                                    // Rain streak stains below window sills
+                                    if (cy > winY0 + winH && !isWindow(cx, cy) && !isWindowFrame(cx, cy)) {
+                                        for (int wx : {win1X, win2X}) {
+                                            if (cx >= wx + 5 && cx < wx + winW - 5) {
+                                                // Vertical streak column under window
+                                                int col = cx - wx;
+                                                if ((hash(col, wallType + 500) % 50) < 1) {
+                                                    float dist = (float)(cy - (winY0 + winH)) / cellH;
+                                                    float streakFade = std::max(0.0f, 1.0f - dist * 4.0f);
+                                                    float streakAmt = streakFade * 0.12f;
+                                                    r = (uint8_t)std::max(0, (int)(r * (1.0f - streakAmt)));
+                                                    g = (uint8_t)std::max(0, (int)(g * (1.0f - streakAmt)));
+                                                    b = (uint8_t)std::max(0, (int)(b * (1.0f - streakAmt)));
+                                                }
+                                            }
+                                        }
+                                    }
+
                                     wallTex[idx] = r; wallTex[idx+1] = g; wallTex[idx+2] = b;
                                 }
                             }
@@ -3538,6 +3577,80 @@ void EditorApp::generateWorldFromArea() {
                         }
                         SatelliteTexture::writePNG(outputDir + "/building_roof.png", roofTex, roofAtlasW, roofAtlasH);
 
+                        // --- Roof normal map (derived from tile edge height field) ---
+                        {
+                            // Build height field: tiles are raised, gaps are recessed
+                            std::vector<float> roofHeight(roofAtlasW * roofAtlasH, 1.0f);
+                            for (int roofType = 0; roofType < 4; roofType++) {
+                                int rx0 = (roofType % 2) * roofCellW;
+                                int ry0 = (roofType / 2) * roofCellH;
+                                const int tileH = 20, tileW = 40;
+                                for (int py = 0; py < roofCellH; py++) {
+                                    for (int px = 0; px < roofCellW; px++) {
+                                        int row = py / tileH;
+                                        int offX = (row % 2) ? tileW/2 : 0;
+                                        int tx = (px + offX) % tileW;
+                                        int ty = py % tileH;
+                                        float h = 1.0f;
+                                        // 3px recess at tile edges
+                                        if (tx <= 2 || ty <= 2) h = 0.0f;
+                                        else if (tx <= 4 || ty <= 4) h = 0.5f;
+                                        roofHeight[(ry0 + py) * roofAtlasW + (rx0 + px)] = h;
+                                    }
+                                }
+                            }
+                            // Sobel -> normal map
+                            std::vector<uint8_t> roofNorm(roofAtlasW * roofAtlasH * 3);
+                            for (int y = 0; y < roofAtlasH; y++) {
+                                for (int x = 0; x < roofAtlasW; x++) {
+                                    int x0 = std::max(0, x - 1), x1 = std::min(roofAtlasW - 1, x + 1);
+                                    int y0 = std::max(0, y - 1), y1 = std::min(roofAtlasH - 1, y + 1);
+                                    float dx = roofHeight[y * roofAtlasW + x1] - roofHeight[y * roofAtlasW + x0];
+                                    float dy = roofHeight[y1 * roofAtlasW + x] - roofHeight[y0 * roofAtlasW + x];
+                                    float nx = -dx * 4.0f, ny = -dy * 4.0f, nz = 1.0f;
+                                    float len = std::sqrt(nx*nx + ny*ny + nz*nz);
+                                    nx /= len; ny /= len; nz /= len;
+                                    int idx = (y * roofAtlasW + x) * 3;
+                                    roofNorm[idx]     = (uint8_t)std::clamp((int)(nx * 127.5f + 127.5f), 0, 255);
+                                    roofNorm[idx + 1] = (uint8_t)std::clamp((int)(ny * 127.5f + 127.5f), 0, 255);
+                                    roofNorm[idx + 2] = (uint8_t)std::clamp((int)(nz * 127.5f + 127.5f), 0, 255);
+                                }
+                            }
+                            SatelliteTexture::writePNG(outputDir + "/building_roof_normal.png", roofNorm, roofAtlasW, roofAtlasH);
+                        }
+
+                        // --- Roof roughness map ---
+                        {
+                            std::vector<uint8_t> roofRough(roofAtlasW * roofAtlasH * 3);
+                            const float roofBaseRough[4] = { 0.85f, 0.70f, 0.80f, 0.40f }; // slate, terracotta, brown, zinc
+                            for (int roofType = 0; roofType < 4; roofType++) {
+                                int rx0 = (roofType % 2) * roofCellW;
+                                int ry0 = (roofType / 2) * roofCellH;
+                                const int tileH = 20, tileW = 40;
+                                float baseR = roofBaseRough[roofType];
+                                for (int py = 0; py < roofCellH; py++) {
+                                    for (int px = 0; px < roofCellW; px++) {
+                                        float r = baseR;
+                                        // Weathering: lower tiles rougher
+                                        float weatherY = (float)py / roofCellH;
+                                        r += weatherY * 0.08f;
+                                        // Tile edge grooves are smoother (water channels)
+                                        int row = py / tileH;
+                                        int offX = (row % 2) ? tileW/2 : 0;
+                                        int tx = (px + offX) % tileW;
+                                        int ty = py % tileH;
+                                        if (tx <= 2 || ty <= 2) r -= 0.1f;
+                                        // Micro-variation
+                                        r += (float)(hash(px + 9999, py + 8888 + roofType * 2222) % 100) / 2000.0f - 0.025f;
+                                        uint8_t rv = (uint8_t)std::clamp((int)(r * 255.0f), 0, 255);
+                                        int idx = ((ry0 + py) * roofAtlasW + (rx0 + px)) * 3;
+                                        roofRough[idx] = rv; roofRough[idx+1] = rv; roofRough[idx+2] = rv;
+                                    }
+                                }
+                            }
+                            SatelliteTexture::writePNG(outputDir + "/building_roof_roughness.png", roofRough, roofAtlasW, roofAtlasH);
+                        }
+
                         // Write MTL with two materials
                         std::ofstream mtl(outputDir + "/buildings.mtl");
                         if (mtl.is_open()) {
@@ -3562,6 +3675,8 @@ void EditorApp::generateWorldFromArea() {
                             mtl << "Pr 0.85\n";
                             mtl << "Pm 0.0\n";
                             mtl << "map_Kd building_roof.png\n";
+                            mtl << "map_bump building_roof_normal.png\n";
+                            mtl << "map_Pr building_roof_roughness.png\n";
                         }
                     }
 

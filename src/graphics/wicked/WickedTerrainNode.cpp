@@ -235,6 +235,7 @@ bool WickedTerrainNode::createTerrainMesh(const std::string& texturePath) {
                     material->textures[MaterialComponent::NORMALMAP].name = normalFile;
                     material->textures[MaterialComponent::NORMALMAP].resource =
                         wi::resourcemanager::Load(normalFile);
+                    material->normalMapStrength = 1.8f; // stronger normals for visible terrain detail
                     std::cout << "WickedTerrainNode: normal map loaded: " << normalFile << std::endl;
                 }
                 if (wi::helper::FileExists(roughFile)) {
