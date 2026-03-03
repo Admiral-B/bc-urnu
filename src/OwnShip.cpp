@@ -2160,14 +2160,15 @@ void OwnShip::update(float deltaTime, float scenarioTime, float tideHeight, floa
                 - sternThruster * sternThrusterMaxForce * sternThrusterDistance;
 
             // Added Resistance in Waves (Stawave-1 ITTC)
-            {
+            // Only opposes forward motion; ramps in with speed.
+            if (speedThroughWater > 0.1f) {
                 float windDirDeg = model->getWindDirection();
                 float wavePropRad = (windDirDeg + 180.0f) * irr::core::DEGTORAD;
                 float mu = hdg * irr::core::DEGTORAD - wavePropRad; // heading relative to waves
                 float beaufort = weather; // weather is already 0-12 Beaufort
                 float Hs = bc::WaveMotion::beaufortToHs(beaufort);
                 float raw = bc::WaveMotion::addedResistanceInWaves(Hs, breadth, length, mu);
-                extAxialForce -= raw; // opposes forward motion
+                extAxialForce -= raw * std::min(1.0f, speedThroughWater / 2.0f);
             }
 
             axialSpd += extAxialForce / shipMass * deltaTime;
@@ -2218,14 +2219,17 @@ void OwnShip::update(float deltaTime, float scenarioTime, float tideHeight, floa
                 axialDrag = dynamicsSpeedA * speedThroughWater * speedThroughWater + dynamicsSpeedB * speedThroughWater;
             }
             // Added Resistance in Waves (Stawave-1 ITTC)
+            // Only opposes forward motion; a stationary ship doesn't experience added wave resistance.
             float waveResistance = 0.0f;
-            {
+            if (speedThroughWater > 0.1f) {
                 float windDirDeg = model->getWindDirection();
                 float wavePropRad = (windDirDeg + 180.0f) * irr::core::DEGTORAD;
                 float mu = hdg * irr::core::DEGTORAD - wavePropRad;
                 float beaufort = weather; // weather is already 0-12 Beaufort
                 float Hs = bc::WaveMotion::beaufortToHs(beaufort);
-                waveResistance = bc::WaveMotion::addedResistanceInWaves(Hs, breadth, length, mu);
+                float raw = bc::WaveMotion::addedResistanceInWaves(Hs, breadth, length, mu);
+                // Ramp in with speed: zero at 0 m/s, full above 2 m/s (~4 knots)
+                waveResistance = raw * std::min(1.0f, speedThroughWater / 2.0f);
             }
             float axialAcceleration = (portAxialThrust + stbdAxialThrust - axialDrag - groundingAxialDrag - axialWindDrag - waveResistance) / shipMass;
             // Check acceleration plausibility (not more than 1g = 9.81ms/2)

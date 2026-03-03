@@ -127,6 +127,86 @@ namespace OceanSpectrum {
         return std::sqrt(2.0f * S * directional * dOmega * dk * dk);
     }
 
+    // ------------------------------------------------------------------
+    //  Hasselmann frequency-dependent directional spreading (1980)
+    // ------------------------------------------------------------------
+
+    /// Hasselmann spreading parameter s(omega).
+    /// Controls angular width of wave energy at each frequency.
+    /// s_peak=3 chosen for single-cascade 512-point FFT:
+    ///   - At peak: s=3, half-power at +-37 deg (broader than cos^2's +-22 deg)
+    ///   - At 2x peak: s=0.5, nearly omnidirectional (chaotic short waves)
+    /// Physical value is 11.5, but that's NARROWER than cos^2 at the peak and
+    /// requires multi-cascade to look right. With one cascade, we need broader
+    /// spreading to break the accordion pattern.
+    inline float hasselmannS(float omega, float omega_peak, float s_peak = 3.0f) {
+        if (omega_peak < 1e-6f) return s_peak;
+        float ratio = omega / omega_peak;
+        float mu = (omega <= omega_peak) ? 5.0f : -2.5f;
+        float s = s_peak * std::pow(std::max(0.01f, ratio), mu);
+        return std::max(0.5f, std::min(s, 100.0f));
+    }
+
+    /// Hasselmann directional spreading D(theta, omega).
+    /// D = cos^(2s)(theta/2) where theta is angle from wind direction.
+    /// @param cosTheta cos(angle between wave vector and wind direction)
+    /// @param s spreading parameter from hasselmannS()
+    inline float hasselmannD(float cosTheta, float s) {
+        // theta = acos(cosTheta), but we need cos(theta/2)
+        // cos(theta/2) = sqrt((1 + cosTheta) / 2)
+        float cosHalf = std::sqrt(std::max(0.0f, (1.0f + cosTheta) * 0.5f));
+        return std::pow(cosHalf, 2.0f * s);
+    }
+
+    /// Phillips spectrum with Hasselmann directional spreading.
+    /// Uses the same non-directional Phillips energy as WE, but replaces
+    /// the cos^2(theta) term with frequency-dependent Hasselmann spreading.
+    /// This is the key fix for the "accordion" pattern: short waves spread
+    /// broadly across directions, creating a chaotic sea surface.
+    ///
+    /// @param kx, kz Wave vector components (rad/m, from FFT grid)
+    /// @param windDirX, windDirZ Normalized wind direction
+    /// @param windSpeedCmps Wind speed (cm/s, WE convention)
+    /// @param waveAmplitude WE wave_amplitude parameter
+    inline float PhillipsHasselmann(float kx, float kz,
+                                     float windDirX, float windDirZ,
+                                     float windSpeedCmps, float waveAmplitude) {
+        float k2 = kx * kx + kz * kz;
+        if (k2 < 1e-12f) return 0.0f;
+        float k = std::sqrt(k2);
+
+        // Phillips non-directional spectrum.
+        // WE Phillips = a * exp(-1/(L^2*k^2)) / k^6 * (kDotW)^2
+        //             = a * exp(-1/(L^2*k^2)) / k^4 * cos^2(theta)
+        // Non-directional part is / k^4 (the k^2 from (kDotW)^2 cancels two of the k^6).
+        float v = windSpeedCmps;
+        float L = v * v / G_CM;
+        float dampL = L / 1000.0f;
+        float a = waveAmplitude * 1e-7f;
+        float S_nd = a * std::exp(-1.0f / (L * L * k2)) / (k2 * k2);  // k^4, NOT k^6
+        S_nd *= std::exp(-k2 * dampL * dampL);
+        if (S_nd <= 0.0f) return 0.0f;
+
+        // Deep water dispersion: omega = sqrt(g * k)
+        float omega = std::sqrt(G * k);
+        // Peak frequency from Pierson-Moskowitz: omega_p = g / U
+        float windMps = windSpeedCmps / 100.0f;
+        float omega_peak = (windMps > 0.3f) ? G / windMps : 30.0f;
+
+        // Frequency-dependent spreading
+        float s = hasselmannS(omega, omega_peak);
+
+        // Angle between wave vector and wind
+        float kNormX = kx / k;
+        float kNormZ = kz / k;
+        float cosTheta = kNormX * windDirX + kNormZ * windDirZ;
+
+        float D = hasselmannD(cosTheta, s);
+
+        // Return sqrt(S * D) -- matches WE's sqrt(Phillips(...)) format
+        return std::sqrt(S_nd * D);
+    }
+
     /// TMA spectrum (Texel-MARSEN-ARSLOE) for shallow water.
     /// Applies a depth-dependent transfer function to JONSWAP.
     ///

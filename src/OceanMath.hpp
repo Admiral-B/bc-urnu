@@ -34,13 +34,10 @@ namespace OceanMath {
     };
 
     /// Wave amplitude for WE ocean at each Beaufort step (WE units).
-    /// Calibrated for patch_length=250m. B0-B3 are deliberately low to
-    /// ensure calm seas look calm. Phillips spectrum wind speed is capped
-    /// to the Beaufort-implied maximum (see beaufortToOceanParams) so that
-    /// high actual wind doesn't produce excessive waves at low sea states.
+    /// Calibrated for patch_length=1000m with PhillipsHasselmann spectrum.
     static constexpr float BEAUFORT_AMPLITUDE[13] = {
-    //  B0     B1    B2    B3   B4   B5   B6   B7   B8   B9  B10  B11  B12
-        0.05f, 0.15f,0.5f, 1.5f,4,  10,  18,  27,  34,  40,  45,  48,  50
+    //  B0        B1       B2       B3      B4      B5      B6      B7      B8      B9     B10    B11    B12
+        0.00002f, 0.00008f,0.0002f, 0.0008f,0.002f, 0.005f, 0.009f, 0.013f, 0.017f, 0.020f,0.022f,0.023f,0.024f
     };
 
     struct OceanParams {
@@ -232,6 +229,105 @@ namespace OceanMath {
     inline float beaufortToGamma(float beaufort) {
         if (beaufort <= 7.0f) return 3.3f;  // standard JONSWAP
         return 3.3f - (beaufort - 7.0f) * 0.46f;  // taper to 1.0 at B12
+    }
+
+    // ------------------------------------------------------------------
+    //  Fetch-limited wave reduction (SPM/CEM)
+    // ------------------------------------------------------------------
+
+    /// Compute fetch-limited significant wave height using the
+    /// Shore Protection Manual depth-and-fetch formula.
+    /// @param windSpeedMps  Wind speed at 10m (m/s)
+    /// @param fetchMeters   Effective fetch distance (m)
+    /// @param depthMeters   Water depth (m, positive down). Use >100 for deep water.
+    /// @return Hs in meters
+    inline float fetchLimitedHs(float windSpeedMps, float fetchMeters, float depthMeters = 100.0f) {
+        if (windSpeedMps < 0.5f || fetchMeters < 100.0f) return 0.0f;
+
+        // Adjusted wind speed (SPM convention)
+        float UA = 0.71f * std::pow(windSpeedMps, 1.23f);
+        float UA2 = UA * UA;
+
+        // Depth-limiting term
+        float A1 = 0.53f * std::pow(G * depthMeters / UA2, 0.75f);
+        float tA1 = std::tanh(A1);
+
+        // Fetch-limiting term
+        float A2 = 0.00565f * std::sqrt(G * fetchMeters / UA2);
+        float tA2_ratio = std::tanh(A2 / std::max(tA1, 0.001f));
+
+        return (UA2 / G) * 0.283f * tA1 * tA2_ratio;
+    }
+
+    /// Fully developed (unlimited fetch) significant wave height.
+    /// Pierson-Moskowitz limit: Hs = 0.22 * U10^2 / g
+    inline float fullyDevelopedHs(float windSpeedMps) {
+        return 0.22f * windSpeedMps * windSpeedMps / G;
+    }
+
+    /// Compute wave amplitude reduction factor due to fetch limitation.
+    /// Returns a value in [0, 1] that should multiply wave_amplitude.
+    /// Since energy ~ amplitude and Hs ~ sqrt(energy), the amplitude
+    /// scale is (Hs_local / Hs_open)^2.
+    /// @param windSpeedMps  Wind speed at 10m (m/s)
+    /// @param fetchMeters   Effective fetch (m)
+    /// @param depthMeters   Water depth (m, >100 for deep water)
+    inline float fetchReductionFactor(float windSpeedMps, float fetchMeters, float depthMeters = 100.0f) {
+        float hsOpen = fullyDevelopedHs(windSpeedMps);
+        if (hsOpen < 0.01f) return 1.0f;
+
+        float hsLocal = fetchLimitedHs(windSpeedMps, fetchMeters, depthMeters);
+        float ratio = std::min(hsLocal / hsOpen, 1.0f);
+        return ratio * ratio; // amplitude scales as Hs^2
+    }
+
+    /// Estimate effective fetch using SPM radial method.
+    /// Casts 9 rays at 3-degree spacing around wind direction.
+    /// @param shipX, shipZ  Ship position in world coords
+    /// @param windDirRad    Wind propagation direction (radians, math convention)
+    /// @param heightQuery   Returns terrain height at (x,z). Positive = land.
+    /// @param stepSize      Ray-march step size in meters (default 200m)
+    /// @param maxFetch      Maximum fetch distance (default 300km)
+    /// @return Effective fetch in meters
+    inline float estimateEffectiveFetch(
+        float shipX, float shipZ, float windDirRad,
+        const std::function<float(float, float)>& heightQuery,
+        float stepSize = 200.0f, float maxFetch = 300000.0f)
+    {
+        if (!heightQuery) return maxFetch;
+
+        constexpr int NUM_RADIALS = 9;
+        constexpr float SPACING_DEG = 3.0f;
+        constexpr float DEG_TO_RAD = PI / 180.0f;
+
+        float sumWeighted = 0.0f;
+        float sumWeights = 0.0f;
+
+        for (int i = -(NUM_RADIALS / 2); i <= (NUM_RADIALS / 2); i++) {
+            float angle = windDirRad + i * SPACING_DEG * DEG_TO_RAD;
+            // Wind comes FROM this direction, so fetch is UPWIND
+            // (opposite to propagation direction)
+            float dirX = -std::sin(angle); // upwind
+            float dirZ = -std::cos(angle);
+
+            float fetchDist = maxFetch;
+            for (float d = stepSize; d <= maxFetch; d += stepSize) {
+                float qx = shipX + dirX * d;
+                float qz = shipZ + dirZ * d;
+                float h = heightQuery(qx, qz);
+                if (h > 0.0f) { // hit land
+                    fetchDist = d;
+                    break;
+                }
+            }
+
+            float theta = i * SPACING_DEG * DEG_TO_RAD;
+            float weight = std::cos(theta);
+            sumWeighted += fetchDist * weight;
+            sumWeights += weight;
+        }
+
+        return (sumWeights > 0.0f) ? sumWeighted / sumWeights : maxFetch;
     }
 
 } // namespace OceanMath

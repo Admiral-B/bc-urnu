@@ -29,9 +29,9 @@ namespace bc { namespace graphics { namespace wicked {
 const WickedMultiCascadeOcean::CascadeConfig
 WickedMultiCascadeOcean::DEFAULT_CONFIGS[NUM_CASCADES] = {
     // patchLength, fftRes, waveAmp, choppy, minDist, maxDist
-    {  500.0f, 256,   300.0f, 0.4f,  200.0f, 5000.0f },  // Far swells
-    {  250.0f, 512,   300.0f, 0.5f,    0.0f, 1000.0f },  // Primary wind waves (250m = invisible tiling)
-    {   50.0f, 256,   300.0f, 0.6f,    0.0f,  200.0f },  // Near ripples
+    {  500.0f, 256,   300.0f, 0.4f,  200.0f, 5000.0f },  // Far swells (unused)
+    { 1000.0f, 512,   300.0f, 0.5f,    0.0f, 1000.0f },  // Primary wind waves (1000m = invisible tiling from bridge)
+    {   50.0f, 256,   300.0f, 0.6f,    0.0f,  200.0f },  // Near ripples (unused)
 };
 
 WickedMultiCascadeOcean::WickedMultiCascadeOcean() {
@@ -64,7 +64,7 @@ void WickedMultiCascadeOcean::load(wi::scene::Scene* scene, float weather, int /
     init(scene, p.windSpeedMps, windDirRad);
 }
 
-void WickedMultiCascadeOcean::update(float tideHeight, const Vec3& /*viewPosition*/,
+void WickedMultiCascadeOcean::update(float tideHeight, const Vec3& viewPosition,
                                       int /*lightLevel*/, float weather,
                                       float windSpeedKts, float windDirectionDeg) {
     if (!weScene) return;
@@ -76,15 +76,43 @@ void WickedMultiCascadeOcean::update(float tideHeight, const Vec3& /*viewPositio
     // Map Beaufort + wind to ocean parameters using shared math
     auto p = beaufortToOceanParams(weather, windSpeedKts, windDirectionDeg);
 
+    // Fetch estimation: recompute when ship moves >500m or wind changes >15deg
+    float windDirRad = std::atan2(p.windDirX, p.windDirZ);
+    float shipX = viewPosition.x, shipZ = viewPosition.z;
+    float moveDist = std::sqrt((shipX - cachedFetchX_) * (shipX - cachedFetchX_) +
+                               (shipZ - cachedFetchZ_) * (shipZ - cachedFetchZ_));
+    float windDirDelta = std::abs(windDirRad - cachedFetchWindDir_);
+    if (windDirDelta > 3.14159f) windDirDelta = 6.28318f - windDirDelta;
+
+    if (moveDist > 500.0f || windDirDelta > 0.26f || cachedFetchWindDir_ < -900.0f) {
+        bool firstCompute = (cachedFetchWindDir_ < -900.0f);
+        cachedFetch_ = estimateEffectiveFetch(shipX, shipZ, windDirRad, terrainHeightQuery_);
+        cachedFetchX_ = shipX;
+        cachedFetchZ_ = shipZ;
+        cachedFetchWindDir_ = windDirRad;
+        if (firstCompute) {
+            float fs = fetchReductionFactor(p.windSpeedMps, cachedFetch_);
+            std::cout << "[Ocean] Fetch estimate: " << (cachedFetch_ / 1000.0f)
+                      << " km, wind=" << p.windSpeedMps << " m/s"
+                      << ", reduction=" << fs
+                      << ", amp " << p.waveAmplitude << " -> " << (p.waveAmplitude * fs)
+                      << std::endl;
+        }
+    }
+
+    // Apply fetch reduction to wave amplitude
+    float fetchScale = fetchReductionFactor(p.windSpeedMps, cachedFetch_);
+    float adjustedAmp = p.waveAmplitude * fetchScale;
+
     // Update primary cascade amplitude/choppiness from Beaufort
     auto& op = weScene->weather.oceanParameters;
     op.waterHeight = tideHeight;
-    op.wave_amplitude = p.waveAmplitude;
-    op.choppy_scale = p.choppyScale * 3.0f; // Compensate for GridLen reduction at patch=250m
+    op.wave_amplitude = adjustedAmp;
+    op.choppy_scale = p.choppyScale * 0.3f * std::sqrt(fetchScale);
+    op.time_scale = 0.35f;
     op.surfaceDisplacementTolerance = 2.0f + currentWeather_ * 0.5f;
 
     // Check if wind changed enough to regenerate spectrum
-    float windDirRad = std::atan2(p.windDirX, p.windDirZ);
     float speedRatio = (lastWindSpeed_ > 0.5f)
         ? std::abs(p.windSpeedMps - lastWindSpeed_) / lastWindSpeed_
         : (p.windSpeedMps > 0.5f ? 1.0f : 0.0f);
@@ -95,7 +123,13 @@ void WickedMultiCascadeOcean::update(float tideHeight, const Vec3& /*viewPositio
         op.wind_dir = XMFLOAT2(p.windDirX, p.windDirZ);
         op.wind_speed = p.windSpeedCmps;
 
-        // Phillips spectrum (WE built-in) handles wind change automatically
+        // Reset spectrumCallback with current wind params (captured by value)
+        float wsCmps = op.wind_speed;
+        float wAmp = op.wave_amplitude;
+        op.spectrumCallback = [wsCmps, wAmp](float kx, float kz, float wdx, float wdz) -> float {
+            return OceanSpectrum::PhillipsHasselmann(kx, kz, wdx, wdz, wsCmps, wAmp);
+        };
+
         weScene->ocean.Create(op);
         lastWindSpeed_ = p.windSpeedMps;
         lastWindDir_ = windDirRad;
@@ -145,29 +179,45 @@ static float smoothNoise2D(float x, float y) {
     return a + (b - a) * ux + (c - a) * uy + (a - b - c + d) * ux * uy;
 }
 
-static float fbmNoise(float x, float y, int octaves) {
+// Ridged multifractal noise: creates sharp crests like real capillary waves.
+// Unlike smooth FBM, abs(noise) produces sharp zero-crossings that look like wave ridges.
+static float ridgedNoise(float x, float y, int octaves, float lacunarity = 2.0f) {
     float value = 0.0f;
-    float amplitude = 0.5f;
+    float amplitude = 1.0f;
     float frequency = 1.0f;
+    float weight = 1.0f;
     for (int i = 0; i < octaves; i++) {
-        value += amplitude * smoothNoise2D(x * frequency, y * frequency);
+        float signal = 1.0f - std::abs(smoothNoise2D(x * frequency, y * frequency));
+        signal *= signal; // Square for sharper crests
+        signal *= weight;
+        weight = std::min(1.0f, std::max(0.0f, signal * 2.0f)); // Crests seed next octave
+        value += signal * amplitude;
         amplitude *= 0.5f;
-        frequency *= 2.0f;
+        frequency *= lacunarity;
     }
     return value;
 }
 
 void WickedMultiCascadeOcean::generateNormalOverlay() {
     const int SIZE = 512;
-    const float SCALE = 4.0f; // UV repetitions across the texture
+    const float SCALE = 6.0f; // UV repetitions across the texture
 
-    // Generate height field from multi-octave noise
+    // Generate height field using ridged noise for sharp wave-crest features.
+    // Two layers at different orientations break the single-direction look.
     std::vector<float> heights(SIZE * SIZE);
     for (int y = 0; y < SIZE; y++) {
         for (int x = 0; x < SIZE; x++) {
             float u = (float)x / SIZE * SCALE;
             float v = (float)y / SIZE * SCALE;
-            heights[y * SIZE + x] = fbmNoise(u + 73.1f, v + 149.7f, 5);
+
+            // Primary wave crests: slightly stretched along one axis (anisotropic)
+            float h1 = ridgedNoise(u * 1.0f + 73.1f, v * 1.6f + 149.7f, 6);
+            // Secondary crests: rotated ~60 degrees, different offset
+            float u2 = u * 0.866f - v * 0.5f;
+            float v2 = u * 0.5f + v * 0.866f;
+            float h2 = ridgedNoise(u2 * 1.3f + 37.9f, v2 * 1.0f + 213.4f, 5);
+
+            heights[y * SIZE + x] = h1 * 0.6f + h2 * 0.4f;
         }
     }
 
@@ -184,10 +234,10 @@ void WickedMultiCascadeOcean::generateNormalOverlay() {
             float dhdx = heights[y * SIZE + xp] - heights[y * SIZE + xm];
             float dhdy = heights[yp * SIZE + x] - heights[ym * SIZE + x];
 
-            // Normal = normalize(-dhdx, 1, -dhdy), but we only store XY
-            // Scale gradient for visible but subtle effect
-            float nx = -dhdx * 2.0f;
-            float ny = -dhdy * 2.0f;
+            // Normal = normalize(-dhdx, 1, -dhdy), store XY in [0,1] encoding.
+            // Scale 3x for pronounced ridged features (sampled with amplitude control in PS).
+            float nx = -dhdx * 3.0f;
+            float ny = -dhdy * 3.0f;
             // Clamp to [-1, 1]
             nx = std::max(-1.0f, std::min(1.0f, nx));
             ny = std::max(-1.0f, std::min(1.0f, ny));
@@ -250,19 +300,16 @@ void WickedMultiCascadeOcean::init(wi::scene::Scene* scene,
     op.patch_length = configs[1].patchLength;
     op.dmap_dim = configs[1].fftResolution;
     op.wave_amplitude = configs[1].waveAmplitude;
-    // Choppy scale compensates for xOceanGridLen reduction at larger patch_length.
-    // GridLen = dmap_dim/patch_length: at 250m it's 2.05 vs 10.24 at 50m (5x smaller).
-    // 3x (not 5x) because longer-wavelength waves have smoother gradients.
-    op.choppy_scale = configs[1].choppyScale * 3.0f;
-    op.time_scale = 0.2f;
+    op.choppy_scale = configs[1].choppyScale * 0.3f;
+    op.time_scale = 0.35f;
     op.waterHeight = waterHeight_;
 
-    // Water appearance: dark murky green-grey (North Sea/Atlantic look).
-    // Lower alpha = more light penetrates = less mirror-like reflection.
-    op.waterColor = XMFLOAT4(0.01f, 0.03f, 0.025f, 0.25f);
-    // Extinction: muted blue-green, not vivid blue. Controls subsurface color.
-    op.extinctionColor = XMFLOAT4(0.12f, 0.35f, 0.28f, 1.0f);
-    op.surfaceDetail = 4;
+    // Water appearance: grey-green (North Sea/Atlantic).
+    // Higher albedo so body color is visible, not pure black at grazing angles.
+    op.waterColor = XMFLOAT4(0.03f, 0.07f, 0.06f, 0.3f);
+    // Extinction: blue-green subsurface tint. Controls light absorption with depth.
+    op.extinctionColor = XMFLOAT4(0.15f, 0.40f, 0.32f, 1.0f);
+    op.surfaceDetail = 2;
     op.surfaceDisplacementTolerance = 2.0f + currentWeather_ * 0.5f;
 
     // Set wind direction
@@ -271,12 +318,17 @@ void WickedMultiCascadeOcean::init(wi::scene::Scene* scene,
     op.wind_dir = XMFLOAT2(dirX, dirZ);
     // Wind speed capped to match OceanMath (prevents Phillips spectrum aliasing)
     op.wind_speed = std::max(30.0f, std::min(windSpeedMps * 100.0f, 2000.0f));
-    op.wind_dependency = 0.07f; // Lower = more directional waves, less grid pattern
+    op.wind_dependency = 0.4f; // Fallback; overridden by spectrumCallback below
 
-    // Phillips spectrum (WE built-in) is used. JONSWAP was tested but its peak
-    // frequency at typical winds (B3-B7) corresponds to wavelengths > 50m,
-    // placing most energy outside the FFT's representable range. Phillips'
-    // broad k^-6 tail distributes energy well across 2-25m wavelengths.
+    // Phillips spectrum with Hasselmann frequency-dependent directional spreading.
+    // Replaces WE's cos^2(theta) spreading which creates uniform parallel ridges.
+    // Hasselmann: long waves are directional (realistic), short waves spread broadly
+    // (creating the chaotic multi-directional surface of a real ocean).
+    float wsCmps = op.wind_speed;
+    float wAmp = op.wave_amplitude;
+    op.spectrumCallback = [wsCmps, wAmp](float kx, float kz, float wdx, float wdz) -> float {
+        return OceanSpectrum::PhillipsHasselmann(kx, kz, wdx, wdz, wsCmps, wAmp);
+    };
 
     // Bind normal overlay texture for tiling breakup
     op.normalOverlayTextureIndex = normalOverlayDescIdx_;
@@ -291,6 +343,21 @@ void WickedMultiCascadeOcean::init(wi::scene::Scene* scene,
     // Auxiliary cascades (0 and 2) are disabled for now. With patch_length=250m
     // on the primary cascade, geometric tiling is invisible at ship scale.
     // Future: aux cascades at different patch sizes (500m, 50m) for multi-scale detail.
+
+    // Diagnostic: compare Hasselmann vs cos^2 for a few wave modes
+    {
+        float testK = 2.0f * 3.14159f / configs[1].patchLength; // lowest non-zero k
+        float wdx = op.wind_dir.x, wdz = op.wind_dir.y;
+        // Downwind mode (kx=testK, kz=0 with wind along x)
+        float downwind = OceanSpectrum::PhillipsHasselmann(testK * wdx, testK * wdz, wdx, wdz, wsCmps, wAmp);
+        // Cross-wind mode (perpendicular)
+        float crosswind = OceanSpectrum::PhillipsHasselmann(-testK * wdz, testK * wdx, wdx, wdz, wsCmps, wAmp);
+        // Phillips reference: cos^2=1 downwind, cos^2=0 crosswind
+        float phillipsRef = OceanSpectrum::Phillips(testK * testK, testK, wsCmps, wAmp * 1e-7f, 0.4f);
+        std::cout << "  Spectrum check at k=" << testK << ": downwind=" << downwind
+                  << " crosswind=" << crosswind << " ratio=" << (downwind > 0 ? crosswind / downwind : 0)
+                  << " (Phillips ref sqrt=" << std::sqrt(phillipsRef) << ")" << std::endl;
+    }
 
     std::cout << "WickedMultiCascadeOcean: Primary cascade initialized (patch="
               << configs[1].patchLength << "m, fft=" << configs[1].fftResolution
@@ -312,7 +379,7 @@ void WickedMultiCascadeOcean::createCascade(int index, float windSpeedMps, float
     auxOp.waterHeight = waterHeight_;
     auxOp.wind_dir = XMFLOAT2(std::sin(windDirRad), std::cos(windDirRad));
     auxOp.wind_speed = std::max(30.0f, std::min(windSpeedMps * 100.0f, 1500.0f));
-    auxOp.wind_dependency = 0.07f;
+    auxOp.wind_dependency = 0.4f;
 
     // Different random seed per cascade for phase diversity
     auxOp.randomSeed = 42 + index * 1337;
@@ -352,8 +419,15 @@ void WickedMultiCascadeOcean::updateWind(float windSpeedMps, float windDirRad) {
     op.wind_dir = XMFLOAT2(dirX, dirZ);
     op.wind_speed = std::max(30.0f, std::min(windSpeedMps * 100.0f, 1500.0f));
 
-    op.choppy_scale = configs[1].choppyScale * 3.0f; // Compensate for GridLen at patch=250m
+    op.choppy_scale = configs[1].choppyScale * 0.3f;
     op.surfaceDisplacementTolerance = 2.0f + currentWeather_ * 0.5f;
+
+    // Phillips + Hasselmann spreading (must reset callback with new wind params)
+    float wsCmps = op.wind_speed;
+    float wAmp = op.wave_amplitude;
+    op.spectrumCallback = [wsCmps, wAmp](float kx, float kz, float wdx, float wdz) -> float {
+        return OceanSpectrum::PhillipsHasselmann(kx, kz, wdx, wdz, wsCmps, wAmp);
+    };
 
     // Recreate the primary ocean with new spectrum
     weScene->ocean.Create(op);
@@ -436,6 +510,10 @@ void WickedMultiCascadeOcean::shutdown() {
     }
     normalOverlayDescIdx_ = -1;
     weScene = nullptr;
+}
+
+void WickedMultiCascadeOcean::setTerrainHeightQuery(std::function<float(float, float)> query) {
+    terrainHeightQuery_ = std::move(query);
 }
 
 }}} // namespace bc::graphics::wicked

@@ -1917,6 +1917,13 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                           " sea=" + std::to_string(seaPixels) +
                           " of " + std::to_string(totalPixels) + " samples");
                 }
+
+                // Wire up terrain height query for fetch-limited wave reduction
+                auto* terrainPtr = terrainNode.get();
+                ocean.setTerrainHeightQuery([terrainPtr](float x, float z) -> float {
+                    return terrainPtr->getHeightAt(x, z);
+                });
+                weLog("  Ocean fetch estimation enabled (terrain height query connected)");
             } else {
                 weLogErr("Failed to load terrain heightmap");
                 terrainNode.reset();
@@ -4215,6 +4222,8 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
 
             // Heartbeat log every 100 frames to pinpoint crash timing
             if (frameCount % 100 == 0) {
+                // Sample wave height at ship CG for diagnostics
+                float hbCG = ocean.getWaveHeight(ownShipX, ownShipZ);
                 weLog("  [HEARTBEAT] frame=" + std::to_string(frameCount) +
                       " t=" + std::to_string(totalSimTime) + "s" +
                       " dt=" + std::to_string(dt) +
@@ -4224,7 +4233,9 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                       " spd=" + std::to_string(ownShipSpeed) +
                       " pitch=" + std::to_string(ownShipPitch) +
                       " roll=" + std::to_string(ownShipRoll) +
-                      " heave=" + std::to_string(weMotionState.heave.pos));
+                      " heave=" + std::to_string(weMotionState.heave.pos) +
+                      " waveHCG=" + std::to_string(hbCG) +
+                      " seaInit=" + std::to_string(weSeakeepingInitialized));
             }
 
             // Flush log every 500 frames to ensure we capture data before a crash

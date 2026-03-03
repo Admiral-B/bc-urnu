@@ -12,6 +12,7 @@
 
 #include "../Types.hpp"
 #include <memory>
+#include <functional>
 
 // Forward declarations
 namespace wi {
@@ -106,6 +107,11 @@ public:
     /// Check if all cascades are initialized.
     bool isValid() const;
 
+    /// Set terrain height query for fetch estimation.
+    /// The callback should return terrain height at world (x,z).
+    /// Positive = land, negative = water.
+    void setTerrainHeightQuery(std::function<float(float, float)> query);
+
     /// Clean up all resources.
     void shutdown();
 
@@ -133,6 +139,13 @@ private:
     void generateNormalOverlay();
 
     void createCascade(int index, float windSpeedMps, float windDirRad);
+
+    // Fetch estimation
+    std::function<float(float, float)> terrainHeightQuery_;
+    float cachedFetch_ = 300000.0f; // default: open ocean
+    float cachedFetchX_ = 0.0f;
+    float cachedFetchZ_ = 0.0f;
+    float cachedFetchWindDir_ = -999.0f;
 
     static constexpr float NORMAL_SAMPLE_OFFSET = 1.0f;
 };
