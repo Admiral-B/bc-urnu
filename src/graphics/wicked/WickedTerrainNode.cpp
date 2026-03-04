@@ -383,9 +383,10 @@ float WickedTerrainNode::getHeightAt(float worldX, float worldZ) const {
     float gridX = (localX / worldWidth_) * (cols - 1);
     float gridZ = (localZ / worldDepth_) * (rows - 1);
 
-    // Clamp to grid bounds
-    gridX = std::max(0.0f, std::min(gridX, static_cast<float>(cols - 2)));
-    gridZ = std::max(0.0f, std::min(gridZ, static_cast<float>(rows - 2)));
+    // Out-of-bounds = water (0). Clamping to edge would falsely report land
+    // when fetch rays march beyond the terrain, breaking wave amplitude scaling.
+    if (gridX < 0 || gridX >= cols - 1 || gridZ < 0 || gridZ >= rows - 1)
+        return 0;
 
     // Bilinear interpolation
     int ix = static_cast<int>(gridX);

@@ -109,7 +109,10 @@ void WickedMultiCascadeOcean::update(float tideHeight, const Vec3& viewPosition,
     op.waterHeight = tideHeight;
     op.wave_amplitude = adjustedAmp;
     op.choppy_scale = p.choppyScale * 0.3f * std::sqrt(fetchScale);
-    op.time_scale = 0.35f;
+    // WE uses CGS gravity (981 cm/s^2) in the dispersion relation omega=sqrt(g*|K|),
+    // but K is in rad/m (from patch_length in meters). This makes omega 10x too fast.
+    // time_scale = 0.1 exactly compensates: waves propagate at physically correct speed.
+    op.time_scale = 0.1f;
     op.surfaceDisplacementTolerance = 2.0f + currentWeather_ * 0.5f;
 
     // Check if wind changed enough to regenerate spectrum
@@ -301,7 +304,10 @@ void WickedMultiCascadeOcean::init(wi::scene::Scene* scene,
     op.dmap_dim = configs[1].fftResolution;
     op.wave_amplitude = configs[1].waveAmplitude;
     op.choppy_scale = configs[1].choppyScale * 0.3f;
-    op.time_scale = 0.35f;
+    // WE uses CGS gravity (981 cm/s^2) in the dispersion relation omega=sqrt(g*|K|),
+    // but K is in rad/m (from patch_length in meters). This makes omega 10x too fast.
+    // time_scale = 0.1 exactly compensates: waves propagate at physically correct speed.
+    op.time_scale = 0.1f;
     op.waterHeight = waterHeight_;
 
     // Water appearance: grey-green (North Sea/Atlantic).
@@ -309,7 +315,8 @@ void WickedMultiCascadeOcean::init(wi::scene::Scene* scene,
     op.waterColor = XMFLOAT4(0.03f, 0.07f, 0.06f, 0.3f);
     // Extinction: blue-green subsurface tint. Controls light absorption with depth.
     op.extinctionColor = XMFLOAT4(0.15f, 0.40f, 0.32f, 1.0f);
-    op.surfaceDetail = 2;
+    // surfaceDetail=3 -> 480x270 screen-space grid, smoother horizon wave shapes
+    op.surfaceDetail = 3;
     op.surfaceDisplacementTolerance = 2.0f + currentWeather_ * 0.5f;
 
     // Set wind direction
@@ -375,7 +382,7 @@ void WickedMultiCascadeOcean::createCascade(int index, float windSpeedMps, float
     auxOp.dmap_dim = configs[index].fftResolution;
     auxOp.wave_amplitude = configs[index].waveAmplitude;
     auxOp.choppy_scale = configs[index].choppyScale;
-    auxOp.time_scale = 0.3f;
+    auxOp.time_scale = 0.1f;
     auxOp.waterHeight = waterHeight_;
     auxOp.wind_dir = XMFLOAT2(std::sin(windDirRad), std::cos(windDirRad));
     auxOp.wind_speed = std::max(30.0f, std::min(windSpeedMps * 100.0f, 1500.0f));

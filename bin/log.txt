@@ -1,4 +1,4 @@
-Created GraphicsDevice_DX12 (1857 ms)
+Created GraphicsDevice_DX12 (850 ms)
 Adapter: NVIDIA GeForce RTX 4060 Laptop GPU
 
 [wi::initializer] Initializing Wicked Engine, please wait...
@@ -16,25 +16,27 @@ No embedded shaders found, shaders will be compiled at runtime if needed.
 	Shader source path: C:/Users/PB/source/bc-urnu/bin/../../WickedEngine/WickedEngine/shaders/
 	Shader binary path: ../../WickedEngine/WickedEngine/shaders/
 
-wi::jobsystem Initialized with 16 cores in 4.25 ms
+wi::jobsystem Initialized with 16 cores in 3.20 ms
 	High priority threads: 15
 	Low priority threads: 14
 	Streaming threads: 1
 
-wi::physics Initialized [Jolt Physics 5.4.0] (0 ms)
 wi::input Initialized (0 ms)
-wi::lua Initialized [Lua 5.4.8] (2 ms)
-wi::texturehelper Initialized (4 ms)
-wi::TrailRenderer Initialized (6 ms)
-wi::image Initialized (43 ms)
-wi::GPUBVH Initialized (49 ms)
-wi::gpusortlib Initialized (87 ms)
-wi::Ocean Initialized (276 ms)
-wi::HairParticleSystem Initialized (430 ms)
-wi::EmittedParticleSystem Initialized (481 ms)
-wi::renderer Initialized (540 ms)
-wi::audio Initialized [XAudio2] (947 ms)
-wi::font Initialized (4 ms)
+wi::physics Initialized [Jolt Physics 5.4.0] (0 ms)
+wi::lua Initialized [Lua 5.4.8] (1 ms)
+wi::texturehelper Initialized (3 ms)
+wi::gpusortlib Initialized (18 ms)
+wi::Ocean Initialized (86 ms)
+wi::TrailRenderer Initialized (94 ms)
+wi::image Initialized (102 ms)
+wi::GPUBVH Initialized (111 ms)
+wi::HairParticleSystem Initialized (206 ms)
+wi::EmittedParticleSystem Initialized (261 ms)
+wi::renderer Initialized (317 ms)
+wi::audio Initialized [XAudio2] (668 ms)
+wi::font Initialized (5 ms)
+
+[wi::initializer] Wicked Engine Initialized (678 ms)
 Created envprobe depth buffer for request
 	Resolution = 64 * 64 * 6
 	Sample Count = 1
@@ -56,8 +58,6 @@ Created envprobe filtering target for request
 	Format = R11G11B10_FLOAT
 	Memory = 126.0 KB
 
-
-[wi::initializer] Wicked Engine Initialized (975 ms)
 BlockCompress created a new raw block texture to fit request: BC6H_UF16 (64, 64)
 	Format = R32G32B32A32_UINT
 	Resolution = 64 * 64

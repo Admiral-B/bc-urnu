@@ -1,0 +1,1312 @@
+
+Irrlicht Engine version 1.9.0
+Microsoft Windows 8 or later  (Build 9200)
+Irrlicht context
+Using renderer: OpenGL 4.6.0
+AMD Radeon(TM) 780M: ATI Technologies Inc.
+OpenGL driver version is 1.2 or better.
+GLSL version: 4.6
+User log file is C:\Users\PB\AppData\Roaming/Bridge Command/6.0/log.txt
+Driver screen size: 1536x864
+graphicsWidth: 1536 graphicsHeight: 864
+Switching to Wicked Engine renderer for scenario: smooth
+Starting Wicked Engine backend (DX12)...
+  Scenario: smooth
+  World: World_51.42_-3.15
+  Window: 1536x864 windowed
+  World path: C:\Users\PB\AppData\Roaming/Bridge Command/6.0/World/World_51.42_-3.15/
+  Win32 window created.
+  Shader path: ../../WickedEngine/WickedEngine/shaders/
+  Initializing Wicked Engine (10 warmup frames)...
+  Wicked Engine initialized.
+WickedImGui: Loaded CSO shaders from C:/Users/PB/source/bc-urnu/bin/
+WickedImGui: Initialized
+  ImGui overlay initialized.
+before paHostApiInitializers[0].
+after paHostApiInitializers[0].
+before paHostApiInitializers[1].
+WASAPI: device idx: 00
+WASAPI: ---------------
+WASAPI:0| name[Speakers (Realtek(R) Audio)]
+WASAPI:0| form-factor[1]
+WASAPI: getting Windows version with RtlGetVersion()
+WASAPI: Windows version = 5
+WASAPI: IAudioClient version = 3
+WASAPI:0| def.SR[48000] max.CH[2] latency{hi[0.010000] lo[0.003000]}
+WASAPI: device idx: 01
+WASAPI: ---------------
+WASAPI:1| name[Speakers (Steam Streaming Microphone)]
+WASAPI:1| form-factor[1]
+WASAPI:1| def.SR[48000] max.CH[2] latency{hi[0.010000] lo[0.003000]}
+WASAPI: device idx: 02
+WASAPI: ---------------
+WASAPI:2| name[Speakers (Steam Streaming Speakers)]
+WASAPI:2| form-factor[1]
+WASAPI:2| def.SR[48000] max.CH[2] latency{hi[0.010000] lo[0.003000]}
+WASAPI: device idx: 03
+WASAPI: ---------------
+WASAPI:3| name[Microphone Array (Realtek(R) Audio)]
+WASAPI:3| form-factor[4]
+WASAPI:3| def.SR[48000] max.CH[2] latency{hi[0.010000] lo[0.003000]}
+WASAPI: device idx: 04
+WASAPI: ---------------
+WASAPI:4| name[Microphone (Steam Streaming Microphone)]
+WASAPI:4| form-factor[4]
+WASAPI:4| def.SR[44100] max.CH[1] latency{hi[0.010000] lo[0.003000]}
+WASAPI: device list ok - found 5 devices
+WASAPI: initialized ok
+after paHostApiInitializers[1].
+before paHostApiInitializers[2].
+Setup called
+Enum called
+noError = 0
+Device 0 has capture alias
+Enum called
+noError = 0
+Device 1 has capture alias
+Enum called
+noError = 1
+Device 2 has render alias
+Device 2 has capture alias
+Enum called
+noError = 0
+Enum called
+noError = 0
+Enum called
+noError = 0
+Device 5 has capture alias
+Enum called
+noError = 0
+Enum called
+noError = 1
+Device 7 has render alias
+Device 7 has capture alias
+Enum called
+noError = 0
+Enum called
+noError = 0
+Enum called
+noError = 0
+Enum called
+noError = 1
+Device 11 has render alias
+Device 11 has capture alias
+Enum called
+noError = 1
+Device 12 has render alias
+Device 12 has capture alias
+Enum called
+noError = 0
+Enum called
+noError = 0
+Enum called
+noError = 0
+Enum called
+noError = 1
+Device 16 has render alias
+Device 16 has capture alias
+Enum called
+noError = 0
+Enum called
+noError = 1
+Device 18 has render alias
+Device 18 has capture alias
+Enum called
+noError = 0
+Enum called
+noError = 1
+Device 20 has render alias
+Device 20 has capture alias
+Enum called
+noError = 0
+Enum called
+Interfaces found: 10
+Device 0 has capture alias
+Device 0 has realtime alias
+Interface 0, Name: R
+FilterNew: Creating filter 'Realtek HD Audio Stereo input'
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=2, nodes=1
+  Connection: 0 - FromNode=4294967295,FromPin=1 -> ToNode=0,ToPin=1
+  Connection: 1 - FromNode=0,FromPin=0 -> ToNode=4294967295,ToPin=0
+  Node: 0 - {4D837FE0-C555-11D0-8A2B-00A0C9255AC1}
+PinNew: Creating pin 0:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 2
+PinNew: Format PCM 16 bit supported
+PinNew: Default sample rate = 48000 Hz
+Failed PinQueryNotificationSupport
+PinNew: Finding topology pin...
+FindStartConnectionFrom: Startpin 0, Checking 2 connections...
+FindStartConnectionFrom: returning 000002574C622EF8
+GetConnectedPin: count=1, forward=0, muxPosition=-1
+GetConnectionFrom: Checking 2 connections... (pTo = 000002574C622EF8)
+GetConnectionFrom: Returning 000002574C622EE8
+PinNew: Getting physical connection...
+PinNew: Physical connection found!
+PinNew: Creating topology filter '\\?\HDAUDIO#FUNC_01&VEN_10EC&DEV_0257&SUBSYS_17AA3BFA&REV_1000#5&356038ab&0&0001#{6994ad04-93ef-11d0-a3cc-00a0c9223196}\RtStereoMixTopo_C2D2'
+FilterNew: Creating filter ''
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=3, nodes=2
+  Connection: 0 - FromNode=4294967295,FromPin=1 -> ToNode=1,ToPin=1
+  Connection: 1 - FromNode=1,FromPin=0 -> ToNode=0,ToPin=1
+  Connection: 2 - FromNode=0,FromPin=0 -> ToNode=4294967295,ToPin=0
+  Node: 0 - {3A5ACC00-C557-11D0-8A2B-00A0C9255AC1}
+  Node: 1 - {02B223C0-C557-11D0-8A2B-00A0C9255AC1}
+PinNew: Opening topology filter...PinNew: Checking for input endpoint pin id (0)...
+FindStartConnectionFrom: Startpin 0, Checking 3 connections...
+FindStartConnectionFrom: returning 0000025743C725D8
+GetConnectedPin: count=2, forward=0, muxPosition=0
+GetConnectionFrom: Checking 3 connections... (pTo = 0000025743C725D8)
+GetConnectionFrom: Returning 0000025743C725C8
+GetConnectedPin: count=2, forward=0, muxPosition=0
+GetConnectionFrom: Checking 3 connections... (pTo = 0000025743C725C8)
+GetConnectionFrom: Returning 0000025743C725B8
+PinNew: Found endpoint pin id 1
+PinNew: Input friendly name 'Stereo Mix'
+PinNew: Releasing topology filter...
+Pin created successfully
+PinNew: Creating pin 1:
+PinNew: Not source/sink
+PinNew: Error -9996
+Filter (WaveRT) created with 1 valid pins (total I/Os: 1)
+Device 1 has capture alias
+Device 1 has realtime alias
+Interface 1, Name: M
+FilterNew: Creating filter 'Mic in at front panel (black)'
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=2, nodes=1
+  Connection: 0 - FromNode=4294967295,FromPin=1 -> ToNode=0,ToPin=1
+  Connection: 1 - FromNode=0,FromPin=0 -> ToNode=4294967295,ToPin=0
+  Node: 0 - {4D837FE0-C555-11D0-8A2B-00A0C9255AC1}
+PinNew: Creating pin 0:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 2
+PinNew: Format PCM 16 bit supported
+PinNew: Default sample rate = 44100 Hz
+Failed PinQueryNotificationSupport
+PinNew: Finding topology pin...
+FindStartConnectionFrom: Startpin 0, Checking 2 connections...
+FindStartConnectionFrom: returning 000002574C622F88
+GetConnectedPin: count=1, forward=0, muxPosition=-1
+GetConnectionFrom: Checking 2 connections... (pTo = 000002574C622F88)
+GetConnectionFrom: Returning 000002574C622F78
+PinNew: Getting physical connection...
+PinNew: Physical connection found!
+PinNew: Creating topology filter '\\?\HDAUDIO#FUNC_01&VEN_10EC&DEV_0257&SUBSYS_17AA3BFA&REV_1000#5&356038ab&0&0001#{6994ad04-93ef-11d0-a3cc-00a0c9223196}\FrontMicInBlackTopo_C2D2'
+FilterNew: Creating filter ''
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=3, nodes=2
+  Connection: 0 - FromNode=4294967295,FromPin=1 -> ToNode=1,ToPin=1
+  Connection: 1 - FromNode=1,FromPin=0 -> ToNode=0,ToPin=1
+  Connection: 2 - FromNode=0,FromPin=0 -> ToNode=4294967295,ToPin=0
+  Node: 0 - {3A5ACC00-C557-11D0-8A2B-00A0C9255AC1}
+  Node: 1 - {02B223C0-C557-11D0-8A2B-00A0C9255AC1}
+PinNew: Opening topology filter...PinNew: Checking for input endpoint pin id (0)...
+FindStartConnectionFrom: Startpin 0, Checking 3 connections...
+FindStartConnectionFrom: returning 0000025743C72658
+GetConnectedPin: count=2, forward=0, muxPosition=0
+GetConnectionFrom: Checking 3 connections... (pTo = 0000025743C72658)
+GetConnectionFrom: Returning 0000025743C72648
+GetConnectedPin: count=2, forward=0, muxPosition=0
+GetConnectionFrom: Checking 3 connections... (pTo = 0000025743C72648)
+GetConnectionFrom: Returning 0000025743C72638
+PinNew: Found endpoint pin id 1
+PinNew: Input friendly name 'Mic in at front panel (black)'
+PinNew: Releasing topology filter...
+Pin created successfully
+PinNew: Creating pin 1:
+PinNew: Not source/sink
+PinNew: Error -9996
+Filter (WaveRT) created with 1 valid pins (total I/Os: 1)
+Device 2 has render alias
+Device 2 has capture alias
+Device 2 has realtime alias
+Interface 2, Name: R
+FilterNew: Creating filter 'Realtek HD Audio output with HAP'
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=5, nodes=2
+  Connection: 0 - FromNode=1,FromPin=0 -> ToNode=0,ToPin=1
+  Connection: 1 - FromNode=4294967295,FromPin=0 -> ToNode=1,ToPin=1
+  Connection: 2 - FromNode=4294967295,FromPin=2 -> ToNode=1,ToPin=2
+  Connection: 3 - FromNode=1,FromPin=3 -> ToNode=4294967295,ToPin=3
+  Connection: 4 - FromNode=0,FromPin=0 -> ToNode=4294967295,ToPin=1
+  Node: 0 - {507AE360-C554-11D0-8A2B-00A0C9255AC1}
+  Node: 1 - {35CAF6E4-F3B3-4168-BB4B-55E77A461C7E}
+PinNew: Creating pin 0:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 2
+PinNew: Format PCM 16 bit supported
+PinNew: Default sample rate = 48000 Hz
+Failed PinQueryNotificationSupport
+PinNew: Finding topology pin...
+FindStartConnectionTo: Startpin 0, Checking 5 connections...
+FindStartConnectionTo: returning 00000257444F18A8
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 5 connections... (pFrom = 00000257444F18A8)GetConnectionTo: Returning 00000257444F1898
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 5 connections... (pFrom = 00000257444F1898)GetConnectionTo: Returning 00000257444F18D8
+PinNew: Getting physical connection...
+PinNew: Physical connection found!
+PinNew: Creating topology filter '\\?\HDAUDIO#FUNC_01&VEN_10EC&DEV_0257&SUBSYS_17AA3BFA&REV_1000#5&356038ab&0&0001#{6994ad04-93ef-11d0-a3cc-00a0c9223196}\RearLineOutTopoHAP_C2D2'
+FilterNew: Creating filter ''
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=1, nodes=0
+  Connection: 0 - FromNode=4294967295,FromPin=0 -> ToNode=4294967295,ToPin=1
+PinNew: Opening topology filter...PinNew: Checking for output endpoint pin id...
+FindStartConnectionTo: Startpin 0, Checking 1 connections...
+FindStartConnectionTo: returning 00000257590BDC28
+PinNew: Found endpoint pin id 1
+GetNameFromCategory: USB GUID 0301 -> 'Speakers'
+PinNew: Pin name 'Speakers'
+PinNew: Releasing topology filter...
+Pin created successfully
+PinNew: Creating pin 1:
+PinNew: Not source/sink
+PinNew: Error -9996
+PinNew: Creating pin 2:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 2
+PinNew: Format PCM 16 bit supported
+PinNew: Format PCM 24 bit supported
+PinNew: Default sample rate = 44100 Hz
+Failed PinQueryNotificationSupport
+PinNew: Finding topology pin...
+FindStartConnectionTo: Startpin 2, Checking 5 connections...
+FindStartConnectionTo: returning 00000257444F18B8
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 5 connections... (pFrom = 00000257444F18B8)GetConnectionTo: Returning 00000257444F1898
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 5 connections... (pFrom = 00000257444F1898)GetConnectionTo: Returning 00000257444F18D8
+PinNew: Getting physical connection...
+PinNew: Physical connection found!
+PinNew: Opening topology filter...PinNew: Checking for output endpoint pin id...
+FindStartConnectionTo: Startpin 0, Checking 1 connections...
+FindStartConnectionTo: returning 00000257590BDC28
+PinNew: Found endpoint pin id 1
+GetNameFromCategory: USB GUID 0301 -> 'Speakers'
+PinNew: Pin name 'Speakers'
+PinNew: Releasing topology filter...
+Pin created successfully
+PinNew: Creating pin 3:
+PinNew: Checking 2 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 2
+PinNew: Format PCM 16 bit supported
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 2
+PinNew: Format PCM 16 bit supported
+PinNew: Format PCM 24 bit supported
+PinNew: Format PCM 32 bit supported
+PinNew: Default sample rate = 44100 Hz
+Failed PinQueryNotificationSupport
+PinNew: Finding topology pin...
+FindStartConnectionFrom: Startpin 3, Checking 5 connections...
+FindStartConnectionFrom: returning 00000257444F18C8
+GetConnectedPin: count=2, forward=0, muxPosition=-1
+GetConnectionFrom: Checking 5 connections... (pTo = 00000257444F18C8)
+GetConnectionFrom: Returning 00000257444F18A8
+PinNew: Getting physical connection...
+PinNew: No physical connection! Getting the pin name
+Pin created successfully
+Filter (WaveRT) created with 3 valid pins (total I/Os: 3)
+Device 5 has capture alias
+Device 5 has realtime alias
+Interface 5, Name: R
+FilterNew: Creating filter 'Realtek HD Audio Mic input'
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=2, nodes=1
+  Connection: 0 - FromNode=4294967295,FromPin=1 -> ToNode=0,ToPin=1
+  Connection: 1 - FromNode=0,FromPin=0 -> ToNode=4294967295,ToPin=0
+  Node: 0 - {4D837FE0-C555-11D0-8A2B-00A0C9255AC1}
+PinNew: Creating pin 0:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 2
+PinNew: Format PCM 16 bit supported
+PinNew: Default sample rate = 44100 Hz
+Failed PinQueryNotificationSupport
+PinNew: Finding topology pin...
+FindStartConnectionFrom: Startpin 0, Checking 2 connections...
+FindStartConnectionFrom: returning 00000257457E65A8
+GetConnectedPin: count=1, forward=0, muxPosition=-1
+GetConnectionFrom: Checking 2 connections... (pTo = 00000257457E65A8)
+GetConnectionFrom: Returning 00000257457E6598
+PinNew: Getting physical connection...
+PinNew: Physical connection found!
+PinNew: Creating topology filter '\\?\HDAUDIO#FUNC_01&VEN_10EC&DEV_0257&SUBSYS_17AA3BFA&REV_1000#5&356038ab&0&0001#{6994ad04-93ef-11d0-a3cc-00a0c9223196}\RtMicInTopo_C2D2'
+FilterNew: Creating filter ''
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=3, nodes=2
+  Connection: 0 - FromNode=4294967295,FromPin=1 -> ToNode=1,ToPin=1
+  Connection: 1 - FromNode=1,FromPin=0 -> ToNode=0,ToPin=1
+  Connection: 2 - FromNode=0,FromPin=0 -> ToNode=4294967295,ToPin=0
+  Node: 0 - {3A5ACC00-C557-11D0-8A2B-00A0C9255AC1}
+  Node: 1 - {02B223C0-C557-11D0-8A2B-00A0C9255AC1}
+PinNew: Opening topology filter...PinNew: Checking for input endpoint pin id (0)...
+FindStartConnectionFrom: Startpin 0, Checking 3 connections...
+FindStartConnectionFrom: returning 0000025743C726D8
+GetConnectedPin: count=2, forward=0, muxPosition=0
+GetConnectionFrom: Checking 3 connections... (pTo = 0000025743C726D8)
+GetConnectionFrom: Returning 0000025743C726C8
+GetConnectedPin: count=2, forward=0, muxPosition=0
+GetConnectionFrom: Checking 3 connections... (pTo = 0000025743C726C8)
+GetConnectionFrom: Returning 0000025743C726B8
+PinNew: Found endpoint pin id 1
+PinNew: Input friendly name 'Microphone Array'
+PinNew: Releasing topology filter...
+Pin created successfully
+PinNew: Creating pin 1:
+PinNew: Not source/sink
+PinNew: Error -9996
+Filter (WaveRT) created with 1 valid pins (total I/Os: 1)
+Device 7 has render alias
+Device 7 has capture alias
+Device 7 has realtime alias
+Interface 7, Name: R
+FilterNew: Creating filter 'Realtek HD Audio 2nd output with HAP'
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=5, nodes=2
+  Connection: 0 - FromNode=1,FromPin=0 -> ToNode=0,ToPin=1
+  Connection: 1 - FromNode=4294967295,FromPin=0 -> ToNode=1,ToPin=1
+  Connection: 2 - FromNode=4294967295,FromPin=2 -> ToNode=1,ToPin=2
+  Connection: 3 - FromNode=1,FromPin=3 -> ToNode=4294967295,ToPin=3
+  Connection: 4 - FromNode=0,FromPin=0 -> ToNode=4294967295,ToPin=1
+  Node: 0 - {507AE360-C554-11D0-8A2B-00A0C9255AC1}
+  Node: 1 - {35CAF6E4-F3B3-4168-BB4B-55E77A461C7E}
+PinNew: Creating pin 0:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 2
+PinNew: Format PCM 16 bit supported
+PinNew: Default sample rate = 48000 Hz
+Failed PinQueryNotificationSupport
+PinNew: Finding topology pin...
+FindStartConnectionTo: Startpin 0, Checking 5 connections...
+FindStartConnectionTo: returning 00000257444F0E28
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 5 connections... (pFrom = 00000257444F0E28)GetConnectionTo: Returning 00000257444F0E18
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 5 connections... (pFrom = 00000257444F0E18)GetConnectionTo: Returning 00000257444F0E58
+PinNew: Getting physical connection...
+PinNew: Physical connection found!
+PinNew: Creating topology filter '\\?\HDAUDIO#FUNC_01&VEN_10EC&DEV_0257&SUBSYS_17AA3BFA&REV_1000#5&356038ab&0&0001#{6994ad04-93ef-11d0-a3cc-00a0c9223196}\RearLineOutTopoHAP3_C2D2'
+FilterNew: Creating filter ''
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=1, nodes=0
+  Connection: 0 - FromNode=4294967295,FromPin=0 -> ToNode=4294967295,ToPin=1
+PinNew: Opening topology filter...PinNew: Checking for output endpoint pin id...
+FindStartConnectionTo: Startpin 0, Checking 1 connections...
+FindStartConnectionTo: returning 00000257590BDA68
+PinNew: Found endpoint pin id 1
+GetNameFromCategory: USB GUID 0302 -> 'Headphones'
+PinNew: Pin name 'Headphones'
+PinNew: Releasing topology filter...
+Pin created successfully
+PinNew: Creating pin 1:
+PinNew: Not source/sink
+PinNew: Error -9996
+PinNew: Creating pin 2:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 2
+PinNew: Format PCM 16 bit supported
+PinNew: Format PCM 24 bit supported
+PinNew: Default sample rate = 44100 Hz
+Failed PinQueryNotificationSupport
+PinNew: Finding topology pin...
+FindStartConnectionTo: Startpin 2, Checking 5 connections...
+FindStartConnectionTo: returning 00000257444F0E38
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 5 connections... (pFrom = 00000257444F0E38)GetConnectionTo: Returning 00000257444F0E18
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 5 connections... (pFrom = 00000257444F0E18)GetConnectionTo: Returning 00000257444F0E58
+PinNew: Getting physical connection...
+PinNew: Physical connection found!
+PinNew: Opening topology filter...PinNew: Checking for output endpoint pin id...
+FindStartConnectionTo: Startpin 0, Checking 1 connections...
+FindStartConnectionTo: returning 00000257590BDA68
+PinNew: Found endpoint pin id 1
+GetNameFromCategory: USB GUID 0302 -> 'Headphones'
+PinNew: Pin name 'Headphones'
+PinNew: Releasing topology filter...
+Pin created successfully
+PinNew: Creating pin 3:
+PinNew: Checking 2 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 2
+PinNew: Format PCM 16 bit supported
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 2
+PinNew: Format PCM 16 bit supported
+PinNew: Format PCM 24 bit supported
+PinNew: Format PCM 32 bit supported
+PinNew: Default sample rate = 44100 Hz
+Failed PinQueryNotificationSupport
+PinNew: Finding topology pin...
+FindStartConnectionFrom: Startpin 3, Checking 5 connections...
+FindStartConnectionFrom: returning 00000257444F0E48
+GetConnectedPin: count=2, forward=0, muxPosition=-1
+GetConnectionFrom: Checking 5 connections... (pTo = 00000257444F0E48)
+GetConnectionFrom: Returning 00000257444F0E28
+PinNew: Getting physical connection...
+PinNew: No physical connection! Getting the pin name
+Pin created successfully
+Filter (WaveRT) created with 3 valid pins (total I/Os: 3)
+Device 11 has render alias
+Device 11 has capture alias
+Device 11 has realtime alias
+Interface 11, Name: N
+FilterNew: Creating filter 'Nahimic Easy Surround'
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=3, nodes=2
+  Connection: 0 - FromNode=4294967295,FromPin=0 -> ToNode=1,ToPin=1
+  Connection: 1 - FromNode=1,FromPin=0 -> ToNode=0,ToPin=1
+  Connection: 2 - FromNode=0,FromPin=0 -> ToNode=4294967295,ToPin=1
+  Node: 0 - {507AE360-C554-11D0-8A2B-00A0C9255AC1}
+  Node: 1 - {9DB7B9E0-C555-11D0-8A2B-00A0C9255AC1}
+PinNew: Creating pin 0:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 8
+PinNew: Format PCM 16 bit supported
+PinNew: Default sample rate = 48000 Hz
+Failed PinQueryNotificationSupport
+PinNew: Finding topology pin...
+FindStartConnectionTo: Startpin 0, Checking 3 connections...
+FindStartConnectionTo: returning 0000025743C72938
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 3 connections... (pFrom = 0000025743C72938)GetConnectionTo: Returning 0000025743C72948
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 3 connections... (pFrom = 0000025743C72948)GetConnectionTo: Returning 0000025743C72958
+PinNew: Getting physical connection...
+PinNew: Physical connection found!
+PinNew: Creating topology filter '\\?\SWD#DRIVERENUM#{741a2100-1023-11e9-b56e-0800200c9a66}#Nahimic_BTLink&6&1445909f&0#{6994ad04-93ef-11d0-a3cc-00a0c9223196}\TopologySpeaker'
+FilterNew: Creating filter ''
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=1, nodes=0
+  Connection: 0 - FromNode=4294967295,FromPin=0 -> ToNode=4294967295,ToPin=1
+PinNew: Opening topology filter...PinNew: Checking for output endpoint pin id...
+FindStartConnectionTo: Startpin 0, Checking 1 connections...
+FindStartConnectionTo: returning 00000257590BDB88
+PinNew: Found endpoint pin id 1
+GetNameFromCategory: USB GUID 0301 -> 'Speakers'
+PinNew: Pin name 'Speakers'
+PinNew: Releasing topology filter...
+Pin created successfully
+PinNew: Creating pin 1:
+PinNew: Not source/sink
+PinNew: Error -9996
+Filter (WaveRT) created with 1 valid pins (total I/Os: 1)
+Device 12 has render alias
+Device 12 has capture alias
+Interface 12, Name: S
+FilterNew: Creating filter 'Steam Streaming Microphone Wave'
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=4, nodes=2
+  Connection: 0 - FromNode=4294967295,FromPin=1 -> ToNode=0,ToPin=1
+  Connection: 1 - FromNode=0,FromPin=0 -> ToNode=4294967295,ToPin=0
+  Connection: 2 - FromNode=4294967295,FromPin=2 -> ToNode=1,ToPin=1
+  Connection: 3 - FromNode=1,FromPin=0 -> ToNode=4294967295,ToPin=3
+  Node: 0 - {4D837FE0-C555-11D0-8A2B-00A0C9255AC1}
+  Node: 1 - {507AE360-C554-11D0-8A2B-00A0C9255AC1}
+PinNew: Creating pin 0:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 8
+PinNew: Format PCM 8 bit supported
+PinNew: Format PCM 16 bit supported
+PinNew: Format PCM 24 bit supported
+PinNew: Format PCM 32 bit supported
+PinNew: Default sample rate = 44100 Hz
+PinNew: Finding topology pin...
+FindStartConnectionFrom: Startpin 0, Checking 4 connections...
+FindStartConnectionFrom: returning 000002574B61F258
+GetConnectedPin: count=2, forward=0, muxPosition=-1
+GetConnectionFrom: Checking 4 connections... (pTo = 000002574B61F258)
+GetConnectionFrom: Returning 000002574B61F248
+PinNew: Getting physical connection...
+PinNew: Physical connection found!
+PinNew: Creating topology filter '\\?\ROOT#SteamStreamingMicrophone#0000#{6994ad04-93ef-11d0-a3cc-00a0c9223196}\Topology'
+FilterNew: Creating filter ''
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=8, nodes=6
+  Connection: 0 - FromNode=4294967295,FromPin=0 -> ToNode=0,ToPin=1
+  Connection: 1 - FromNode=0,FromPin=0 -> ToNode=1,ToPin=1
+  Connection: 2 - FromNode=1,FromPin=0 -> ToNode=3,ToPin=1
+  Connection: 3 - FromNode=4294967295,FromPin=1 -> ToNode=2,ToPin=1
+  Connection: 4 - FromNode=2,FromPin=0 -> ToNode=5,ToPin=4
+  Connection: 5 - FromNode=3,FromPin=0 -> ToNode=4,ToPin=1
+  Connection: 6 - FromNode=4,FromPin=0 -> ToNode=4294967295,ToPin=2
+  Connection: 7 - FromNode=5,FromPin=0 -> ToNode=4294967295,ToPin=3
+  Node: 0 - {3A5ACC00-C557-11D0-8A2B-00A0C9255AC1}
+  Node: 1 - {02B223C0-C557-11D0-8A2B-00A0C9255AC1}
+  Node: 2 - {3A5ACC00-C557-11D0-8A2B-00A0C9255AC1}
+  Node: 3 - {DA441A60-C556-11D0-8A2B-00A0C9255AC1}
+  Node: 4 - {3A5ACC00-C557-11D0-8A2B-00A0C9255AC1}
+  Node: 5 - {2CEAF780-C556-11D0-8A2B-00A0C9255AC1}
+PinNew: Opening topology filter...PinNew: Checking for input endpoint pin id (0)...
+FindStartConnectionFrom: Startpin 3, Checking 8 connections...
+FindStartConnectionFrom: returning 0000025749B13A58
+GetConnectedPin: count=6, forward=0, muxPosition=0
+GetNumberOfConnectionsTo: Checking 8 connections...
+GetNumberOfConnectionsTo: Returning 1
+GetConnectionFrom: Checking 8 connections... (pTo = 0000025749B13A58)
+GetConnectionFrom: Returning 0000025749B13A28
+GetConnectionFrom: Checking 8 connections... (pTo = 0000025749B13A28)
+GetConnectionFrom: Returning 0000025749B13A18
+PinNew: Found endpoint pin id 1
+GetNameFromCategory: USB GUID 0201 -> 'Microphone'
+PinNew: Checking for input endpoint pin id (1)...
+FindStartConnectionFrom: Startpin 3, Checking 8 connections...
+FindStartConnectionFrom: returning 0000025749B13A58
+GetConnectedPin: count=6, forward=0, muxPosition=1
+GetNumberOfConnectionsTo: Checking 8 connections...
+GetNumberOfConnectionsTo: Returning 1
+GetConnectionFrom: Checking 8 connections... (pTo = 0000025749B13A58)
+GetConnectionFrom: Returning 0000000000000000
+PinNew: Done with inputs.
+PinNew: Setting up 1 inputs
+PinNew: Setting up input 0...
+FindStartConnectionFrom: Startpin 3, Checking 8 connections...
+FindStartConnectionFrom: returning 0000025749B13A58
+GetConnectedPin: count=6, forward=0, muxPosition=0
+GetNumberOfConnectionsTo: Checking 8 connections...
+GetNumberOfConnectionsTo: Returning 1
+GetConnectionFrom: Checking 8 connections... (pTo = 0000025749B13A58)
+GetConnectionFrom: Returning 0000025749B13A28
+GetConnectionFrom: Checking 8 connections... (pTo = 0000025749B13A28)
+GetConnectionFrom: Returning 0000025749B13A18
+PinNew: Input (0) friendly name 'Microphone'
+PinNew: Releasing topology filter...
+Pin created successfully
+PinNew: Creating pin 1:
+PinNew: Not source/sink
+PinNew: Error -9996
+PinNew: Creating pin 2:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 8
+PinNew: Format PCM 8 bit supported
+PinNew: Format PCM 16 bit supported
+PinNew: Format PCM 24 bit supported
+PinNew: Format PCM 32 bit supported
+PinNew: Default sample rate = 44100 Hz
+PinNew: Finding topology pin...
+FindStartConnectionTo: Startpin 2, Checking 4 connections...
+FindStartConnectionTo: returning 000002574B61F268
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 4 connections... (pFrom = 000002574B61F268)GetConnectionTo: Returning 000002574B61F278
+PinNew: Getting physical connection...
+PinNew: Physical connection found!
+PinNew: Opening topology filter...PinNew: Checking for output endpoint pin id...
+FindStartConnectionTo: Startpin 0, Checking 8 connections...
+FindStartConnectionTo: returning 0000025749B139E8
+GetConnectedPin: count=6, forward=1, muxPosition=-1
+GetConnectionTo: Checking 8 connections... (pFrom = 0000025749B139E8)GetConnectionTo: Returning 0000025749B139F8
+GetConnectedPin: count=6, forward=1, muxPosition=-1
+GetConnectionTo: Checking 8 connections... (pFrom = 0000025749B139F8)GetConnectionTo: Returning 0000025749B13A08
+GetConnectedPin: count=6, forward=1, muxPosition=-1
+GetConnectionTo: Checking 8 connections... (pFrom = 0000025749B13A08)GetConnectionTo: Returning 0000025749B13A38
+GetConnectedPin: count=6, forward=1, muxPosition=-1
+GetConnectionTo: Checking 8 connections... (pFrom = 0000025749B13A38)GetConnectionTo: Returning 0000025749B13A48
+PinNew: Found endpoint pin id 2
+GetNameFromCategory: USB GUID 0301 -> 'Speakers'
+PinNew: Pin name 'Speakers'
+PinNew: Releasing topology filter...
+Pin created successfully
+PinNew: Creating pin 3:
+PinNew: Not source/sink
+PinNew: Error -9996
+Filter (WaveCyclic) created with 2 valid pins (total I/Os: 2)
+Device 16 has render alias
+Device 16 has capture alias
+Device 16 has realtime alias
+Interface 16, Name: N
+FilterNew: Creating filter 'Nahimic mirroring Wave Speaker'
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=3, nodes=2
+  Connection: 0 - FromNode=4294967295,FromPin=0 -> ToNode=1,ToPin=1
+  Connection: 1 - FromNode=1,FromPin=0 -> ToNode=0,ToPin=1
+  Connection: 2 - FromNode=0,FromPin=0 -> ToNode=4294967295,ToPin=1
+  Node: 0 - {507AE360-C554-11D0-8A2B-00A0C9255AC1}
+  Node: 1 - {9DB7B9E0-C555-11D0-8A2B-00A0C9255AC1}
+PinNew: Creating pin 0:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 2
+PinNew: Format PCM 16 bit supported
+PinNew: Default sample rate = 44100 Hz
+Failed PinQueryNotificationSupport
+PinNew: Finding topology pin...
+FindStartConnectionTo: Startpin 0, Checking 3 connections...
+FindStartConnectionTo: returning 0000025743C72738
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 3 connections... (pFrom = 0000025743C72738)GetConnectionTo: Returning 0000025743C72748
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 3 connections... (pFrom = 0000025743C72748)GetConnectionTo: Returning 0000025743C72758
+PinNew: Getting physical connection...
+PinNew: Physical connection found!
+PinNew: Creating topology filter '\\?\SWD#DRIVERENUM#{741a2100-1023-11e9-b56e-0800200c9a66}#Nahimic_Mirroring&6&1445909f&0#{6994ad04-93ef-11d0-a3cc-00a0c9223196}\TopologySpeaker'
+FilterNew: Creating filter ''
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=1, nodes=0
+  Connection: 0 - FromNode=4294967295,FromPin=0 -> ToNode=4294967295,ToPin=1
+PinNew: Opening topology filter...PinNew: Checking for output endpoint pin id...
+FindStartConnectionTo: Startpin 0, Checking 1 connections...
+FindStartConnectionTo: returning 00000257590BDBC8
+PinNew: Found endpoint pin id 1
+GetNameFromCategory: USB GUID 0301 -> 'Speakers'
+PinNew: Pin name 'Speakers'
+PinNew: Releasing topology filter...
+Pin created successfully
+PinNew: Creating pin 1:
+PinNew: Not source/sink
+PinNew: Error -9996
+Filter (WaveRT) created with 1 valid pins (total I/Os: 1)
+Device 18 has render alias
+Device 18 has capture alias
+Device 18 has realtime alias
+Interface 18, Name: N
+FilterNew: Creating filter 'Nahimic Wave Speaker'
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=3, nodes=2
+  Connection: 0 - FromNode=4294967295,FromPin=0 -> ToNode=1,ToPin=1
+  Connection: 1 - FromNode=1,FromPin=0 -> ToNode=0,ToPin=1
+  Connection: 2 - FromNode=0,FromPin=0 -> ToNode=4294967295,ToPin=1
+  Node: 0 - {507AE360-C554-11D0-8A2B-00A0C9255AC1}
+  Node: 1 - {9DB7B9E0-C555-11D0-8A2B-00A0C9255AC1}
+PinNew: Creating pin 0:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 8
+PinNew: Format PCM 16 bit supported
+PinNew: Default sample rate = 48000 Hz
+Failed PinQueryNotificationSupport
+PinNew: Finding topology pin...
+FindStartConnectionTo: Startpin 0, Checking 3 connections...
+FindStartConnectionTo: returning 0000025743C72578
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 3 connections... (pFrom = 0000025743C72578)GetConnectionTo: Returning 0000025743C72588
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 3 connections... (pFrom = 0000025743C72588)GetConnectionTo: Returning 0000025743C72598
+PinNew: Getting physical connection...
+PinNew: Physical connection found!
+PinNew: Creating topology filter '\\?\SWD#DRIVERENUM#{741a2100-1023-11e9-b56e-0800200c9a66}#Nahimic_XVAD&6&1445909f&0#{6994ad04-93ef-11d0-a3cc-00a0c9223196}\TopologySpeaker'
+FilterNew: Creating filter ''
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=1, nodes=0
+  Connection: 0 - FromNode=4294967295,FromPin=0 -> ToNode=4294967295,ToPin=1
+PinNew: Opening topology filter...PinNew: Checking for output endpoint pin id...
+FindStartConnectionTo: Startpin 0, Checking 1 connections...
+FindStartConnectionTo: returning 00000257590BDE28
+PinNew: Found endpoint pin id 1
+GetNameFromCategory: USB GUID 0301 -> 'Speakers'
+PinNew: Pin name 'Speakers'
+PinNew: Releasing topology filter...
+Pin created successfully
+PinNew: Creating pin 1:
+PinNew: Not source/sink
+PinNew: Error -9996
+Filter (WaveRT) created with 1 valid pins (total I/Os: 1)
+Device 20 has render alias
+Device 20 has capture alias
+Interface 20, Name: S
+FilterNew: Creating filter 'Steam Streaming Speakers Wave'
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=4, nodes=2
+  Connection: 0 - FromNode=4294967295,FromPin=1 -> ToNode=0,ToPin=1
+  Connection: 1 - FromNode=0,FromPin=0 -> ToNode=4294967295,ToPin=0
+  Connection: 2 - FromNode=4294967295,FromPin=2 -> ToNode=1,ToPin=1
+  Connection: 3 - FromNode=1,FromPin=0 -> ToNode=4294967295,ToPin=3
+  Node: 0 - {4D837FE0-C555-11D0-8A2B-00A0C9255AC1}
+  Node: 1 - {507AE360-C554-11D0-8A2B-00A0C9255AC1}
+PinNew: Creating pin 0:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 8
+PinNew: Format PCM 8 bit supported
+PinNew: Format PCM 16 bit supported
+PinNew: Format PCM 24 bit supported
+PinNew: Format PCM 32 bit supported
+PinNew: Default sample rate = 44100 Hz
+PinNew: Finding topology pin...
+FindStartConnectionFrom: Startpin 0, Checking 4 connections...
+FindStartConnectionFrom: returning 000002574B61F2F8
+GetConnectedPin: count=2, forward=0, muxPosition=-1
+GetConnectionFrom: Checking 4 connections... (pTo = 000002574B61F2F8)
+GetConnectionFrom: Returning 000002574B61F2E8
+PinNew: Getting physical connection...
+PinNew: No physical connection! Getting the pin name
+PinNew: Setting pin friendly name to 'Input'
+Pin created successfully
+PinNew: Creating pin 1:
+PinNew: Not source/sink
+PinNew: Error -9996
+PinNew: Creating pin 2:
+PinNew: Checking 1 no of dataranges...
+PinNew: DR major format 73647561
+PinNew: MaxChannel: 8
+PinNew: Format PCM 8 bit supported
+PinNew: Format PCM 16 bit supported
+PinNew: Format PCM 24 bit supported
+PinNew: Format PCM 32 bit supported
+PinNew: Default sample rate = 44100 Hz
+PinNew: Finding topology pin...
+FindStartConnectionTo: Startpin 2, Checking 4 connections...
+FindStartConnectionTo: returning 000002574B61F308
+GetConnectedPin: count=2, forward=1, muxPosition=-1
+GetConnectionTo: Checking 4 connections... (pFrom = 000002574B61F308)GetConnectionTo: Returning 000002574B61F318
+PinNew: Getting physical connection...
+PinNew: Physical connection found!
+PinNew: Creating topology filter '\\?\ROOT#SteamStreamingSpeakers#0000#{6994ad04-93ef-11d0-a3cc-00a0c9223196}\Topology'
+FilterNew: Creating filter ''
+FilterNew: Opening filter...
+DumpConnectionsAndNodes: connections=8, nodes=6
+  Connection: 0 - FromNode=4294967295,FromPin=0 -> ToNode=0,ToPin=1
+  Connection: 1 - FromNode=0,FromPin=0 -> ToNode=1,ToPin=1
+  Connection: 2 - FromNode=1,FromPin=0 -> ToNode=3,ToPin=1
+  Connection: 3 - FromNode=4294967295,FromPin=1 -> ToNode=2,ToPin=1
+  Connection: 4 - FromNode=2,FromPin=0 -> ToNode=5,ToPin=4
+  Connection: 5 - FromNode=3,FromPin=0 -> ToNode=4,ToPin=1
+  Connection: 6 - FromNode=4,FromPin=0 -> ToNode=4294967295,ToPin=2
+  Connection: 7 - FromNode=5,FromPin=0 -> ToNode=4294967295,ToPin=3
+  Node: 0 - {3A5ACC00-C557-11D0-8A2B-00A0C9255AC1}
+  Node: 1 - {02B223C0-C557-11D0-8A2B-00A0C9255AC1}
+  Node: 2 - {3A5ACC00-C557-11D0-8A2B-00A0C9255AC1}
+  Node: 3 - {DA441A60-C556-11D0-8A2B-00A0C9255AC1}
+  Node: 4 - {3A5ACC00-C557-11D0-8A2B-00A0C9255AC1}
+  Node: 5 - {2CEAF780-C556-11D0-8A2B-00A0C9255AC1}
+PinNew: Opening topology filter...PinNew: Checking for output endpoint pin id...
+FindStartConnectionTo: Startpin 0, Checking 8 connections...
+FindStartConnectionTo: returning 00000257427C6A28
+GetConnectedPin: count=6, forward=1, muxPosition=-1
+GetConnectionTo: Checking 8 connections... (pFrom = 00000257427C6A28)GetConnectionTo: Returning 00000257427C6A38
+GetConnectedPin: count=6, forward=1, muxPosition=-1
+GetConnectionTo: Checking 8 connections... (pFrom = 00000257427C6A38)GetConnectionTo: Returning 00000257427C6A48
+GetConnectedPin: count=6, forward=1, muxPosition=-1
+GetConnectionTo: Checking 8 connections... (pFrom = 00000257427C6A48)GetConnectionTo: Returning 00000257427C6A78
+GetConnectedPin: count=6, forward=1, muxPosition=-1
+GetConnectionTo: Checking 8 connections... (pFrom = 00000257427C6A78)GetConnectionTo: Returning 00000257427C6A88
+PinNew: Found endpoint pin id 2
+GetNameFromCategory: USB GUID 0301 -> 'Speakers'
+PinNew: Pin name 'Speakers'
+PinNew: Releasing topology filter...
+Pin created successfully
+PinNew: Creating pin 3:
+PinNew: Not source/sink
+PinNew: Error -9996
+Filter (WaveCyclic) created with 2 valid pins (total I/Os: 2)
+after paHostApiInitializers[2].
+Engine WAV pre-decoded: 441000 frames, 2 channels, 44100 Hz
+Sound::load succeeded
+  Sound system initialized.
+  Nav light flare textures: 3/3 loaded
+  Setting up sun/lighting...
+  Setting up ocean...
+WickedMultiCascadeOcean: Normal overlay texture created (512x512, desc=311)
+  Spectrum check at k=0.00628318: downwind=0 crosswind=0 ratio=0 (Phillips ref sqrt=0)
+WickedMultiCascadeOcean: Primary cascade initialized (patch=1000m, fft=512, amp=8e-05)
+  Ocean initialized (Beaufort 1.000000)
+  Setting up terrain...
+WickedTerrainNode: Loaded RGB heightmap (4097x4097) from C:\Users\PB\AppData\Roaming/Bridge Command/6.0/World/World_51.42_-3.15/height.png (absolute meters)
+WickedTerrainNode: texture loaded: C:/Users/PB/AppData/Roaming/Bridge Command/6.0/World/World_51.42_-3.15/texture.png
+WickedTerrainNode: normal map loaded: C:/Users/PB/AppData/Roaming/Bridge Command/6.0/World/World_51.42_-3.15/normal.png
+WickedTerrainNode: roughness map loaded: C:/Users/PB/AppData/Roaming/Bridge Command/6.0/World/World_51.42_-3.15/roughness.png
+WickedTerrainNode: Created terrain mesh (1024x1024 vertices, 2101242 triangles)
+  Terrain loaded: C:\Users\PB\AppData\Roaming/Bridge Command/6.0/World/World_51.42_-3.15/height.png
+    texture: C:\Users\PB\AppData\Roaming/Bridge Command/6.0/World/World_51.42_-3.15/texture.png
+    worldWidth=12998.597656 worldDepth=14049.000000
+    position=(0.000000,0.000000,0.000000)
+    usesRGB=1 maxHeight=136.435440 seaMaxDepth=23.914351
+    heightAt(0,0)=-21.742188 heightAt(mid,mid)=-20.000000 heightAt(max,max)=-20.000000
+    heightmap stats: min=-21.742188 max=120.563248 land=671 sea=1879 of 2550 samples
+  Ocean fetch estimation enabled (terrain height query connected)
+  Setting up own ship...
+  Bridge walk bounds: +-16.240000m x +-1.500000m
+WickedModelImporter: Unsupported format '.x' for file: Models/Ownship/Alkmini/boat.x
+Irrlicht Engine version 1.9.0
+Microsoft Windows 8 or later  (Build 9200)
+Unknown data object in animation of .x file: Header
+X loader: Duplicated vertex, animation might be corrupted.
+  MB[0]: 3564 verts, 11175 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (1.01014,0.698567) (1.03295,0.698468) (1.03755,0.624716) (-0.0494722,0.622084) (1.04594,0.628825)
+  MB[1]: 535 verts, 1047 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.242086,0.920362) (0.242065,0.824349) (0.496355,0.917772) (0.496335,0.82176) (0.416929,0.922742)
+  MB[2]: 25783 verts, 43305 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.000499517,0.9995) (0.999501,0.9995) (0.9995,0.9995) (0.000499517,0.000499606) (0.999501,0.000499606)
+  MB[3]: 394 verts, 726 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.262953,0.999501) (0.735571,0.999501) (0.966062,0.999501) (0.127679,0.892211) (0.0278366,0.892211)
+  MB[4]: 732 verts, 930 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.000499547,0.999501) (0.9995,0.999501) (0.9995,0.999501) (0.9995,0.999501) (0.000499547,0.000499547)
+  MB[5]: 4074 verts, 8766 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.52871,0.106931) (0.330911,0.0988787) (0.346569,0.15093) (0.530311,0.0321802) (0.181361,0.233426)
+  MB[6]: 264 verts, 1512 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.280892,0.0603535) (0.106646,0.196291) (0.106646,0.196291) (0.280892,0.0603535) (0.000629961,0.351434)
+  MB[7]: 718 verts, 1296 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.00053069,0.970722) (0.000826418,0.996759) (0.000857562,0.999501) (0.000857562,0.9995) (0.9995,0.96798)
+  MB[8]: 13 verts, 18 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.011834,0.682976) (0.971854,0.682976) (0.011834,0.183355) (0.971854,0.183355) (0.133684,0.196256)
+  MB[9]: 61 verts, 150 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.0257337,0.658696) (0.703426,0.658696) (0.0257337,0.258776) (0.703426,0.258776) (0.236869,0.321321)
+  MB[10]: 30 verts, 30 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.545977,0.361496) (0.143946,0.361496) (0.143946,-0.00929213) (0.545977,0.361496) (0.143946,-0.00929213)
+  MB[11]: 12 verts, 24 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (-0.00608927,0.674443) (0.500242,0.673414) (0.500203,0.326127) (-0.00568289,0.326696) (1.00613,0.672845)
+  MB[12]: 2121 verts, 3282 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.331087,0.0255445) (0.668913,0.0255445) (0.339603,0.0255444) (0.367482,0.0255446) (0.398111,0.0255445)
+  MB[13]: 87 verts, 210 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.985986,1.06768) (0.0140142,1.06768) (0.0285633,1.06768) (0.0699989,1.06768) (0.135003,1.06768)
+  MB[14]: 84 verts, 171 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (-1.61229,-0.651472) (2.72559,-0.655495) (-1.61229,-0.651472) (2.72559,-0.655495) (2.72759,-1.89654)
+  MB[15]: 10 verts, 24 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (2.36322,-2.30738) (0.0787388,-2.29958) (0.0827597,-1.16969) (-0.472194,-0.0986915) (-1.37222,-0.098448)
+  MB[16]: 42 verts, 54 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.999217,0.9995) (0.020649,0.997959) (0.227956,0.997959) (0.0372511,0.99897) (0.9995,0.0020417)
+  MB[17]: 146 verts, 762 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.644175,0.213326) (0.786647,0.282218) (0.644175,0.213326) (0.786674,0.281744) (0.359178,0.213326)
+  MB[18]: 8 verts, 12 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (-0.0730751,0.267982) (0.989393,0.265358) (-0.0734735,0.106979) (0.988994,0.104355) (1.11436,0.54996)
+  MB[19]: 2076 verts, 3540 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.0611162,0.000499845) (0.938883,0.000499606) (0.9995,0.0649856) (0.9995,0.935014) (0.938884,0.9995)
+  MB[20]: 4 verts, 6 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.00667527,0.999499) (0.993325,0.9995) (0.993325,0.0244994) (0.00667533,0.0244985)
+  MB[21]: 88 verts, 96 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.000499517,0.999501) (0.9995,0.999501) (0.9995,0.999501) (0.9995,0.999501) (0.000499517,0.000499547)
+  MB[22]: 1008 verts, 3120 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.0331517,0.000507474) (0.0290701,0.000507474) (0.0249887,0.000507474) (0.0168256,0.000507474) (0.00866255,0.000507474)
+  MB[23]: 19 verts, 30 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.0217544,0.9995) (0.531883,0.9995) (0.331294,0.9995) (0.642242,0.9995) (0.999501,0.9995)
+  MB[24]: 19 verts, 30 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.0217544,0.9995) (0.531883,0.9995) (0.331294,0.9995) (0.642242,0.9995) (0.999501,0.9995)
+  MB[25]: 9 verts, 12 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.999501,0.999501) (0.000499547,0.9995) (0.000499547,0.000499487) (0.871948,0.000499845) (0.000499547,0.999501)
+  MB[26]: 9 verts, 12 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.000499517,0.9995) (0.9995,0.000499606) (0.000500292,0.000499547) (0.128052,0.000499606) (0.9995,0.9995)
+  MB[27]: 8 verts, 12 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (-0.00494981,1.01478) (1.00495,1.01478) (1.00495,-0.0147784) (-0.00494975,-0.0147792) (-0.00494981,1.01478)
+  MB[28]: 294 verts, 1002 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.97626,0.779839) (0.984206,0.779702) (0.984206,0.779556) (1.08446,0.412616) (1.07399,0.451416)
+  MB[29]: 330 verts, 1956 idx, type=STANDARD, idx16, tex=no
+    UV samples: (1.27655e-37,1) (-0.984204,1.17583) (0.995625,0.908862) (-0.999787,1) (-0.984204,1.17583)
+  MB[30]: 8 verts, 12 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.0072954,1.02873) (0.764661,1.02873) (0.764661,0.0237186) (0.00729552,0.0237181) (0.0072954,1.02873)
+  MB[31]: 8 verts, 30 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.9995,0.130984) (0.000499815,0.130984) (0.000499547,0.999501) (0.9995,0.999501) (0.999501,0.000499845)
+  MB[32]: 4 verts, 6 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.0153576,-0.00747514) (0.984978,-0.00747514) (0.0153576,0.853992) (0.984978,0.853992)
+  MB[33]: 8 verts, 12 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (1.00475,0.000499785) (-0.00474757,0.000499487) (-0.00474781,0.9995) (1.00475,0.999501) (1.00475,0.000499785)
+  MB[34]: 4 verts, 6 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.9995,0.000500023) (0.000499636,0.000499606) (0.000499487,0.9995) (0.9995,0.9995)
+  MB[35]: 4 verts, 6 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (1.00475,0.000499785) (-0.00474757,0.000499487) (-0.00474781,0.9995) (1.00475,0.999501)
+  MB[36]: 4 verts, 6 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.9995,0.0176425) (0.000499487,0.0176426) (0.000499725,0.607209) (0.9995,0.607209)
+  MB[37]: 1248 verts, 3672 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (-0.316253,-0.300474) (1.31625,-0.300473) (-0.316254,1.30047) (1.31625,1.30047) (-0.316253,-0.331212)
+  MB[38]: 4452 verts, 13014 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.918769,0.977466) (0.919026,0.970275) (0.919283,0.963085) (0.974191,0.080061) (0.966823,0.0794051)
+  MB[39]: 47 verts, 84 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.0069111,0.00801039) (0.993089,0.00801015) (0.993089,0.99199) (0.00691131,0.99199) (0.000499547,0.000499725)
+    Upscaled: C:/Users/PB/source/bc-urnu/bin/Models/Ownship/Alkmini/hull-1.jpg -> C:\Users\PB\AppData\Roaming/Bridge Command/texcache/2620035833888495646.png
+    Texture[0]: C:\Users\PB\AppData\Roaming/Bridge Command/texcache/2620035833888495646.png [OK]
+    Upscaled: C:/Users/PB/source/bc-urnu/bin/Models/Ownship/Alkmini/fe-1.jpg -> C:\Users\PB\AppData\Roaming/Bridge Command/texcache/3578590439126715204.png
+    Texture[1]: C:\Users\PB\AppData\Roaming/Bridge Command/texcache/3578590439126715204.png [OK]
+    Submesh[2]: no texture, diffuse=(1.000000,1.000000,0.984314,1.000000)
+    Submesh[3]: no texture, diffuse=(0.156863,0.423529,0.600000,1.000000)
+    Submesh[4]: no texture, diffuse=(0.909804,0.909804,0.909804,0.549020)
+    Submesh[5]: no texture, diffuse=(1.000000,1.000000,1.000000,1.000000)
+    Submesh[6]: no texture, diffuse=(0.886275,0.509804,0.176471,1.000000)
+    Upscaled: C:/Users/PB/source/bc-urnu/bin/Models/Ownship/Alkmini/wood08.bmp -> C:\Users\PB\AppData\Roaming/Bridge Command/texcache/4610114798803204294.png
+    Texture[7]: C:\Users\PB\AppData\Roaming/Bridge Command/texcache/4610114798803204294.png [OK]
+    Upscaled: C:/Users/PB/source/bc-urnu/bin/Models/Ownship/Alkmini/fe-3.bmp -> C:\Users\PB\AppData\Roaming/Bridge Command/texcache/1210586708198905398.png
+    Texture[8]: C:\Users\PB\AppData\Roaming/Bridge Command/texcache/1210586708198905398.png [OK]
+    Texture[9]: C:/Users/PB/source/bc-urnu/bin/Models/Ownship/Alkmini/fe-4.jpg [OK]
+    Upscaled: C:/Users/PB/source/bc-urnu/bin/Models/Ownship/Alkmini/fe-2.jpg -> C:\Users\PB\AppData\Roaming/Bridge Command/texcache/13709764375677452185.png
+    Texture[10]: C:\Users\PB\AppData\Roaming/Bridge Command/texcache/13709764375677452185.png [OK]
+    Upscaled: C:/Users/PB/source/bc-urnu/bin/Models/Ownship/Alkmini/name.jpg -> C:\Users\PB\AppData\Roaming/Bridge Command/texcache/15388131764405365428.png
+    Texture[11]: C:\Users\PB\AppData\Roaming/Bridge Command/texcache/15388131764405365428.png [OK]
+    Submesh[12]: no texture, diffuse=(0.047059,0.047059,0.047059,1.000000)
+    Upscaled: C:/Users/PB/source/bc-urnu/bin/Models/Ownship/Alkmini/logo.bmp -> C:\Users\PB\AppData\Roaming/Bridge Command/texcache/9699766412888112416.png
+    Texture[13]: C:\Users\PB\AppData\Roaming/Bridge Command/texcache/9699766412888112416.png [OK]
+    Upscaled: C:/Users/PB/source/bc-urnu/bin/Models/Ownship/Alkmini/teppich.bmp -> C:\Users\PB\AppData\Roaming/Bridge Command/texcache/14665860811383590898.png
+    Texture[14]: C:\Users\PB\AppData\Roaming/Bridge Command/texcache/14665860811383590898.png [OK]
+    Upscaled: C:/Users/PB/source/bc-urnu/bin/Models/Ownship/Alkmini/dach.bmp -> C:\Users\PB\AppData\Roaming/Bridge Command/texcache/1665681001212239979.png
+    Texture[15]: C:\Users\PB\AppData\Roaming/Bridge Command/texcache/1665681001212239979.png [OK]
+    Submesh[16]: no texture, diffuse=(1.000000,1.000000,1.000000,1.000000)
+    Submesh[17]: no texture, diffuse=(1.000000,1.000000,0.949020,1.000000)
+    Upscaled: C:/Users/PB/source/bc-urnu/bin/Models/Ownship/Alkmini/turen.bmp -> C:\Users\PB\AppData\Roaming/Bridge Command/texcache/635787563376296419.png
+    Texture[18]: C:\Users\PB\AppData\Roaming/Bridge Command/texcache/635787563376296419.png [OK]
+    Submesh[19]: no texture, diffuse=(0.768627,0.768627,0.760784,1.000000)
+    Submesh[20]: no texture, diffuse=(0.435294,0.435294,0.435294,1.000000)
+    Upscaled: C:/Users/PB/source/bc-urnu/bin/Models/Ownship/Alkmini/teak3.bmp -> C:\Users\PB\AppData\Roaming/Bridge Command/texcache/4393445000224470363.png
+    Texture[21]: C:\Users\PB\AppData\Roaming/Bridge Command/texcache/4393445000224470363.png [OK]
+    Submesh[22]: no texture, diffuse=(0.929412,0.929412,0.929412,1.000000)
+    Submesh[23]: no texture, diffuse=(0.000000,1.000000,0.000000,1.000000)
+    Submesh[24]: no texture, diffuse=(1.000000,0.000000,0.000000,1.000000)
+    Submesh[25]: no texture, diffuse=(0.035294,0.831373,0.035294,1.000000)
+    Submesh[26]: no texture, diffuse=(0.988235,0.047059,0.047059,1.000000)
+    Upscaled: C:/Users/PB/source/bc-urnu/bin/Models/Ownship/Alkmini/combi2.jpg -> C:\Users\PB\AppData\Roaming/Bridge Command/texcache/3001697524239383133.png
+    Texture[27]: C:\Users\PB\AppData\Roaming/Bridge Command/texcache/3001697524239383133.png [OK]
+    Upscaled: C:/Users/PB/source/bc-urnu/bin/Models/Ownship/Alkmini/hull-1a.jpg -> C:\Users\PB\AppData\Roaming/Bridge Command/texcache/16282567169048849383.png
+    Texture[28]: C:\Users\PB\AppData\Roaming/Bridge Command/texcache/16282567169048849383.png [OK]
+    Submesh[29]: no texture, diffuse=(0.039216,0.388235,0.682353,1.000000)
+    Upscaled: C:/Users/PB/source/bc-urnu/bin/Models/Ownship/Alkmini/panmid.bmp -> C:\Users\PB\AppData\Roaming/Bridge Command/texcache/13437142437395486748.png
+    Texture[30]: C:\Users\PB\AppData\Roaming/Bridge Command/texcache/13437142437395486748.png [OK]
+    Upscaled: C:/Users/PB/source/bc-urnu/bin/Models/Ownship/Alkmini/vent1.jpg -> C:\Users\PB\AppData\Roaming/Bridge Command/texcache/15287880378268303321.png
+    Texture[31]: C:\Users\PB\AppData\Roaming/Bridge Command/texcache/15287880378268303321.png [OK]
+    Texture[32]: C:/Users/PB/source/bc-urnu/bin/Models/Ownship/Alkmini/fahrplan.bmp [OK]
+    Upscaled: C:/Users/PB/source/bc-urnu/bin/Models/Ownship/Alkmini/radar.bmp -> C:\Users\PB\AppData\Roaming/Bridge Command/texcache/4725663028609827243.png
+    Texture[33]: C:\Users\PB\AppData\Roaming/Bridge Command/texcache/4725663028609827243.png [OK]
+    Texture[34]: C:/Users/PB/source/bc-urnu/bin/Models/Ownship/Alkmini/seekart.jpg [OK]
+    Upscaled: C:/Users/PB/source/bc-urnu/bin/Models/Ownship/Alkmini/wetter.jpg -> C:\Users\PB\AppData\Roaming/Bridge Command/texcache/1817507481198233972.png
+    Texture[35]: C:\Users\PB\AppData\Roaming/Bridge Command/texcache/1817507481198233972.png [OK]
+    Upscaled: C:/Users/PB/source/bc-urnu/bin/Models/Ownship/Alkmini/langes.bmp -> C:\Users\PB\AppData\Roaming/Bridge Command/texcache/14725676504790173319.png
+    Texture[36]: C:\Users\PB\AppData\Roaming/Bridge Command/texcache/14725676504790173319.png [OK]
+    Upscaled: C:/Users/PB/source/bc-urnu/bin/Models/Ownship/Alkmini/stoffbl.bmp -> C:\Users\PB\AppData\Roaming/Bridge Command/texcache/14001330027945856645.png
+    Texture[37]: C:\Users\PB\AppData\Roaming/Bridge Command/texcache/14001330027945856645.png [OK]
+    Submesh[38]: no texture, diffuse=(0.862745,0.862745,0.862745,1.000000)
+    Texture[39]: C:/Users/PB/source/bc-urnu/bin/Models/Ownship/Alkmini/mahagony.jpg [OK]
+    Loaded via Irrlicht: Models/Ownship/Alkmini/boat.x (40 submeshes, 48329 verts, 33386 tris, 23/40 textured)
+  Own ship: Alkmini at (5547.020996, 5976.625488) heading 360.000000
+  Own ship: using Othership light defs (5)
+  [FLARE] attached to entity 49 flareCount=1
+  [FLARE] attached to entity 50 flareCount=1
+  [FLARE] attached to entity 51 flareCount=1
+  [FLARE] attached to entity 52 flareCount=1
+  [FLARE] attached to entity 53 flareCount=1
+  Own ship: 5 nav lights
+  Setting up 1 other ships...
+WickedModelImporter: Unsupported format '.x' for file: Models/Othership/Cargoship1/boat.x
+Unknown data object in animation of .x file: Header
+  MB[0]: 4360 verts, 8106 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.749996,0.499992) (0.500008,0.499992) (0.749996,0.250004) (0.500008,0.499992) (0.500008,0.499992)
+  MB[1]: 7442 verts, 14226 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.0684825,0.500008) (0.000503548,0.00050354) (0,1) (0,1) (0,1)
+  MB[2]: 10570 verts, 12078 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0,1) (0.966278,1) (0.0343786,1) (0,0) (0.0641794,1)
+  MB[3]: 12920 verts, 17394 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.0171817,0.974685) (0.0171817,0.949386) (0.0343786,0.949386) (0,0.892256) (0.0343786,0.974685)
+  MB[4]: 480 verts, 549 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0.749996,1) (0.749996,0) (0.500008,1) (0,1) (0.534371,1)
+  MB[5]: 1688 verts, 1746 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0,0.499992) (0.500008,1) (0.500008,1) (0,1) (1,0)
+  MB[6]: 96 verts, 216 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0,1) (0,0) (1,1) (1,0) (0.5,1)
+  MB[7]: 160 verts, 900 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0,1) (0,0) (0.25,1) (0.25,0) (0.5,1)
+    Submesh[0]: no texture, diffuse=(0.411765,0.411765,0.411765,1.000000)
+    Submesh[1]: no texture, diffuse=(0.000000,0.250980,0.501961,1.000000)
+    Submesh[2]: no texture, diffuse=(0.000000,0.000000,0.000000,1.000000)
+    Submesh[3]: no texture, diffuse=(1.000000,1.000000,1.000000,1.000000)
+    Submesh[4]: no texture, diffuse=(0.749020,0.000000,0.000000,1.000000)
+    Submesh[5]: no texture, diffuse=(0.745098,0.745098,0.745098,1.000000)
+    Submesh[6]: no texture, diffuse=(0.588235,0.588235,0.203922,1.000000)
+    Submesh[7]: no texture, diffuse=(0.000000,0.498039,0.000000,1.000000)
+    Loaded via Irrlicht: Models/Othership/Cargoship1/boat.x (8 submeshes, 37716 verts, 18405 tris, 0/8 textured)
+  Other ship 0: Cargoship1 speed=10.000000kn heading=184.909027
+  [FLARE] attached to entity 66 flareCount=1
+  [FLARE] attached to entity 67 flareCount=1
+  [FLARE] attached to entity 68 flareCount=1
+  [FLARE] attached to entity 69 flareCount=1
+  [FLARE] attached to entity 70 flareCount=1
+    5 nav lights
+  Setting up buoys...
+  Found 16 buoys in buoy.ini
+Unknown data object in animation of .x file: Header
+  MB[0]: 26 verts, 132 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0,0) (0,0) (0,0) (0,0) (0,0)
+    Loaded buoy with colour: Models/Buoy/shape_conical/buoy.x colour=green
+Unknown data object in animation of .x file: Header
+  MB[0]: 26 verts, 132 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0,0.75) (0.99754,0.10716) (0.08333,0.75) (0.07945,0.1058) (0.16667,0.75)
+    Loaded buoy with colour: Models/Buoy/shape_can/buoy.x colour=red
+Unknown data object in animation of .x file: Header
+X loader: Duplicated vertex, animation might be corrupted.
+X loader: Duplicated vertex, animation might be corrupted.
+X loader: Duplicated vertex, animation might be corrupted.
+  MB[0]: 57 verts, 90 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0,0) (0,0) (0,0) (0,0) (0,0)
+  MB[1]: 87 verts, 120 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0,0) (0,0) (0,0) (0,0) (0,0)
+  MB[2]: 91 verts, 189 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0,0) (0,0) (0,0) (0,0) (0,0)
+  MB[3]: 64 verts, 87 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0,0) (0,0) (0,0) (0,0) (0,0)
+  MB[4]: 115 verts, 504 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0,1) (0,0.875) (0,0.75) (0,0.625) (0,0.5)
+  MB[5]: 8 verts, 30 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0,1) (0,1) (0,0) (0,0) (1,1)
+  MB[6]: 6 verts, 6 idx, type=STANDARD, idx16, tex=no
+    UV samples: (1,1) (0,1) (0,1) (1,1) (0,1)
+    Loaded buoy with colour: Models/Buoy/shape_spherical/buoy.x colour=red
+    Created banded buoy cylinder: Buoy_7 colours=yellow;black;yellow (3 bands, topmark=4)
+    Created banded buoy cylinder: Buoy_11 colours=red;green;red (3 bands)
+    Created banded buoy cylinder: Buoy_15 colours=black;yellow;black (3 bands, topmark=3)
+  Loaded 16 buoys
+  Setting up land objects...
+  Found 68 land objects
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+  LandObject 1/68: Tower model=Models/LandObject/Tower/object.x
+WickedModelImporter: Unsupported format '.x' for file: Models/LandObject/Tower/object.x
+Unknown data object in animation of .x file: Header
+  MB[0]: 8 verts, 36 idx, type=STANDARD, idx16, tex=no
+    UV samples: (0,0) (0,1) (1,0) (1,1) (1,1)
+    Submesh[0]: no texture, diffuse=(0.545098,0.635294,0.666667,1.000000)
+    Loaded via Irrlicht: Models/LandObject/Tower/object.x (1 submeshes, 8 verts, 12 tris, 0/1 textured)
+  LandObject 2/68: Lighthouse model=Models/LandObject/Lighthouse/lighthouse.glb
+    Created procedural lighthouse mesh h=8.000000 baseR=1.500000
+  LandObject 3/68: Lighthouse model=Models/LandObject/Lighthouse/lighthouse.glb
+    Created procedural lighthouse mesh h=15.000000 baseR=1.500000
+  LandObject 4/68: Lighthouse model=Models/LandObject/Lighthouse/lighthouse.glb
+  LandObject 5/68: Lighthouse model=Models/LandObject/Lighthouse/lighthouse.glb
+    Created procedural lighthouse mesh h=13.000000 baseR=1.500000
+  LandObject 6/68: Lighthouse model=Models/LandObject/Lighthouse/lighthouse.glb
+  LandObject 7/68: Lighthouse model=Models/LandObject/Lighthouse/lighthouse.glb
+Unable to open file Models/LandObject/Masts/object.ini
+Unable to open file Models/LandObject/Masts/object.ini
+  LandObject 8/68: Masts model=Models/LandObject/Masts/object.x
+WickedModelImporter: Unsupported format '.x' for file: Models/LandObject/Masts/object.x
+Unknown data object in animation of .x file: Header
+  MB[0]: 542 verts, 2808 idx, type=STANDARD, idx16, tex=no
+    UV samples: (-0.5,0.5) (0.5,0.5) (-0.666667,0.5) (-0.833333,0.5) (-1,0.5)
+  MB[1]: 542 verts, 2808 idx, type=STANDARD, idx16, tex=no
+    UV samples: (-0.5,0.5) (0.5,0.5) (-0.666667,0.5) (-0.833333,0.5) (-1,0.5)
+  MB[2]: 542 verts, 2808 idx, type=STANDARD, idx16, tex=no
+    UV samples: (-0.5,0.5) (0.5,0.5) (-0.666667,0.5) (-0.833333,0.5) (-1,0.5)
+  MB[3]: 542 verts, 2808 idx, type=STANDARD, idx16, tex=no
+    UV samples: (-0.5,0.5) (0.5,0.5) (-0.666667,0.5) (-0.833333,0.5) (-1,0.5)
+  MB[4]: 542 verts, 2808 idx, type=STANDARD, idx16, tex=no
+    UV samples: (-0.5,0.5) (0.5,0.5) (-0.666667,0.5) (-0.833333,0.5) (-1,0.5)
+    Submesh[0]: no texture, diffuse=(0.247059,0.125490,0.000000,1.000000)
+    Submesh[1]: no texture, diffuse=(0.247059,0.125490,0.000000,1.000000)
+    Submesh[2]: no texture, diffuse=(0.247059,0.125490,0.000000,1.000000)
+    Submesh[3]: no texture, diffuse=(0.247059,0.125490,0.000000,1.000000)
+    Submesh[4]: no texture, diffuse=(0.247059,0.125490,0.000000,1.000000)
+    Loaded via Irrlicht: Models/LandObject/Masts/object.x (5 submeshes, 2710 verts, 4680 tris, 0/5 textured)
+Unable to open file Models/LandObject/Masts/object.ini
+Unable to open file Models/LandObject/Masts/object.ini
+  LandObject 9/68: Masts model=Models/LandObject/Masts/object.x
+Unable to open file Models/LandObject/Masts/object.ini
+Unable to open file Models/LandObject/Masts/object.ini
+  LandObject 10/68: Masts model=Models/LandObject/Masts/object.x
+Unable to open file Models/LandObject/Masts/object.ini
+Unable to open file Models/LandObject/Masts/object.ini
+  LandObject 11/68: Masts model=Models/LandObject/Masts/object.x
+Unable to open file Models/LandObject/Masts/object.ini
+Unable to open file Models/LandObject/Masts/object.ini
+  LandObject 12/68: Masts model=Models/LandObject/Masts/object.x
+Unable to open file Models/LandObject/Masts/object.ini
+Unable to open file Models/LandObject/Masts/object.ini
+  LandObject 13/68: Masts model=Models/LandObject/Masts/object.x
+Unable to open file Models/LandObject/Masts/object.ini
+Unable to open file Models/LandObject/Masts/object.ini
+  LandObject 14/68: Masts model=Models/LandObject/Masts/object.x
+Unable to open file Models/LandObject/Masts/object.ini
+Unable to open file Models/LandObject/Masts/object.ini
+  LandObject 15/68: Masts model=Models/LandObject/Masts/object.x
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+  LandObject 16/68: Tower model=Models/LandObject/Tower/object.x
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+  LandObject 17/68: Tower model=Models/LandObject/Tower/object.x
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+  LandObject 18/68: Tower model=Models/LandObject/Tower/object.x
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+  LandObject 19/68: Tower model=Models/LandObject/Tower/object.x
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+  LandObject 20/68: Tower model=Models/LandObject/Tower/object.x
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+  LandObject 21/68: Tower model=Models/LandObject/Tower/object.x
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+  LandObject 22/68: Tower model=Models/LandObject/Tower/object.x
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+  LandObject 23/68: Tower model=Models/LandObject/Tower/object.x
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+  LandObject 24/68: Tower model=Models/LandObject/Tower/object.x
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+  LandObject 25/68: Tower model=Models/LandObject/Tower/object.x
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+  LandObject 26/68: Tower model=Models/LandObject/Tower/object.x
+Unable to open file Models/LandObject/Chimneys/object.ini
+Unable to open file Models/LandObject/Chimneys/object.ini
+  LandObject 27/68: Chimneys model=Models/LandObject/Chimneys/object.x
+WickedModelImporter: Unsupported format '.x' for file: Models/LandObject/Chimneys/object.x
+Unknown data object in animation of .x file: Header
+  MB[0]: 542 verts, 2808 idx, type=STANDARD, idx16, tex=no
+    UV samples: (-0.5,0.5) (0.5,0.5) (-0.666667,0.5) (-0.833333,0.5) (-1,0.5)
+  MB[1]: 542 verts, 2808 idx, type=STANDARD, idx16, tex=no
+    UV samples: (-0.5,0.5) (0.5,0.5) (-0.666667,0.5) (-0.833333,0.5) (-1,0.5)
+    Submesh[0]: no texture, diffuse=(0.466667,0.466667,0.466667,1.000000)
+    Submesh[1]: no texture, diffuse=(0.466667,0.466667,0.466667,1.000000)
+    Loaded via Irrlicht: Models/LandObject/Chimneys/object.x (2 submeshes, 1084 verts, 1872 tris, 0/2 textured)
+  LandObject 28/68: Church model=Models/LandObject/Church/church.3ds
+WickedModelImporter: Unsupported format '.3ds' for file: Models/LandObject/Church/church.3ds
+  MB[0]: 432 verts, 432 idx, type=STANDARD, idx16, tex=yes
+    UV samples: (0.723773,1) (0.835069,1) (0.835069,0.925951) (0.835069,0.888704) (0.779421,0.814902)
+    Texture[0]: C:/Users/PB/source/bc-urnu/bin/Models/LandObject/Church/church.bmp [OK]
+    Loaded via Irrlicht: Models/LandObject/Church/church.3ds (1 submeshes, 432 verts, 144 tris, 1/1 textured)
+  LandObject 29/68: Church model=Models/LandObject/Church/church.3ds
+  LandObject 30/68: Church model=Models/LandObject/Church/church.3ds
+  LandObject 31/68: Church model=Models/LandObject/Church/church.3ds
+  LandObject 32/68: Church model=Models/LandObject/Church/church.3ds
+  LandObject 33/68: Church model=Models/LandObject/Church/church.3ds
+  LandObject 34/68: Church model=Models/LandObject/Church/church.3ds
+  LandObject 35/68: Lighthouse model=Models/LandObject/Lighthouse/lighthouse.glb
+    Created procedural lighthouse mesh h=30.000000 baseR=3.000000
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+  LandObject 36/68: Tower model=Models/LandObject/Tower/object.x
+  LandObject 37/68: Church model=Models/LandObject/Church/church.3ds
+  LandObject 38/68: Church model=Models/LandObject/Church/church.3ds
+  LandObject 39/68: Church model=Models/LandObject/Church/church.3ds
+  LandObject 40/68: Church model=Models/LandObject/Church/church.3ds
+  LandObject 41/68: Church model=Models/LandObject/Church/church.3ds
+  LandObject 42/68: Church model=Models/LandObject/Church/church.3ds
+  LandObject 43/68: Church model=Models/LandObject/Church/church.3ds
+  LandObject 44/68: Church model=Models/LandObject/Church/church.3ds
+Unable to open file Models/LandObject/Chimneys/object.ini
+Unable to open file Models/LandObject/Chimneys/object.ini
+  LandObject 45/68: Chimneys model=Models/LandObject/Chimneys/object.x
+Unable to open file Models/LandObject/Chimneys/object.ini
+Unable to open file Models/LandObject/Chimneys/object.ini
+  LandObject 46/68: Chimneys model=Models/LandObject/Chimneys/object.x
+Unable to open file Models/LandObject/Chimneys/object.ini
+Unable to open file Models/LandObject/Chimneys/object.ini
+  LandObject 47/68: Chimneys model=Models/LandObject/Chimneys/object.x
+Unable to open file Models/LandObject/Chimneys/object.ini
+Unable to open file Models/LandObject/Chimneys/object.ini
+  LandObject 48/68: Chimneys model=Models/LandObject/Chimneys/object.x
+  LandObject 49/68: Church model=Models/LandObject/Church/church.3ds
+  LandObject 50/68: Church model=Models/LandObject/Church/church.3ds
+  LandObject 51/68: Church model=Models/LandObject/Church/church.3ds
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+  LandObject 52/68: Tower model=Models/LandObject/Tower/object.x
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+  LandObject 53/68: Tower model=Models/LandObject/Tower/object.x
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+  LandObject 54/68: Tower model=Models/LandObject/Tower/object.x
+  LandObject 55/68: Church model=Models/LandObject/Church/church.3ds
+  LandObject 56/68: Church model=Models/LandObject/Church/church.3ds
+  LandObject 57/68: Church model=Models/LandObject/Church/church.3ds
+  LandObject 58/68: Church model=Models/LandObject/Church/church.3ds
+Unable to open file Models/LandObject/Chimneys/object.ini
+Unable to open file Models/LandObject/Chimneys/object.ini
+  LandObject 59/68: Chimneys model=Models/LandObject/Chimneys/object.x
+  LandObject 60/68: Church model=Models/LandObject/Church/church.3ds
+  LandObject 61/68: Church model=Models/LandObject/Church/church.3ds
+  LandObject 62/68: Church model=Models/LandObject/Church/church.3ds
+Unable to open file Models/LandObject/Chimneys/object.ini
+Unable to open file Models/LandObject/Chimneys/object.ini
+  LandObject 63/68: Chimneys model=Models/LandObject/Chimneys/object.x
+  LandObject 64/68: Church model=Models/LandObject/Church/church.3ds
+  LandObject 65/68: Church model=Models/LandObject/Church/church.3ds
+Unable to open file Models/LandObject/Chimneys/object.ini
+Unable to open file Models/LandObject/Chimneys/object.ini
+  LandObject 66/68: Chimneys model=Models/LandObject/Chimneys/object.x
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+  LandObject 67/68: Tower model=Models/LandObject/Tower/object.x
+Unable to open file Models/LandObject/Tower/object.ini
+Unable to open file Models/LandObject/Tower/object.ini
+  LandObject 68/68: Tower model=Models/LandObject/Tower/object.x
+  Loaded 68 land objects
+  Setting up navigation lights from light.ini...
+  Found 13 lights in light.ini
+  [FLARE] attached to entity 296 flareCount=1
+    Light 1: pos=(5214.830566,8.000000,8735.459961) arc=0.000000-360.000000 rgb=(1.000000,0.000000,0.000000) buoy=-1
+  [FLARE] attached to entity 297 flareCount=1
+    Light 2: pos=(5462.307617,5.195343,10712.114258) arc=0.000000-360.000000 rgb=(1.000000,0.000000,0.000000) buoy=-1
+  [FLARE] attached to entity 298 flareCount=1
+    Light 3: pos=(5578.531738,5.224976,10586.559570) arc=0.000000-360.000000 rgb=(0.000000,1.000000,0.000000) buoy=-1
+  [FLARE] attached to entity 299 flareCount=1
+    Light 4: pos=(9702.970703,17.403587,6514.055176) arc=0.000000-360.000000 rgb=(1.000000,1.000000,1.000000) buoy=-1
+  [FLARE] attached to entity 300 flareCount=1
+    Light 5: pos=(0.000000,5.000000,0.000000) arc=0.000000-360.000000 rgb=(1.000000,1.000000,0.000000) buoy=7
+  [FLARE] attached to entity 301 flareCount=1
+    Light 6: pos=(0.000000,5.000000,0.000000) arc=0.000000-360.000000 rgb=(1.000000,0.000000,0.000000) buoy=8
+  [FLARE] attached to entity 302 flareCount=1
+    Light 7: pos=(0.000000,5.000000,0.000000) arc=0.000000-360.000000 rgb=(0.000000,1.000000,0.000000) buoy=9
+  [FLARE] attached to entity 303 flareCount=1
+    Light 8: pos=(5273.604004,5.302699,9870.126953) arc=0.000000-360.000000 rgb=(0.000000,1.000000,0.000000) buoy=-1
+  [FLARE] attached to entity 304 flareCount=1
+    Light 9: pos=(5235.645508,5.207520,9899.395508) arc=0.000000-360.000000 rgb=(1.000000,0.000000,0.000000) buoy=-1
+  [FLARE] attached to entity 305 flareCount=1
+    Light 10: pos=(8411.294922,60.522499,2158.202393) arc=106.000000-140.000000 rgb=(1.000000,0.000000,0.000000) buoy=-1
+  [FLARE] attached to entity 306 flareCount=1
+    Light 11: pos=(8411.294922,60.522499,2158.202393) arc=140.000000-151.000000 rgb=(1.000000,1.000000,1.000000) buoy=-1
+  [FLARE] attached to entity 307 flareCount=1
+    Light 12: pos=(8411.294922,60.522499,2158.202393) arc=151.000000-203.000000 rgb=(1.000000,0.000000,0.000000) buoy=-1
+  [FLARE] attached to entity 308 flareCount=1
+    Light 13: pos=(8411.294922,60.522499,2158.202393) arc=203.000000-106.000000 rgb=(1.000000,1.000000,1.000000) buoy=-1
+  Created 13 scene lights (buoy + land)
+  [FLARE] attached to entity 309 flareCount=1
+  [FLARE] attached to entity 310 flareCount=1
+  [FLARE] attached to entity 311 flareCount=1
+  [FLARE] attached to entity 312 flareCount=1
+  [FLARE] attached to entity 313 flareCount=1
+  [FLARE] attached to entity 314 flareCount=1
+  [FLARE] attached to entity 315 flareCount=1
+  [FLARE] attached to entity 316 flareCount=1
+  [FLARE] attached to entity 317 flareCount=1
+  [FLARE] attached to entity 318 flareCount=1
+  [FLARE] attached to entity 319 flareCount=1
+  [FLARE] attached to entity 320 flareCount=1
+  [FLARE] attached to entity 321 flareCount=1
+  Auto-generated 13 buoy lights
+  Loading pre-baked buildings: C:\Users\PB\AppData\Roaming/Bridge Command/6.0/World/World_51.42_-3.15/buildings.obj
+  Pre-baked buildings loaded
+  Loading pre-baked structures: C:\Users\PB\AppData\Roaming/Bridge Command/6.0/World/World_51.42_-3.15/structures.obj
+  Pre-baked structures loaded
+  Irrlicht model converter shutdown.
+  Camera bridge pos: (5547.020996, 25.146000, 6033.166016)
+  Camera heading=360.000000 mode=bridge
+  Scene setup complete.
+  Initializing SimulationBridge (physics/AI)...
+Irrlicht Engine version 1.9.0
+Microsoft Windows 8 or later  (Build 9200)
+Generated terrain data (4097x4097) in 0.0000 seconds
+Unknown data object in animation of .x file: Header
+X loader: Duplicated vertex, animation might be corrupted.
+Length, breadth, draught are calculated from bounding box as (m):
+154.225067
+34.640434
+6.214783
+cB defined in boat.ini mass and inertia shall be calculated from dimensions
+Mass, inertia are calculated as:
+25499136.000000
+53092028416.000000
+maxSpeed is defined in boat.ini so the defined drag parameters shall be calculated from ship dimensions
+dynamicsSpeedA, dynamicsSpeedB, thrust per engine are calculated as:
+220449.562500
+0.000000
+5717571.000000
+dynamicsTurnDragA, dynamicsTurnDragB are calculated as:
+15563223040.000000
+0.000000
+MMG physics model enabled
+MMG: Estimating coefficients from ship dimensions
+MMG: L=154.225067 B=34.640434 T=6.214783 Dp=6.500000
+Created triangle selector
+Own bounding box (scaled):
+X (beam): -17.364811 to 17.275623 Y (height): -6.214783 to 42.291344 Z (length): -69.816544 to 84.408524
+ Draught: 6.214783 length: 154.225067 breadth: 34.640434
