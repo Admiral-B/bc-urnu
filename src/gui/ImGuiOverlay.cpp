@@ -40,13 +40,15 @@ void ImGuiOverlay::setSimulationData(const SimulationHUDData& data) {
     if (depthHistoryIndex_ == 0) depthHistoryFull_ = true;
 }
 
-void ImGuiOverlay::setControlValues(float portEngine, float stbdEngine, float wheel, float bowThruster) {
+void ImGuiOverlay::setControlValues(float portEngine, float stbdEngine, float wheel,
+                                    float bowThruster, float sternThruster) {
     // Only update if user isn't actively dragging a slider
     if (!controlActive_) {
         controlPortEngine_ = portEngine;
         controlStbdEngine_ = stbdEngine;
         controlWheel_ = wheel;
         controlBowThruster_ = bowThruster;
+        controlSternThruster_ = sternThruster;
     }
 }
 
@@ -60,7 +62,12 @@ void ImGuiOverlay::render() {
     if (showDepth_) renderDepthDisplay();
     if (showEngine_) renderEngineDisplay();
     if (showWind_) renderWindDisplay();
-    if (showControls_) renderControls();
+    if (showControls_) {
+        if (data_.isAzimuthDrive)
+            renderAzimuthControls();
+        else
+            renderControls();
+    }
 }
 
 // -- Compass ----------------------------------------------------------
@@ -454,30 +461,52 @@ void ImGuiOverlay::renderDepthDisplay() {
 // -- Engine Display ---------------------------------------------------
 
 void ImGuiOverlay::renderEngineDisplay() {
-    ImGui::SetNextWindowSize(ImVec2(210, 110), ImGuiCond_FirstUseEver);
+    if (data_.isAzimuthDrive) {
+        ImGui::SetNextWindowSize(ImVec2(240, 140), ImGuiCond_FirstUseEver);
+    } else {
+        ImGui::SetNextWindowSize(ImVec2(210, 110), ImGuiCond_FirstUseEver);
+    }
     ImGui::SetNextWindowPos(
         ImVec2(screenWidth_ - 220, 150), ImGuiCond_FirstUseEver);
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar;
     if (layoutLocked_) flags |= ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
 
-    if (!ImGui::Begin("Engine", nullptr, flags)) {
+    const char* title = data_.isAzimuthDrive ? "Azimuth Drives" : "Engine";
+    if (!ImGui::Begin(title, nullptr, flags)) {
         ImGui::End();
         return;
     }
 
-    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1), "RPM");
-    ImGui::SameLine(100);
-    ImGui::TextColored(ImVec4(0.3f, 1, 0.3f, 1), "%4.0f", data_.engineRPM);
+    if (data_.isAzimuthDrive) {
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1), "Port");
+        ImGui::SameLine(70);
+        ImGui::Text("Angle %+.0f", data_.portSchottel);
+        ImGui::SameLine(160);
+        ImGui::Text("Thr %+.0f%%", data_.portThrustLever * 100);
 
-    // RPM bar
-    float rpmFrac = std::abs(data_.engineRPM) / 200.0f; // assume 200 RPM max
-    if (rpmFrac > 1.0f) rpmFrac = 1.0f;
-    ImGui::ProgressBar(rpmFrac, ImVec2(-1, 12), "");
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1), "Stbd");
+        ImGui::SameLine(70);
+        ImGui::Text("Angle %+.0f", data_.stbdSchottel);
+        ImGui::SameLine(160);
+        ImGui::Text("Thr %+.0f%%", data_.stbdThrustLever * 100);
 
-    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1), "Thrust");
-    ImGui::SameLine(100);
-    ImGui::Text("%+.0f%%", data_.thrustLever * 100);
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1), "Up/Down=thrust  Left/Right=steer");
+    } else {
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1), "RPM");
+        ImGui::SameLine(100);
+        ImGui::TextColored(ImVec4(0.3f, 1, 0.3f, 1), "%4.0f", data_.engineRPM);
+
+        // RPM bar
+        float rpmFrac = std::abs(data_.engineRPM) / 200.0f; // assume 200 RPM max
+        if (rpmFrac > 1.0f) rpmFrac = 1.0f;
+        ImGui::ProgressBar(rpmFrac, ImVec2(-1, 12), "");
+
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1), "Thrust");
+        ImGui::SameLine(100);
+        ImGui::Text("%+.0f%%", data_.thrustLever * 100);
+    }
 
     ImGui::End();
 }
@@ -556,46 +585,80 @@ void ImGuiOverlay::renderControls() {
         }
     };
 
-    // Port + Starboard engine sliders side by side
-    ImGui::SetNextWindowSize(ImVec2(190, 340), ImGuiCond_FirstUseEver);
+    // Engine sliders -- adapt to single/twin screw
+    if (data_.isSingleEngine) {
+        ImGui::SetNextWindowSize(ImVec2(100, 340), ImGuiCond_FirstUseEver);
+    } else {
+        ImGui::SetNextWindowSize(ImVec2(190, 340), ImGuiCond_FirstUseEver);
+    }
     ImGui::SetNextWindowPos(
         ImVec2(10, screenHeight_ * 0.5f - 170), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin("Engines##ctrl", nullptr, flags)) {
-        float avail = ImGui::GetContentRegionAvail().x;
-        float colW = avail * 0.5f - 4;
+        if (data_.isSingleEngine) {
+            // Single engine: one centered slider, port=stbd linked
+            renderEngineSlider("Engine", "##mainEng", controlPortEngine_);
+            controlStbdEngine_ = controlPortEngine_; // keep in sync
+        } else {
+            float avail = ImGui::GetContentRegionAvail().x;
+            float colW = avail * 0.5f - 4;
 
-        // Port engine (left column)
-        ImGui::BeginChild("##portCol", ImVec2(colW, 0), false);
-        renderEngineSlider("Port", "##portEng", controlPortEngine_);
-        ImGui::EndChild();
+            // Port engine (left column)
+            ImGui::BeginChild("##portCol", ImVec2(colW, 0), false);
+            renderEngineSlider("Port", "##portEng", controlPortEngine_);
+            ImGui::EndChild();
 
-        ImGui::SameLine(0, 8);
+            ImGui::SameLine(0, 8);
 
-        // Starboard engine (right column)
-        ImGui::BeginChild("##stbdCol", ImVec2(colW, 0), false);
-        renderEngineSlider("Stbd", "##stbdEng", controlStbdEngine_);
-        ImGui::EndChild();
-    }
-    ImGui::End();
-
-    // Bow thruster - horizontal slider
-    ImGui::SetNextWindowSize(ImVec2(380, 80), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(
-        ImVec2(10, screenHeight_ * 0.5f + 180), ImGuiCond_FirstUseEver);
-
-    if (ImGui::Begin("Bow Thruster##ctrl", nullptr, flags)) {
-        float avail = ImGui::GetContentRegionAvail().x;
-        ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 0.7f), "P");
-        ImGui::SameLine(avail - ImGui::CalcTextSize("S").x);
-        ImGui::TextColored(ImVec4(0.3f, 1, 0.3f, 0.7f), "S");
-        ImGui::SetNextItemWidth(avail);
-        if (ImGui::SliderFloat("##bowThr", &controlBowThruster_, -1.0f, 1.0f, "%+.0f%%")) {
-            controlActive_ = true;
+            // Starboard engine (right column)
+            ImGui::BeginChild("##stbdCol", ImVec2(colW, 0), false);
+            renderEngineSlider("Stbd", "##stbdEng", controlStbdEngine_);
+            ImGui::EndChild();
         }
-        if (ImGui::IsItemActive()) controlActive_ = true;
     }
     ImGui::End();
+
+    // Bow thruster - horizontal slider (only if ship has one)
+    if (data_.hasBowThruster) {
+        ImGui::SetNextWindowSize(ImVec2(380, 80), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos(
+            ImVec2(10, screenHeight_ * 0.5f + 180), ImGuiCond_FirstUseEver);
+
+        if (ImGui::Begin("Bow Thruster##ctrl", nullptr, flags)) {
+            float avail = ImGui::GetContentRegionAvail().x;
+            ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 0.7f), "P");
+            ImGui::SameLine(avail - ImGui::CalcTextSize("S").x);
+            ImGui::TextColored(ImVec4(0.3f, 1, 0.3f, 0.7f), "S");
+            ImGui::SetNextItemWidth(avail);
+            if (ImGui::SliderFloat("##bowThr", &controlBowThruster_, -1.0f, 1.0f, "%+.0f%%")) {
+                controlActive_ = true;
+            }
+            if (ImGui::IsItemActive()) controlActive_ = true;
+            ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1), "Z=Port  X=Stbd");
+        }
+        ImGui::End();
+    }
+
+    // Stern thruster - horizontal slider (only if ship has one)
+    if (data_.hasSternThruster) {
+        ImGui::SetNextWindowSize(ImVec2(380, 80), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos(
+            ImVec2(10, screenHeight_ * 0.5f + 270), ImGuiCond_FirstUseEver);
+
+        if (ImGui::Begin("Stern Thruster##ctrl", nullptr, flags)) {
+            float avail = ImGui::GetContentRegionAvail().x;
+            ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 0.7f), "P");
+            ImGui::SameLine(avail - ImGui::CalcTextSize("S").x);
+            ImGui::TextColored(ImVec4(0.3f, 1, 0.3f, 0.7f), "S");
+            ImGui::SetNextItemWidth(avail);
+            if (ImGui::SliderFloat("##sternThr", &controlSternThruster_, -1.0f, 1.0f, "%+.0f%%")) {
+                controlActive_ = true;
+            }
+            if (ImGui::IsItemActive()) controlActive_ = true;
+            ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1), "C=Port  V=Stbd");
+        }
+        ImGui::End();
+    }
 
     // Steering wheel - horizontal slider at bottom center
     ImGui::SetNextWindowSize(ImVec2(500, 85), ImGuiCond_FirstUseEver);
@@ -615,6 +678,210 @@ void ImGuiOverlay::renderControls() {
         }
         if (ImGui::IsItemActive()) controlActive_ = true;
     }
+    ImGui::End();
+}
+
+void ImGuiOverlay::setAzimuthControlValues(float portSchottel, float stbdSchottel,
+                                            float portThrust, float stbdThrust) {
+    if (!azimuthControlActive_) {
+        controlPortSchottel_ = portSchottel;
+        controlStbdSchottel_ = stbdSchottel;
+        controlPortThrust_ = portThrust;
+        controlStbdThrust_ = stbdThrust;
+    }
+}
+
+// -- Azimuth Drive Controls -------------------------------------------
+
+// Helper: draw a schottel dial (circular angle indicator with draggable handle).
+// Returns true if the user changed the angle via drag.
+static bool drawSchottelDial(const char* label, float& angleDeg, float cx, float cy,
+                             float radius, bool& activeOut) {
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    bool changed = false;
+
+    // Outer ring
+    draw->AddCircle(ImVec2(cx, cy), radius, IM_COL32(80, 80, 90, 255), 48, 2.0f);
+    // Center dot
+    draw->AddCircleFilled(ImVec2(cx, cy), 3.0f, IM_COL32(120, 120, 130, 255));
+
+    // Tick marks every 30 degrees, labels at 0/90/180/270
+    for (int d = 0; d < 360; d += 30) {
+        float rad = (float)d * (PI / 180.0f) - PI * 0.5f; // 0 deg = up (ahead)
+        float c = std::cos(rad), s = std::sin(rad);
+        float innerF = (d % 90 == 0) ? 0.75f : 0.85f;
+        draw->AddLine(
+            ImVec2(cx + c * radius * innerF, cy + s * radius * innerF),
+            ImVec2(cx + c * radius * 0.95f,  cy + s * radius * 0.95f),
+            IM_COL32(120, 120, 130, 200), (d % 90 == 0) ? 2.0f : 1.0f);
+    }
+
+    // Cardinal labels (ship-relative: Ahead, Stbd, Astern, Port)
+    const char* cardinals[] = {"A", "S", "As", "P"};
+    float cardAngles[] = {0, 90, 180, 270};
+    for (int i = 0; i < 4; i++) {
+        float rad = cardAngles[i] * DEG_TO_RAD - PI * 0.5f;
+        float lx = cx + std::cos(rad) * (radius + 12);
+        float ly = cy + std::sin(rad) * (radius + 12);
+        ImVec2 ts = ImGui::CalcTextSize(cardinals[i]);
+        draw->AddText(ImVec2(lx - ts.x * 0.5f, ly - ts.y * 0.5f),
+                      IM_COL32(100, 100, 110, 200), cardinals[i]);
+    }
+
+    // Drive direction indicator line (from center to angle)
+    float angleRad = angleDeg * DEG_TO_RAD - PI * 0.5f; // 0 = up
+    float hx = cx + std::cos(angleRad) * radius * 0.85f;
+    float hy = cy + std::sin(angleRad) * radius * 0.85f;
+
+    // Colour: green ahead, red astern, yellow abeam
+    float absAngle = std::fabs(angleDeg);
+    while (absAngle > 180) absAngle -= 360;
+    absAngle = std::fabs(absAngle);
+    ImU32 lineCol;
+    if (absAngle < 30)
+        lineCol = IM_COL32(60, 200, 60, 255);  // ahead
+    else if (absAngle > 150)
+        lineCol = IM_COL32(200, 60, 60, 255);  // astern
+    else
+        lineCol = IM_COL32(200, 200, 60, 255); // abeam
+    draw->AddLine(ImVec2(cx, cy), ImVec2(hx, hy), lineCol, 3.0f);
+
+    // Handle knob (draggable)
+    float knobRadius = 8.0f;
+    draw->AddCircleFilled(ImVec2(hx, hy), knobRadius, lineCol);
+    draw->AddCircle(ImVec2(hx, hy), knobRadius, IM_COL32(255, 255, 255, 120), 16, 1.5f);
+
+    // Invisible drag button over the dial area
+    ImGui::SetCursorScreenPos(ImVec2(cx - radius - 14, cy - radius - 14));
+    ImGui::InvisibleButton(label, ImVec2((radius + 14) * 2, (radius + 14) * 2));
+    if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1.0f)) {
+        ImVec2 mp = ImGui::GetMousePos();
+        float dx = mp.x - cx;
+        float dy = mp.y - cy;
+        if (dx * dx + dy * dy > 4.0f) {
+            float newAngle = std::atan2(dy, dx) * (180.0f / PI) + 90.0f; // convert back from screen to ship-relative
+            // Normalize to -180..+180
+            while (newAngle > 180) newAngle -= 360;
+            while (newAngle < -180) newAngle += 360;
+            angleDeg = newAngle;
+            changed = true;
+            activeOut = true;
+        }
+    }
+
+    // Numeric readout below dial
+    char str[16];
+    snprintf(str, sizeof(str), "%+.0f", angleDeg);
+    ImVec2 ts = ImGui::CalcTextSize(str);
+    draw->AddText(ImVec2(cx - ts.x * 0.5f, cy + radius + 14), lineCol, str);
+
+    return changed;
+}
+
+void ImGuiOverlay::renderAzimuthControls() {
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar;
+    if (layoutLocked_) flags |= ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
+
+    azimuthControlActive_ = false;
+
+    // Main azimuth control window with both drives
+    ImGui::SetNextWindowSize(ImVec2(380, 380), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(
+        ImVec2(10, screenHeight_ * 0.5f - 190), ImGuiCond_FirstUseEver);
+
+    if (!ImGui::Begin("Azimuth Drives##ctrl", nullptr, flags)) {
+        ImGui::End();
+        return;
+    }
+
+    float avail = ImGui::GetContentRegionAvail().x;
+    float availY = ImGui::GetContentRegionAvail().y;
+    ImVec2 winPos = ImGui::GetCursorScreenPos();
+
+    // Layout: two columns, each with a schottel dial on top and a thrust slider below
+    float colW = avail * 0.5f - 4;
+    float dialRadius = std::fmin(colW * 0.35f, 55.0f);
+
+    // Port drive (left column)
+    ImGui::BeginChild("##portAz", ImVec2(colW, 0), false);
+    {
+        float childAvail = ImGui::GetContentRegionAvail().x;
+        ImVec2 childPos = ImGui::GetCursorScreenPos();
+        float cx = childPos.x + childAvail * 0.5f;
+        float cy = childPos.y + dialRadius + 20;
+
+        // Label
+        float labelW = ImGui::CalcTextSize("Port").x;
+        ImGui::SetCursorPosX((childAvail - labelW) * 0.5f);
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1), "Port");
+
+        bool active = false;
+        drawSchottelDial("##portDial", controlPortSchottel_, cx, cy, dialRadius, active);
+        if (active) azimuthControlActive_ = true;
+
+        // Thrust lever slider below dial
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + dialRadius * 2 + 40);
+        float sliderH = ImGui::GetContentRegionAvail().y - 30;
+        if (sliderH < 50) sliderH = 50;
+
+        int pct = (int)std::round(controlPortThrust_ * 100.0f);
+        ImVec4 col = (pct > 0) ? ImVec4(0.3f, 1, 0.3f, 1) :
+                     (pct < 0) ? ImVec4(1, 0.3f, 0.3f, 1) :
+                                 ImVec4(0.7f, 0.7f, 0.7f, 1);
+        char pctStr[16];
+        snprintf(pctStr, sizeof(pctStr), "%+d%%", pct);
+        float textW = ImGui::CalcTextSize(pctStr).x;
+        ImGui::SetCursorPosX((childAvail - textW) * 0.5f);
+        ImGui::TextColored(col, "%s", pctStr);
+
+        ImGui::SetCursorPosX((childAvail - 36) * 0.5f);
+        if (ImGui::VSliderFloat("##portThr", ImVec2(36, sliderH), &controlPortThrust_, -1.0f, 1.0f, "")) {
+            azimuthControlActive_ = true;
+        }
+        if (ImGui::IsItemActive()) azimuthControlActive_ = true;
+    }
+    ImGui::EndChild();
+
+    ImGui::SameLine(0, 8);
+
+    // Starboard drive (right column)
+    ImGui::BeginChild("##stbdAz", ImVec2(colW, 0), false);
+    {
+        float childAvail = ImGui::GetContentRegionAvail().x;
+        ImVec2 childPos = ImGui::GetCursorScreenPos();
+        float cx = childPos.x + childAvail * 0.5f;
+        float cy = childPos.y + dialRadius + 20;
+
+        float labelW = ImGui::CalcTextSize("Stbd").x;
+        ImGui::SetCursorPosX((childAvail - labelW) * 0.5f);
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1), "Stbd");
+
+        bool active = false;
+        drawSchottelDial("##stbdDial", controlStbdSchottel_, cx, cy, dialRadius, active);
+        if (active) azimuthControlActive_ = true;
+
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + dialRadius * 2 + 40);
+        float sliderH = ImGui::GetContentRegionAvail().y - 30;
+        if (sliderH < 50) sliderH = 50;
+
+        int pct = (int)std::round(controlStbdThrust_ * 100.0f);
+        ImVec4 col = (pct > 0) ? ImVec4(0.3f, 1, 0.3f, 1) :
+                     (pct < 0) ? ImVec4(1, 0.3f, 0.3f, 1) :
+                                 ImVec4(0.7f, 0.7f, 0.7f, 1);
+        char pctStr[16];
+        snprintf(pctStr, sizeof(pctStr), "%+d%%", pct);
+        float textW = ImGui::CalcTextSize(pctStr).x;
+        ImGui::SetCursorPosX((childAvail - textW) * 0.5f);
+        ImGui::TextColored(col, "%s", pctStr);
+
+        ImGui::SetCursorPosX((childAvail - 36) * 0.5f);
+        if (ImGui::VSliderFloat("##stbdThr", ImVec2(36, sliderH), &controlStbdThrust_, -1.0f, 1.0f, "")) {
+            azimuthControlActive_ = true;
+        }
+        if (ImGui::IsItemActive()) azimuthControlActive_ = true;
+    }
+    ImGui::EndChild();
+
     ImGui::End();
 }
 

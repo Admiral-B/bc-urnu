@@ -16,7 +16,7 @@
 namespace bc { namespace graphics { namespace wicked {
 
 // Load a model file into a Wicked Engine scene.
-// Supports: .obj (via TinyObjLoader), .gltf/.glb (via WE), .wiscene (native).
+// Supports: .obj (via TinyObjLoader), .gltf/.glb (via WE), .ply (mesh or 3DGS), .wiscene (native).
 // Returns the root entity of the loaded model, or INVALID_ENTITY on failure.
 wi::ecs::Entity LoadModelFromFile(const std::string& filename, wi::scene::Scene& scene);
 

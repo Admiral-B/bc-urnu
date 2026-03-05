@@ -245,6 +245,20 @@ bool WickedTerrainNode::createTerrainMesh(const std::string& texturePath) {
                     material->roughness = 1.0f; // Let texture drive roughness
                     std::cout << "WickedTerrainNode: roughness map loaded: " << roughFile << std::endl;
                 }
+
+                // Detail texture: small tileable noise applied via OCCLUSIONMAP
+                // Uses UV set 1 (tiled at ~4m intervals) to break up satellite texture pixelation
+                std::string detailFile = worldDir + "terrain_detail.png";
+                if (wi::helper::FileExists(detailFile)) {
+                    material->textures[MaterialComponent::OCCLUSIONMAP].name = detailFile;
+                    material->textures[MaterialComponent::OCCLUSIONMAP].resource =
+                        wi::resourcemanager::Load(detailFile);
+                    material->textures[MaterialComponent::OCCLUSIONMAP].uvset = 1;
+                    detailTileX_ = worldWidth_ / 4.0f;
+                    detailTileZ_ = worldDepth_ / 4.0f;
+                    std::cout << "WickedTerrainNode: detail texture loaded: " << detailFile
+                              << " (tiling " << detailTileX_ << "x" << detailTileZ_ << ")" << std::endl;
+                }
             }
         }
         material->CreateRenderData();
@@ -292,6 +306,12 @@ bool WickedTerrainNode::createTerrainMesh(const std::string& texturePath) {
             mesh->vertex_positions.push_back(pos);
             mesh->vertex_normals.push_back(nor);
             mesh->vertex_uvset_0.push_back(uv);
+
+            // UV set 1: tiled coordinates for detail texture
+            if (detailTileX_ > 0) {
+                mesh->vertex_uvset_1.push_back(DirectX::XMFLOAT2(
+                    uv.x * detailTileX_, uv.y * detailTileZ_));
+            }
         }
     }
 
@@ -329,6 +349,8 @@ bool WickedTerrainNode::createTerrainMesh(const std::string& texturePath) {
                 mesh->vertex_positions.push_back(pos);
                 mesh->vertex_normals.push_back({0, 1, 0});
                 mesh->vertex_uvset_0.push_back(mesh->vertex_uvset_0[ei]);
+                if (!mesh->vertex_uvset_1.empty())
+                    mesh->vertex_uvset_1.push_back(mesh->vertex_uvset_1[ei]);
             }
 
             for (size_t i = 0; i + 1 < edgeIndices.size(); i++) {

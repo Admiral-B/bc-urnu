@@ -65,7 +65,7 @@ void WickedMultiCascadeOcean::load(wi::scene::Scene* scene, float weather, int /
 }
 
 void WickedMultiCascadeOcean::update(float tideHeight, const Vec3& viewPosition,
-                                      int /*lightLevel*/, float weather,
+                                      int lightLevel, float weather,
                                       float windSpeedKts, float windDirectionDeg) {
     if (!weScene) return;
     using namespace bc::OceanMath;
@@ -114,6 +114,12 @@ void WickedMultiCascadeOcean::update(float tideHeight, const Vec3& viewPosition,
     // time_scale = 0.1 exactly compensates: waves propagate at physically correct speed.
     op.time_scale = 0.1f;
     op.surfaceDisplacementTolerance = 2.0f + currentWeather_ * 0.5f;
+
+    // Water color modulation: darker at night, slightly warmer at low sun
+    float ll = std::max(0.0f, std::min(1.0f, (float)lightLevel / 255.0f));
+    float dayR = 0.03f, dayG = 0.07f, dayB = 0.06f;
+    float nightScale = 0.15f + 0.85f * ll; // 15% base at total darkness (moonlit water)
+    op.waterColor = XMFLOAT4(dayR * nightScale, dayG * nightScale, dayB * nightScale, 0.3f);
 
     // Check if wind changed enough to regenerate spectrum
     float speedRatio = (lastWindSpeed_ > 0.5f)

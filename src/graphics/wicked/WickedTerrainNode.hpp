@@ -89,6 +89,7 @@ private:
     Vec3 scale_{1, 1, 1};
     bool visible_ = true;
     int id_ = -1;
+    float detailTileX_ = 0, detailTileZ_ = 0; // detail texture UV tiling
 
     // Load heightmap from PNG file
     bool loadHeightmapPNG(const std::string& path, const TerrainTileConfig& config);

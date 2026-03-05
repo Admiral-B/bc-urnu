@@ -88,3 +88,20 @@ src/Visual Studio solution/Release/
 src/Visual Studio solution/Debug/
 src/Visual Studio solution/.vs/
 *.vcxproj.user
+
+# Screenshots and debug output
+bin/screenshot*.png
+bin/log.txt
+bin/wicked_engine.log
+
+# Compiled shaders (rebuilt at runtime)
+*.cso
+*.wishadermeta
+
+# Large 3D Gaussian splat files (download separately)
+bin/Models/Splats/*.ply
+
+# Generated world data (regenerate with tools/)
+bin/World/*/roads.obj
+bin/World/*/roads.mtl
+bin/World/*/trees.ini

@@ -36,6 +36,30 @@ void setWheel(float val);        // degrees, -ve port
 void setBowThruster(float val);  // -1..+1
 void setSternThruster(float val);// -1..+1
 
+// Ship capabilities
+bool isSingleEngine();
+bool hasBowThruster();
+bool hasSternThruster();
+
+// Azimuth drive controls
+bool isAzimuthDrive();
+void btnIncrementPortSchottel();
+void btnDecrementPortSchottel();
+void btnIncrementStbdSchottel();
+void btnDecrementStbdSchottel();
+void btnIncrementPortThrustLever();
+void btnDecrementPortThrustLever();
+void btnIncrementStbdThrustLever();
+void btnDecrementStbdThrustLever();
+void setPortSchottel(float angle);          // degrees (direct set from GUI)
+void setStbdSchottel(float angle);          // degrees (direct set from GUI)
+void setPortAzimuthThrustLever(float val);  // -1..+1 (direct set from GUI)
+void setStbdAzimuthThrustLever(float val);  // -1..+1 (direct set from GUI)
+float getPortSchottel();         // degrees
+float getStbdSchottel();         // degrees
+float getPortAzimuthThrustLever(); // 0..+1 or -1..+1
+float getStbdAzimuthThrustLever();
+
 // Own ship state
 float getPosX();
 float getPosZ();

@@ -14,11 +14,14 @@
 
 #include "IrrlichtModelConverter.hpp"
 #include "irrlicht.h"
+#include "ISkinnedMesh.h"
+#include "SSkinMeshBuffer.h"
 
 #include <iostream>
 #include <fstream>
 #include <algorithm>
 #include <cctype>
+#include <unordered_map>
 
 namespace bc {
 
@@ -82,6 +85,22 @@ ConvertedModel convertModelViaIrrlicht(const std::string& filepath) {
     irr::scene::IMesh* mesh = animMesh->getMesh(0);
     if (!mesh) return result;
 
+    // Build a pointer-to-transform lookup for SSkinMeshBuffer transforms.
+    // For skinned meshes (.x files), ISkinnedMesh::getMeshBuffers() gives us
+    // direct SSkinMeshBuffer* pointers (no dynamic_cast across DLL boundary).
+    // We match them to IMeshBuffer* by pointer address.
+    std::unordered_map<const irr::scene::IMeshBuffer*, const irr::core::matrix4*> bufferTransforms;
+    if (animMesh->getMeshType() == irr::scene::EAMT_SKINNED) {
+        auto* skinMesh = static_cast<irr::scene::ISkinnedMesh*>(animMesh);
+        auto& skinBuffers = skinMesh->getMeshBuffers();
+        for (irr::u32 i = 0; i < skinBuffers.size(); i++) {
+            irr::scene::SSkinMeshBuffer* sb = skinBuffers[i];
+            if (sb && !sb->Transformation.isIdentity()) {
+                bufferTransforms[static_cast<const irr::scene::IMeshBuffer*>(sb)] = &sb->Transformation;
+            }
+        }
+    }
+
     for (irr::u32 b = 0; b < mesh->getMeshBufferCount(); b++) {
         irr::scene::IMeshBuffer* mb = mesh->getMeshBuffer(b);
         if (!mb || mb->getVertexCount() == 0) continue;
@@ -113,14 +132,6 @@ ConvertedModel convertModelViaIrrlicht(const std::string& filepath) {
         irr::u32 vertCount = mb->getVertexCount();
         submesh.vertices.resize(vertCount);
 
-        const char* vtxTypeNames[] = {"STANDARD", "2TCOORDS", "TANGENTS"};
-        int vtxType = mb->getVertexType();
-        std::cerr << "  MB[" << b << "]: " << vertCount << " verts, "
-                  << mb->getIndexCount() << " idx, type="
-                  << (vtxType < 3 ? vtxTypeNames[vtxType] : "UNKNOWN")
-                  << ", idx" << (mb->getIndexType() == irr::video::EIT_32BIT ? "32" : "16")
-                  << ", tex=" << (mat.TextureLayer[0].Texture ? "yes" : "no") << std::endl;
-
         switch (mb->getVertexType()) {
         case irr::video::EVT_STANDARD: {
             auto* v = static_cast<const irr::video::S3DVertex*>(mb->getVertices());
@@ -130,14 +141,6 @@ ConvertedModel convertModelViaIrrlicht(const std::string& filepath) {
                     v[i].Normal.X, v[i].Normal.Y, v[i].Normal.Z,
                     v[i].TCoords.X, v[i].TCoords.Y
                 };
-            }
-            // Log first few UVs for debugging
-            if (vertCount > 0) {
-                std::cerr << "    UV samples: ";
-                for (irr::u32 i = 0; i < std::min(vertCount, irr::u32(5)); i++) {
-                    std::cerr << "(" << v[i].TCoords.X << "," << v[i].TCoords.Y << ") ";
-                }
-                std::cerr << std::endl;
             }
             break;
         }
@@ -163,6 +166,31 @@ ConvertedModel convertModelViaIrrlicht(const std::string& filepath) {
             }
             break;
         }
+        }
+
+        // Apply frame hierarchy transform (SSkinMeshBuffer from .x files).
+        // For static .x models, skinMesh() never runs because HasAnimation=false,
+        // so vertices are in frame-local coordinates. finalize() stores the
+        // global frame transform in SSkinMeshBuffer::Transformation.
+        auto txIt = bufferTransforms.find(mb);
+        if (txIt != bufferTransforms.end()) {
+            const irr::core::matrix4& xform = *txIt->second;
+            for (irr::u32 i = 0; i < vertCount; i++) {
+                irr::core::vector3df pos(submesh.vertices[i].px,
+                                          submesh.vertices[i].py,
+                                          submesh.vertices[i].pz);
+                irr::core::vector3df norm(submesh.vertices[i].nx,
+                                           submesh.vertices[i].ny,
+                                           submesh.vertices[i].nz);
+                xform.transformVect(pos);
+                xform.rotateVect(norm);
+                submesh.vertices[i].px = pos.X;
+                submesh.vertices[i].py = pos.Y;
+                submesh.vertices[i].pz = pos.Z;
+                submesh.vertices[i].nx = norm.X;
+                submesh.vertices[i].ny = norm.Y;
+                submesh.vertices[i].nz = norm.Z;
+            }
         }
 
         // Extract indices (handle both 16-bit and 32-bit index types)

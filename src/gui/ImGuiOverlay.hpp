@@ -46,6 +46,18 @@ struct SimulationHUDData {
     int bowThruster = 0;            // Bow thruster (%, -100 to +100)
     int sternThruster = 0;          // Stern thruster (%, -100 to +100)
 
+    // Ship capabilities
+    bool isSingleEngine = false;
+    bool hasBowThruster = false;
+    bool hasSternThruster = false;
+
+    // Azimuth drive (only valid when isAzimuthDrive=true)
+    bool isAzimuthDrive = false;
+    float portSchottel = 0.0f;      // Port schottel angle (degrees)
+    float stbdSchottel = 0.0f;      // Stbd schottel angle (degrees)
+    float portThrustLever = 0.0f;   // Port thrust lever (-1 to +1)
+    float stbdThrustLever = 0.0f;   // Stbd thrust lever (-1 to +1)
+
     // Time
     float simulationTime = 0.0f;    // Total simulation time (seconds)
     float timeAcceleration = 1.0f;  // Time acceleration factor
@@ -85,12 +97,23 @@ public:
 
     /// Set/get ship control values (two-way binding with WickedMain).
     /// Call setControlValues() before render(), read getControl*() after.
-    void setControlValues(float portEngine, float stbdEngine, float wheel, float bowThruster);
+    void setControlValues(float portEngine, float stbdEngine, float wheel,
+                          float bowThruster, float sternThruster);
     float getControlPortEngine() const { return controlPortEngine_; }
     float getControlStbdEngine() const { return controlStbdEngine_; }
     float getControlWheel() const { return controlWheel_; }
     float getControlBowThruster() const { return controlBowThruster_; }
+    float getControlSternThruster() const { return controlSternThruster_; }
     bool isControlActive() const { return controlActive_; }
+
+    /// Azimuth drive controls (two-way binding, same pattern).
+    void setAzimuthControlValues(float portSchottel, float stbdSchottel,
+                                  float portThrust, float stbdThrust);
+    float getControlPortSchottel() const { return controlPortSchottel_; }
+    float getControlStbdSchottel() const { return controlStbdSchottel_; }
+    float getControlPortThrust() const { return controlPortThrust_; }
+    float getControlStbdThrust() const { return controlStbdThrust_; }
+    bool isAzimuthControlActive() const { return azimuthControlActive_; }
 
     /// Show/hide individual instruments.
     void showCompass(bool show);
@@ -157,7 +180,15 @@ private:
     float controlStbdEngine_ = 0.0f;  // -1.0 to +1.0
     float controlWheel_ = 0.0f;       // -30.0 to +30.0 degrees
     float controlBowThruster_ = 0.0f; // -1.0 to +1.0
+    float controlSternThruster_ = 0.0f; // -1.0 to +1.0
     bool controlActive_ = false;      // true if user is dragging a control slider
+
+    // Azimuth drive control state
+    float controlPortSchottel_ = 0.0f;  // degrees
+    float controlStbdSchottel_ = 0.0f;  // degrees
+    float controlPortThrust_ = 0.0f;    // -1.0 to +1.0
+    float controlStbdThrust_ = 0.0f;    // -1.0 to +1.0
+    bool azimuthControlActive_ = false;
 
     // Rendering methods for each instrument
     void renderCompass();
@@ -167,6 +198,7 @@ private:
     void renderEngineDisplay();
     void renderWindDisplay();
     void renderControls();
+    void renderAzimuthControls();
 
     // Process keyboard shortcuts (F5-F8 for palettes, F9 for layout lock)
     void processKeyboardShortcuts();

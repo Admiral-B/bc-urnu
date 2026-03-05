@@ -459,15 +459,15 @@ static float colregCandela(float rangeNM) {
 }
 
 static void generateNavLightFlareTextures() {
-    // 4x4 pixel textures: tiny pinprick dot.  Billboard size on screen
-    // equals texture_pixels (4 px across at 1080p).  Bridge window glass
-    // is alpha-blended and does NOT write to the depth buffer, so the
-    // per-pixel depth test in lensFlarePS.hlsl cannot clip billboard
-    // pixels that overlap the transparent frame material.  Keeping the
-    // billboard at 4 px prevents visible bleed-through entirely.
-    // WE bloom (applied after lens flares in the post-process chain)
-    // spreads the bright additive dot into a natural glow.
-    const int SZ = 4;
+    // 8x8 pixel textures with radial Gaussian falloff: bright center,
+    // smooth fade to edges. Billboard is ~8 screen pixels across at 1080p.
+    // Radial gradient looks like a natural point light glow rather than a
+    // colored square. WE bloom further spreads the bright center.
+    // Bridge window glass doesn't write depth, so keep billboard small (8px)
+    // to minimize frame bleed-through.
+    const int SZ = 8;
+    const float CENTER = (SZ - 1) * 0.5f;
+    const float SIGMA = SZ * 0.25f; // Gaussian sigma: tight core
     struct FlareSpec { const char* name; float r, g, b; };
     FlareSpec specs[] = {
         {"flare_nav_white.tga", 1.0f, 1.0f, 0.95f},   // bright white
@@ -479,11 +479,14 @@ static void generateNavLightFlareTextures() {
     for (auto& spec : specs) {
         for (int y = 0; y < SZ; y++) {
             for (int x = 0; x < SZ; x++) {
+                float dx = x - CENTER, dy = y - CENTER;
+                float dist2 = dx * dx + dy * dy;
+                float falloff = std::exp(-dist2 / (2.0f * SIGMA * SIGMA));
                 int idx = (y * SZ + x) * 4;
                 pixels[idx + 0] = (uint8_t)(spec.r * 255.0f);
                 pixels[idx + 1] = (uint8_t)(spec.g * 255.0f);
                 pixels[idx + 2] = (uint8_t)(spec.b * 255.0f);
-                pixels[idx + 3] = 255; // fully opaque, no falloff
+                pixels[idx + 3] = (uint8_t)(falloff * 255.0f);
             }
         }
         writeTGA(spec.name, SZ, SZ, pixels.data());
@@ -683,6 +686,41 @@ static wi::ecs::Entity createWEMeshFromConverted(wi::scene::Scene& scene,
         }
 
         vertexOffset += static_cast<uint32_t>(sub.vertices.size());
+    }
+
+    // Log vertex bounds (overall + per-submesh outliers)
+    {
+        float minX = FLT_MAX, minY = FLT_MAX, minZ = FLT_MAX;
+        float maxX = -FLT_MAX, maxY = -FLT_MAX, maxZ = -FLT_MAX;
+        for (const auto& p : mesh->vertex_positions) {
+            if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+            if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+            if (p.z < minZ) minZ = p.z; if (p.z > maxZ) maxZ = p.z;
+        }
+        weLog("    Bounds: (" + std::to_string(minX) + ", " + std::to_string(minY) + ", " + std::to_string(minZ) +
+              ") to (" + std::to_string(maxX) + ", " + std::to_string(maxY) + ", " + std::to_string(maxZ) + ")");
+        weLog("    Extent: " + std::to_string(maxX - minX) + " x " +
+              std::to_string(maxY - minY) + " x " + std::to_string(maxZ - minZ));
+
+        // Per-submesh bounds to find outliers
+        for (size_t s = 0; s < model.submeshes.size(); s++) {
+            float sMinX = FLT_MAX, sMinY = FLT_MAX, sMinZ = FLT_MAX;
+            float sMaxX = -FLT_MAX, sMaxY = -FLT_MAX, sMaxZ = -FLT_MAX;
+            for (const auto& v : model.submeshes[s].vertices) {
+                if (v.px < sMinX) sMinX = v.px; if (v.px > sMaxX) sMaxX = v.px;
+                if (v.py < sMinY) sMinY = v.py; if (v.py > sMaxY) sMaxY = v.py;
+                if (v.pz < sMinZ) sMinZ = v.pz; if (v.pz > sMaxZ) sMaxZ = v.pz;
+            }
+            float extent = std::max({sMaxX - sMinX, sMaxY - sMinY, sMaxZ - sMinZ});
+            if (extent > 100.0f) {
+                weLog("    OUTLIER submesh[" + std::to_string(s) + "]: extent=" +
+                      std::to_string(extent) + " bounds=(" +
+                      std::to_string(sMinX) + "," + std::to_string(sMinY) + "," + std::to_string(sMinZ) +
+                      ") to (" + std::to_string(sMaxX) + "," + std::to_string(sMaxY) + "," + std::to_string(sMaxZ) +
+                      ") verts=" + std::to_string(model.submeshes[s].vertices.size()) +
+                      " tex=" + model.submeshes[s].material.textureName);
+            }
+        }
     }
 
     mesh->CreateRenderData();
@@ -1445,6 +1483,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     BCRenderPath renderPath;
     renderPath.setSSREnabled(true);
     renderPath.setFXAAEnabled(true);
+    wi::renderer::SetTemporalAAEnabled(true); // TAA: temporal anti-aliasing (smoother than FXAA alone)
     renderPath.setBloomEnabled(true);
     renderPath.setLensFlareEnabled(true);  // depth-tested screen-space flares for nav lights
     renderPath.setAO(wi::RenderPath3D::AO_HBAO);
@@ -1455,6 +1494,11 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     renderPath.setLightShaftsEnabled(true);
     renderPath.setLightShaftsStrength(0.03f);
     renderPath.setExposure(1.1f);
+    renderPath.setChromaticAberrationEnabled(true);
+    renderPath.setChromaticAberrationAmount(0.5f); // subtle lens fringing
+    renderPath.setSharpenFilterEnabled(true);
+    renderPath.setSharpenFilterAmount(0.15f); // counteract TAA softening
+    renderPath.setDitherEnabled(true); // reduce color banding in sky gradients
     application.ActivatePath(&renderPath);
 
     application.infoDisplay.active = true;
@@ -1521,6 +1565,11 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     float ownShipStbdEngine = 0; // -1.0 to 1.0
     float maxSpeedAhead = 14.0f; // knots, read from boat.ini
     float ownShipBowThruster = 0; // -1.0 to 1.0
+    float ownShipSternThruster = 0; // -1.0 to 1.0
+    bool ownShipHasBowThruster = false;
+    bool ownShipHasSternThruster = false;
+    bool ownShipIsSingleEngine = false;
+    bool ownShipIsAzimuth = false; // set after SimBridge::init
     float beaufortScale = 3.0f; // sea state for wave heading disturbance
     wi::ecs::Entity sunEntity = wi::ecs::INVALID_ENTITY; // directional sun light
     float sunRise = 6.0f, sunSet = 18.0f; // hours (0-24), persisted for day/night cycle
@@ -1547,6 +1596,13 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     float radarLocalX = 0, radarLocalY = 0, radarLocalZ = 0; // ship-local (scaled)
     float radarScreenSize = 1.0f; // metres
     float radarScreenTilt = 0.0f; // degrees
+
+    // Lightning storm effect (Beaufort 8+)
+    wi::ecs::Entity lightningEntity = wi::ecs::INVALID_ENTITY;
+    float lightningTimer = 0;       // countdown to next strike (seconds)
+    float lightningFlashLife = 0;   // remaining flash duration (seconds)
+    float lightningIntensity = 0;   // current flash brightness (0-1)
+    float lightningX = 0, lightningZ = 0; // world position of current strike
 
     // Map screen (ECDIS)
     static const int MAP_TEX_SIZE = 512;
@@ -1663,6 +1719,20 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             sunTransform->SetDirty();
             sunTransform->UpdateTransform();
         }
+    }
+
+    // ===== LIGHTNING (point light, initially invisible) =====
+    lightningEntity = scene.Entity_CreateLight("Lightning");
+    {
+        auto* lc = scene.lights.GetComponent(lightningEntity);
+        if (lc) {
+            lc->SetType(wi::scene::LightComponent::POINT);
+            lc->intensity = 0;
+            lc->range = 2000.0f;
+            lc->color = XMFLOAT3(0.95f, 0.95f, 1.0f); // cool white-blue
+            lc->SetCastShadow(false);
+        }
+        lightningTimer = 5.0f + (float)(rand() % 10);
     }
 
     // ===== ATMOSPHERE / WEATHER =====
@@ -1980,26 +2050,30 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             viewLocalZ = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("ViewZ", 1));
         }
 
-        // Compute walkable bridge bounds from view positions (in scaled meters)
-        // Bridge views at similar Y to view 1 define the walkable area
+        // Walkable bridge bounds: boat.ini override or auto-compute from view positions
         {
-            float maxDx = 0, maxDz = 0;
-            for (uint32_t v = 2; v <= numViews; v++) {
-                float vHigh = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("ViewHigh", v));
-                if (vHigh > 0.5f) continue; // skip overhead/high views
-                float vx = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("ViewX", v));
-                float vy = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("ViewY", v));
-                float vz = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("ViewZ", v));
-                // Only include views near bridge deck height (within 10 model units)
-                if (std::abs(vy - viewLocalY) > 10.0f) continue;
-                float dx = std::abs(vx - viewLocalX) * scaleFactor;
-                float dz = std::abs(vz - viewLocalZ) * scaleFactor;
-                if (dx > maxDx) maxDx = dx;
-                if (dz > maxDz) maxDz = dz;
+            float iniHalfW = IniFile::iniFileTof32(boatIni, "BridgeHalfWidth");
+            float iniHalfD = IniFile::iniFileTof32(boatIni, "BridgeHalfDepth");
+            if (iniHalfW > 0 && iniHalfD > 0) {
+                bridgeHalfW = iniHalfW;
+                bridgeHalfD = iniHalfD;
+            } else {
+                float maxDx = 0, maxDz = 0;
+                for (uint32_t v = 2; v <= numViews; v++) {
+                    float vHigh = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("ViewHigh", v));
+                    if (vHigh > 0.5f) continue;
+                    float vx = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("ViewX", v));
+                    float vy = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("ViewY", v));
+                    float vz = IniFile::iniFileTof32(boatIni, IniFile::enumerate1("ViewZ", v));
+                    if (std::abs(vy - viewLocalY) > 10.0f) continue;
+                    float dx = std::abs(vx - viewLocalX) * scaleFactor;
+                    float dz = std::abs(vz - viewLocalZ) * scaleFactor;
+                    if (dx > maxDx) maxDx = dx;
+                    if (dz > maxDz) maxDz = dz;
+                }
+                bridgeHalfW = std::max(3.0f, maxDx + 1.0f);
+                bridgeHalfD = std::max(1.5f, maxDz + 0.5f);
             }
-            // Add margin beyond wing positions (1m width, 0.5m depth)
-            bridgeHalfW = std::max(3.0f, maxDx + 1.0f);
-            bridgeHalfD = std::max(1.5f, maxDz + 0.5f); // tight fore-aft to prevent walking through windows
             weLog("  Bridge walk bounds: +-" + std::to_string(bridgeHalfW) +
                   "m x +-" + std::to_string(bridgeHalfD) + "m");
         }
@@ -2538,6 +2612,156 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
         weLog("  Loaded " + std::to_string(numLandObjs) + " land objects");
     }
 
+    // ===== 3D GAUSSIAN SPLAT MODELS (from splats.ini) =====
+    pumpMessages();
+    {
+        std::string splatIniFile = worldPath + "splats.ini";
+        if (Utilities::pathExists(splatIniFile)) {
+            uint32_t numSplats = IniFile::iniFileTou32(splatIniFile, "Number");
+            weLog("  Found " + std::to_string(numSplats) + " gaussian splat models in splats.ini");
+            for (uint32_t s = 1; s <= numSplats; s++) {
+                std::string splatFile = IniFile::iniFileToString(splatIniFile, IniFile::enumerate1("File", s));
+                float splatLon = IniFile::iniFileTof32(splatIniFile, IniFile::enumerate1("Long", s));
+                float splatLat = IniFile::iniFileTof32(splatIniFile, IniFile::enumerate1("Lat", s));
+                float splatY = IniFile::iniFileTof32(splatIniFile, IniFile::enumerate1("Height", s));
+                float splatRot = IniFile::iniFileTof32(splatIniFile, IniFile::enumerate1("Rotation", s));
+                float splatScale = IniFile::iniFileTof32(splatIniFile, IniFile::enumerate1("Scalefactor", s), 1.0f);
+
+                std::string splatPath = worldPath + splatFile;
+                if (!Utilities::pathExists(splatPath)) {
+                    splatPath = splatFile; // try absolute/relative path
+                }
+                if (!Utilities::pathExists(splatPath)) {
+                    weLogErr("  Splat file not found: " + splatFile);
+                    continue;
+                }
+
+                uint32_t splatAbsolute = IniFile::iniFileTou32(splatIniFile, IniFile::enumerate1("Absolute", s));
+                float sx = coords.longToX(splatLon);
+                float sz = coords.latToZ(splatLat);
+                if (splatAbsolute == 0 && terrainNode) {
+                    float terrainH = terrainNode->getHeightAt(sx, sz) + terrainNode->getPosition().y;
+                    splatY += std::max(0.0f, terrainH); // clamp to sea level minimum
+                }
+
+                wi::ecs::Entity splatEntity = bc::graphics::wicked::LoadModelFromFile(splatPath, scene);
+                if (splatEntity != wi::ecs::INVALID_ENTITY) {
+                    setEntityTransform(scene, splatEntity, sx, splatY, sz, splatRot, splatScale);
+                    weLog("  Loaded splat " + std::to_string(s) + ": " + splatFile +
+                          " pos=(" + std::to_string(sx) + "," + std::to_string(splatY) + "," + std::to_string(sz) +
+                          ") scale=" + std::to_string(splatScale) +
+                          " gaussianSplats=" + std::to_string(scene.gaussian_splats.GetCount()));
+                } else {
+                    weLogErr("  Failed to load splat: " + splatFile);
+                }
+            }
+        }
+    }
+
+    // ===== BILLBOARD TREES (from trees.ini) =====
+    pumpMessages();
+    {
+        std::string treesIniFile = worldPath + "trees.ini";
+        if (Utilities::pathExists(treesIniFile)) {
+            uint32_t numTrees = IniFile::iniFileTou32(treesIniFile, "Number");
+            std::string treeTexFile = IniFile::iniFileToString(treesIniFile, "TextureFile");
+            std::string treeTexPath = worldPath + treeTexFile;
+            if (treeTexFile.empty() || !Utilities::pathExists(treeTexPath)) {
+                treeTexPath = worldPath + "tree_billboard.png";
+            }
+
+            weLog("  Found " + std::to_string(numTrees) + " trees in trees.ini");
+
+            if (numTrees > 0) {
+                // Create a single batched mesh with X-shaped cross-billboards
+                wi::ecs::Entity treeRoot = scene.Entity_CreateObject("BC_Trees");
+                wi::ecs::Entity treeMeshE = scene.Entity_CreateMesh("BC_Trees_mesh");
+                scene.Component_Attach(treeMeshE, treeRoot);
+
+                auto* treeObj = scene.objects.GetComponent(treeRoot);
+                auto* treeMesh = scene.meshes.GetComponent(treeMeshE);
+                treeObj->meshID = treeMeshE;
+
+                wi::ecs::Entity treeMat = scene.Entity_CreateMaterial("BC_TreeMat");
+                scene.Component_Attach(treeMat, treeRoot);
+                auto* treeMaterial = scene.materials.GetComponent(treeMat);
+                if (treeMaterial) {
+                    treeMaterial->roughness = 0.9f;
+                    treeMaterial->metalness = 0.0f;
+                    treeMaterial->SetDoubleSided(true);
+                    treeMaterial->alphaRef = 0.5f; // alpha test cutoff
+                    std::string normTexPath = treeTexPath;
+                    std::replace(normTexPath.begin(), normTexPath.end(), '\\', '/');
+                    if (wi::helper::FileExists(normTexPath)) {
+                        treeMaterial->textures[wi::scene::MaterialComponent::BASECOLORMAP].name = normTexPath;
+                        treeMaterial->textures[wi::scene::MaterialComponent::BASECOLORMAP].resource =
+                            wi::resourcemanager::Load(normTexPath);
+                    }
+                    treeMaterial->CreateRenderData();
+                }
+
+                treeMesh->subsets.push_back(wi::scene::MeshComponent::MeshSubset());
+                treeMesh->subsets.back().materialID = treeMat;
+                treeMesh->subsets.back().indexOffset = 0;
+
+                const float treeW = 8.0f;  // base tree width in meters
+                const float treeH = 12.0f; // base tree height in meters
+
+                for (uint32_t t = 1; t <= numTrees; t++) {
+                    float tLon = IniFile::iniFileTof32(treesIniFile, IniFile::enumerate1("Long", t));
+                    float tLat = IniFile::iniFileTof32(treesIniFile, IniFile::enumerate1("Lat", t));
+                    float tHeight = IniFile::iniFileTof32(treesIniFile, IniFile::enumerate1("Height", t));
+                    float tScale = IniFile::iniFileTof32(treesIniFile, IniFile::enumerate1("Scale", t), 1.0f);
+                    float tRot = IniFile::iniFileTof32(treesIniFile, IniFile::enumerate1("Rotation", t));
+
+                    float tx = coords.longToX(tLon);
+                    float tz = coords.latToZ(tLat);
+                    float ty = tHeight;
+
+                    float w = treeW * tScale * 0.5f;
+                    float h = treeH * tScale;
+                    float rotRad = tRot * 3.14159265f / 180.0f;
+                    float cosR = std::cos(rotRad);
+                    float sinR = std::sin(rotRad);
+
+                    // Two perpendicular quads forming an X shape
+                    for (int q = 0; q < 2; q++) {
+                        float dx = (q == 0) ? cosR * w : -sinR * w;
+                        float dz = (q == 0) ? sinR * w : cosR * w;
+
+                        uint32_t baseIdx = (uint32_t)treeMesh->vertex_positions.size();
+
+                        treeMesh->vertex_positions.push_back({tx - dx, ty, tz - dz});
+                        treeMesh->vertex_positions.push_back({tx + dx, ty, tz + dz});
+                        treeMesh->vertex_positions.push_back({tx + dx, ty + h, tz + dz});
+                        treeMesh->vertex_positions.push_back({tx - dx, ty + h, tz - dz});
+
+                        DirectX::XMFLOAT3 up(0, 1, 0);
+                        for (int v = 0; v < 4; v++)
+                            treeMesh->vertex_normals.push_back(up);
+
+                        treeMesh->vertex_uvset_0.push_back({0, 1});
+                        treeMesh->vertex_uvset_0.push_back({1, 1});
+                        treeMesh->vertex_uvset_0.push_back({1, 0});
+                        treeMesh->vertex_uvset_0.push_back({0, 0});
+
+                        treeMesh->indices.push_back(baseIdx);
+                        treeMesh->indices.push_back(baseIdx + 1);
+                        treeMesh->indices.push_back(baseIdx + 2);
+                        treeMesh->indices.push_back(baseIdx);
+                        treeMesh->indices.push_back(baseIdx + 2);
+                        treeMesh->indices.push_back(baseIdx + 3);
+                    }
+                }
+
+                treeMesh->subsets.back().indexCount = (uint32_t)treeMesh->indices.size();
+                treeMesh->CreateRenderData();
+                weLog("  Created tree mesh with " + std::to_string(numTrees) + " trees (" +
+                      std::to_string(treeMesh->indices.size() / 3) + " triangles)");
+            }
+        }
+    }
+
     // ===== BUOY & LAND LIGHTS (from light.ini) =====
     pumpMessages();
     weLog("  Setting up navigation lights from light.ini...");
@@ -2711,6 +2935,31 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
         }
         if (autoLightCount > 0)
             weLog("  Auto-generated " + std::to_string(autoLightCount) + " buoy lights");
+    }
+
+    // ===== OSM ROADS (pre-baked OBJ) =====
+    pumpMessages();
+    {
+        std::string roadsPath = worldPath + "roads.obj";
+        if (Utilities::pathExists(roadsPath)) {
+            weLog("  Loading roads: " + roadsPath);
+            wi::ecs::Entity roadsEntity = loadModelOrPlaceholder(scene, roadsPath,
+                                                                   "Roads", 0.3f, 0.3f, 0.32f, 8.0f);
+            if (roadsEntity != wi::ecs::INVALID_ENTITY) {
+                for (size_t i = 0; i < scene.materials.GetCount(); i++) {
+                    auto* nameComp = scene.names.GetComponent(scene.materials.GetEntity(i));
+                    if (!nameComp) continue;
+                    if (nameComp->name.find("road") != std::string::npos) {
+                        scene.materials[i].roughness = 0.85f;
+                        scene.materials[i].metalness = 0.0f;
+                        scene.materials[i].SetDoubleSided(true);
+                        scene.materials[i].SetCastShadow(false);
+                        scene.materials[i].CreateRenderData();
+                    }
+                }
+                weLog("  Roads loaded");
+            }
+        }
     }
 
     // ===== OSM BUILDINGS (procedural or pre-baked) =====
@@ -2997,6 +3246,16 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
         ownShipPortEngine = SimBridge::getPortEngine();
         ownShipStbdEngine = SimBridge::getStbdEngine();
     }
+    ownShipIsAzimuth = SimBridge::isAzimuthDrive();
+    ownShipHasBowThruster = SimBridge::hasBowThruster();
+    ownShipHasSternThruster = SimBridge::hasSternThruster();
+    ownShipIsSingleEngine = SimBridge::isSingleEngine();
+    if (ownShipIsAzimuth) {
+        weLog("  Ship is azimuth drive -- using schottel/thrust controls");
+    }
+    weLog("  Ship config: singleEngine=" + std::to_string(ownShipIsSingleEngine) +
+          " bowThruster=" + std::to_string(ownShipHasBowThruster) +
+          " sternThruster=" + std::to_string(ownShipHasSternThruster));
     // Enable ARPA auto-detection so radar contacts can be clicked to track
     SimBridge::setArpaMode(1);
 
@@ -3171,34 +3430,88 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                       " rudder=" + std::to_string(ownShipRudder));
             }
 
-            // Arrow Up/Down: engine ahead/astern (telegraph-style, ~5s full travel)
-            // Both engines move together via keyboard
-            if (!controlsBlocked && !guiControlActive && GetAsyncKeyState(VK_UP) & 0x8000) {
-                ownShipPortEngine = std::min(1.0f, ownShipPortEngine + 0.2f * dt);
-                ownShipStbdEngine = std::min(1.0f, ownShipStbdEngine + 0.2f * dt);
+            if (ownShipIsAzimuth) {
+                // Azimuth drive controls (btn* methods handle rate limiting internally)
+                // Arrow keys only -- WASD is reserved for bridge walk.
+                // Future: proper mouse/joystick schottel UI (see ketchup-plan Phase 11 notes).
+                // Arrow Up/Down: both thrust levers together
+                if (!controlsBlocked && !guiControlActive && GetAsyncKeyState(VK_UP) & 0x8000) {
+                    SimBridge::btnIncrementPortThrustLever();
+                    SimBridge::btnIncrementStbdThrustLever();
+                }
+                if (!controlsBlocked && !guiControlActive && GetAsyncKeyState(VK_DOWN) & 0x8000) {
+                    SimBridge::btnDecrementPortThrustLever();
+                    SimBridge::btnDecrementStbdThrustLever();
+                }
+                // Arrow Left/Right: both schottels together (combined steering)
+                if (!controlsBlocked && !guiControlActive && GetAsyncKeyState(VK_LEFT) & 0x8000) {
+                    SimBridge::btnDecrementPortSchottel();
+                    SimBridge::btnDecrementStbdSchottel();
+                }
+                if (!controlsBlocked && !guiControlActive && GetAsyncKeyState(VK_RIGHT) & 0x8000) {
+                    SimBridge::btnIncrementPortSchottel();
+                    SimBridge::btnIncrementStbdSchottel();
+                }
+            } else {
+                // Conventional rudder/engine controls
+                // Arrow Up/Down: engine ahead/astern (telegraph-style, ~5s full travel)
+                // Both engines move together via keyboard
+                if (!controlsBlocked && !guiControlActive && GetAsyncKeyState(VK_UP) & 0x8000) {
+                    ownShipPortEngine = std::min(1.0f, ownShipPortEngine + 0.2f * dt);
+                    ownShipStbdEngine = std::min(1.0f, ownShipStbdEngine + 0.2f * dt);
+                }
+                if (!controlsBlocked && !guiControlActive && GetAsyncKeyState(VK_DOWN) & 0x8000) {
+                    ownShipPortEngine = std::max(-1.0f, ownShipPortEngine - 0.2f * dt);
+                    ownShipStbdEngine = std::max(-1.0f, ownShipStbdEngine - 0.2f * dt);
+                }
+                // Arrow Left/Right: wheel (helm rate ~10 deg/s for responsive feel)
+                if (!controlsBlocked && !guiControlActive && GetAsyncKeyState(VK_LEFT) & 0x8000) {
+                    ownShipRudder = std::max(-30.0f, ownShipRudder - 10.0f * dt);
+                } else if (!controlsBlocked && !guiControlActive && GetAsyncKeyState(VK_RIGHT) & 0x8000) {
+                    ownShipRudder = std::min(30.0f, ownShipRudder + 10.0f * dt);
+                } else if (!guiControlActive) {
+                    // Rudder returns to center slowly when no key pressed
+                    if (ownShipRudder > 0.5f) ownShipRudder -= 3.0f * dt;
+                    else if (ownShipRudder < -0.5f) ownShipRudder += 3.0f * dt;
+                    else ownShipRudder = 0;
+                }
             }
-            if (!controlsBlocked && !guiControlActive && GetAsyncKeyState(VK_DOWN) & 0x8000) {
-                ownShipPortEngine = std::max(-1.0f, ownShipPortEngine - 0.2f * dt);
-                ownShipStbdEngine = std::max(-1.0f, ownShipStbdEngine - 0.2f * dt);
+
+            // Bow thruster: Z=port, X=stbd (returns to zero when released)
+            if (!controlsBlocked && !guiControlActive && ownShipHasBowThruster) {
+                if (GetAsyncKeyState('Z') & 0x8000)
+                    ownShipBowThruster = std::max(-1.0f, ownShipBowThruster - 2.0f * dt);
+                else if (GetAsyncKeyState('X') & 0x8000)
+                    ownShipBowThruster = std::min(1.0f, ownShipBowThruster + 2.0f * dt);
+                else {
+                    // Return to zero
+                    if (ownShipBowThruster > 0.02f) ownShipBowThruster -= 4.0f * dt;
+                    else if (ownShipBowThruster < -0.02f) ownShipBowThruster += 4.0f * dt;
+                    else ownShipBowThruster = 0;
+                }
             }
-            // Arrow Left/Right: wheel (helm rate ~10 deg/s for responsive feel)
-            if (!controlsBlocked && !guiControlActive && GetAsyncKeyState(VK_LEFT) & 0x8000) {
-                ownShipRudder = std::max(-30.0f, ownShipRudder - 10.0f * dt);
-            } else if (!controlsBlocked && !guiControlActive && GetAsyncKeyState(VK_RIGHT) & 0x8000) {
-                ownShipRudder = std::min(30.0f, ownShipRudder + 10.0f * dt);
-            } else if (!guiControlActive) {
-                // Rudder returns to center slowly when no key pressed
-                if (ownShipRudder > 0.5f) ownShipRudder -= 3.0f * dt;
-                else if (ownShipRudder < -0.5f) ownShipRudder += 3.0f * dt;
-                else ownShipRudder = 0;
+            // Stern thruster: C=port, V=stbd
+            if (!controlsBlocked && !guiControlActive && ownShipHasSternThruster) {
+                if (GetAsyncKeyState('C') & 0x8000)
+                    ownShipSternThruster = std::max(-1.0f, ownShipSternThruster - 2.0f * dt);
+                else if (GetAsyncKeyState('V') & 0x8000)
+                    ownShipSternThruster = std::min(1.0f, ownShipSternThruster + 2.0f * dt);
+                else {
+                    if (ownShipSternThruster > 0.02f) ownShipSternThruster -= 4.0f * dt;
+                    else if (ownShipSternThruster < -0.02f) ownShipSternThruster += 4.0f * dt;
+                    else ownShipSternThruster = 0;
+                }
             }
 
             // ===== SIMULATION MODEL UPDATE =====
             // Send controls to SimulationModel
-            SimBridge::setPortEngine(ownShipPortEngine);
-            SimBridge::setStbdEngine(ownShipStbdEngine);
-            SimBridge::setWheel(ownShipRudder);
+            if (!ownShipIsAzimuth) {
+                SimBridge::setPortEngine(ownShipPortEngine);
+                SimBridge::setStbdEngine(ownShipStbdEngine);
+                SimBridge::setWheel(ownShipRudder);
+            }
             SimBridge::setBowThruster(ownShipBowThruster);
+            SimBridge::setSternThruster(ownShipSternThruster);
 
             // Advance physics, AI, buoys, tide, wind, etc.
             if (frameCount <= 3) weLog("  Frame " + std::to_string(frameCount) + " pre-SimBridge::update()");
@@ -3290,25 +3603,52 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                     st->UpdateTransform();
                 }
 
-                // Sun intensity: fade over 0.5h twilight bands
+                // Sun intensity and color: enhanced twilight transitions
                 auto* sl = scene.lights.GetComponent(sunEntity);
+                float twilight = 1.0f;
                 if (sl) {
-                    float twilight = 1.0f;
                     if (hourTime < sunRise)
                         twilight = std::max(0.0f, 1.0f - (sunRise - hourTime) / 0.5f);
                     else if (hourTime > sunSet)
                         twilight = std::max(0.0f, 1.0f - (hourTime - sunSet) / 0.5f);
                     sl->intensity = 8.0f * twilight;
 
-                    // Warm color near horizon (sunrise/sunset), white at zenith (noon)
-                    // hFactor: 1.0 at sunrise/sunset, 0.0 at noon
+                    // Golden hour: warm orange near horizon, white at zenith
                     float hFactor = std::min(1.0f, std::abs(sunProgress - 0.5f) * 4.0f);
-                    sl->color = XMFLOAT3(1.0f, 1.0f - 0.3f * hFactor, 1.0f - 0.5f * hFactor);
+                    // Deep golden at very low sun (last 10% of arc)
+                    float goldenHour = std::max(0.0f, (hFactor - 0.6f) / 0.4f);
+                    float r = 1.0f;
+                    float g = 1.0f - 0.3f * hFactor - 0.15f * goldenHour;
+                    float b = 1.0f - 0.5f * hFactor - 0.25f * goldenHour;
+                    sl->color = XMFLOAT3(r, g, b);
                 }
 
-                // --- Ambient & stars ---
+                // --- Ambient, stars, sky exposure ---
+                // Blue hour: 0-30 min after sunset or before sunrise
+                float blueHour = 0;
+                if (hourTime > sunSet && hourTime < sunSet + 0.5f)
+                    blueHour = 1.0f - (hourTime - sunSet) / 0.5f;
+                else if (hourTime < sunRise && hourTime > sunRise - 0.5f)
+                    blueHour = 1.0f - (sunRise - hourTime) / 0.5f;
+
+                // Night moonlight: faint cool blue ambient when sun is fully down
+                float nightFactor = (1.0f - ll) * (1.0f - twilight);
+                float moonAmbient = nightFactor * 0.03f;
+
                 scene.weather.ambient = XMFLOAT3(
-                    0.05f + 0.25f * ll, 0.05f + 0.30f * ll, 0.08f + 0.32f * ll);
+                    0.05f + 0.25f * ll + moonAmbient * 0.7f + blueHour * 0.02f,
+                    0.05f + 0.30f * ll + moonAmbient * 0.8f + blueHour * 0.03f,
+                    0.08f + 0.32f * ll + moonAmbient * 1.0f + blueHour * 0.06f);
+
+                // Sky exposure: darken at night for realistic star/horizon contrast
+                scene.weather.skyExposure = 0.3f + 0.9f * ll;
+                // Lightning flash brightens ambient briefly
+                if (lightningIntensity > 0.01f) {
+                    float flash = lightningIntensity * 0.4f;
+                    scene.weather.ambient.x += flash;
+                    scene.weather.ambient.y += flash;
+                    scene.weather.ambient.z += flash * 1.1f; // slight blue tint
+                }
                 scene.weather.stars = std::max(0.0f, 1.0f - ll * 2.0f);
 
                 // --- Dynamic atmosphere: Mie scattering scales with Beaufort ---
@@ -3415,6 +3755,55 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                     ocean.update(tideH,
                         bc::graphics::Vec3(camPosX, camPosY, camPosZ),
                         (int)lightLevel, beaufortScale, windSpd, windDir);
+                }
+
+                // --- Lightning storm effect (Beaufort 8+) ---
+                if (beaufortScale >= 8.0f && lightningEntity != wi::ecs::INVALID_ENTITY) {
+                    lightningTimer -= dt;
+
+                    if (lightningFlashLife > 0) {
+                        // Active flash: decay intensity
+                        lightningFlashLife -= dt;
+                        if (lightningFlashLife <= 0) {
+                            lightningIntensity = 0;
+                            lightningFlashLife = 0;
+                        } else {
+                            // Rapid decay with occasional re-flash (forked lightning look)
+                            float phase = lightningFlashLife;
+                            lightningIntensity = (phase > 0.15f) ? 1.0f :
+                                (phase > 0.1f ? 0.2f : phase / 0.1f);
+                        }
+                    }
+
+                    if (lightningTimer <= 0 && lightningFlashLife <= 0) {
+                        // New strike: random position near camera, high in cloud layer
+                        float stormFreq = (beaufortScale - 8.0f) / 4.0f; // 0-1 over B8-B12
+                        lightningTimer = 3.0f + (float)(rand() % 100) / 10.0f * (1.0f - stormFreq * 0.7f);
+
+                        float angle = (float)(rand() % 360) * (float)M_PI / 180.0f;
+                        float dist = 200.0f + (float)(rand() % 800);
+                        lightningX = camPosX + std::sin(angle) * dist;
+                        lightningZ = camPosZ + std::cos(angle) * dist;
+                        lightningFlashLife = 0.2f + (float)(rand() % 100) / 500.0f; // 0.2-0.4s
+                        lightningIntensity = 1.0f;
+                    }
+
+                    auto* lc = scene.lights.GetComponent(lightningEntity);
+                    if (lc) {
+                        lc->intensity = lightningIntensity * 50.0f;
+                    }
+                    auto* lt = scene.transforms.GetComponent(lightningEntity);
+                    if (lt) {
+                        lt->ClearTransform();
+                        lt->Translate(XMFLOAT3(lightningX, 500.0f, lightningZ));
+                        lt->SetDirty();
+                        lt->UpdateTransform();
+                    }
+                } else if (lightningEntity != wi::ecs::INVALID_ENTITY) {
+                    // Below B8: ensure lightning is off
+                    auto* lc = scene.lights.GetComponent(lightningEntity);
+                    if (lc) lc->intensity = 0;
+                    lightningFlashLife = 0;
                 }
             }
 
@@ -3547,14 +3936,16 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             }
             wi::Ocean::wakeShipCount = wakeIdx;
 
-            // ===== BUOY POSITIONS (tidal movement from SimulationModel) =====
+            // ===== BUOY POSITIONS (tidal + wave height for bobbing) =====
             {
                 int numBuoys = SimBridge::getNumberOfBuoys();
                 for (int b = 0; b < numBuoys && b < (int)buoyStates.size(); b++) {
                     auto& bs = buoyStates[b];
                     float bx = SimBridge::getBuoyPosX(b);
                     float bz = SimBridge::getBuoyPosZ(b);
-                    setEntityTransform(scene, bs.entity, bx, bs.heightCorr, bz,
+                    // Sample wave height at buoy position for realistic bobbing
+                    float waveY = ocean.getWaveHeight(bx, bz);
+                    setEntityTransform(scene, bs.entity, bx, bs.heightCorr + waveY, bz,
                                        0, bs.scaleFactor);
                 }
             }
@@ -4089,7 +4480,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 bc::graphics::wicked::ImGuiNewFrame();
 
                 // Pass current control values to overlay sliders
-                overlay.setControlValues(ownShipPortEngine, ownShipStbdEngine, ownShipRudder, ownShipBowThruster);
+                overlay.setControlValues(ownShipPortEngine, ownShipStbdEngine, ownShipRudder, ownShipBowThruster, ownShipSternThruster);
 
                 // Populate HUD data from SimulationModel
                 bc::gui::SimulationHUDData hudData;
@@ -4106,6 +4497,16 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 hudData.windSpeed = SimBridge::getWindSpeed();
                 hudData.windDirection = SimBridge::getWindDirection();
                 hudData.simulationTime = totalSimTime;
+                hudData.isSingleEngine = ownShipIsSingleEngine;
+                hudData.hasBowThruster = ownShipHasBowThruster;
+                hudData.hasSternThruster = ownShipHasSternThruster;
+                hudData.isAzimuthDrive = ownShipIsAzimuth;
+                if (ownShipIsAzimuth) {
+                    hudData.portSchottel = SimBridge::getPortSchottel();
+                    hudData.stbdSchottel = SimBridge::getStbdSchottel();
+                    hudData.portThrustLever = SimBridge::getPortAzimuthThrustLever();
+                    hudData.stbdThrustLever = SimBridge::getStbdAzimuthThrustLever();
+                }
                 overlay.setSimulationData(hudData);
                 if (!showRadarFullscreen && !showEcdisFullscreen) {
                     overlay.render();
@@ -4175,6 +4576,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 ownShipStbdEngine = overlay.getControlStbdEngine();
                 ownShipRudder = overlay.getControlWheel();
                 ownShipBowThruster = overlay.getControlBowThruster();
+                ownShipSternThruster = overlay.getControlSternThruster();
             }
 
             // ===== SOUND UPDATE =====

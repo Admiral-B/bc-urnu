@@ -241,6 +241,30 @@ void setWheel(float val)         { if (g_model) g_model->setWheel(val); }
 void setBowThruster(float val)   { if (g_model) g_model->setBowThruster(val); }
 void setSternThruster(float val) { if (g_model) g_model->setSternThruster(val); }
 
+// Ship capabilities
+bool isSingleEngine()                  { return g_model ? g_model->isSingleEngine() : false; }
+bool hasBowThruster()                  { return g_model ? g_model->hasBowThruster() : false; }
+bool hasSternThruster()                { return g_model ? g_model->hasSternThruster() : false; }
+
+// Azimuth drive controls
+bool isAzimuthDrive()                  { return g_model ? g_model->isAzimuthDrive() : false; }
+void btnIncrementPortSchottel()        { if (g_model) g_model->btnIncrementPortSchottel(); }
+void btnDecrementPortSchottel()        { if (g_model) g_model->btnDecrementPortSchottel(); }
+void btnIncrementStbdSchottel()        { if (g_model) g_model->btnIncrementStbdSchottel(); }
+void btnDecrementStbdSchottel()        { if (g_model) g_model->btnDecrementStbdSchottel(); }
+void btnIncrementPortThrustLever()     { if (g_model) g_model->btnIncrementPortThrustLever(); }
+void btnDecrementPortThrustLever()     { if (g_model) g_model->btnDecrementPortThrustLever(); }
+void btnIncrementStbdThrustLever()     { if (g_model) g_model->btnIncrementStbdThrustLever(); }
+void btnDecrementStbdThrustLever()     { if (g_model) g_model->btnDecrementStbdThrustLever(); }
+void setPortSchottel(float angle)          { if (g_model) g_model->setPortSchottel(angle); }
+void setStbdSchottel(float angle)          { if (g_model) g_model->setStbdSchottel(angle); }
+void setPortAzimuthThrustLever(float val)  { if (g_model) g_model->setPortAzimuthThrustLever(val); }
+void setStbdAzimuthThrustLever(float val)  { if (g_model) g_model->setStbdAzimuthThrustLever(val); }
+float getPortSchottel()                { return g_model ? g_model->getPortSchottel() : 0; }
+float getStbdSchottel()                { return g_model ? g_model->getStbdSchottel() : 0; }
+float getPortAzimuthThrustLever()      { return g_model ? g_model->getPortAzimuthThrustLever() : 0; }
+float getStbdAzimuthThrustLever()      { return g_model ? g_model->getStbdAzimuthThrustLever() : 0; }
+
 // Own ship state
 float getPosX()           { return g_model ? g_model->getPosX() : 0; }
 float getPosZ()           { return g_model ? g_model->getPosZ() : 0; }
