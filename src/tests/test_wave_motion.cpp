@@ -205,47 +205,18 @@ TEST_CASE("Rudder is degraded in rough weather", "[wavemotion][rudder]") {
     REQUIRE(f12 > 0.5f);
 }
 
-// ── Full update integration ─────────────────────────────────────────────────
+// ── Full update integration (5-point) ───────────────────────────────────────
 
 TEST_CASE("Ship types respond differently to same waves", "[wavemotion][integration]") {
-    // Small tug: 15m x 5m x 2m
     auto tugParams = computeFromDimensions(15.0f, 5.0f, 2.0f, 0, 0, 0, 0, 0);
     MotionState tugState{};
-
-    // Large ferry: 200m x 30m x 7m
     auto ferryParams = computeFromDimensions(200.0f, 30.0f, 7.0f, 0, 0, 0, 0, 0);
     MotionState ferryState{};
 
-    // Simulate 30 seconds with sinusoidal wave excitation
-    float windSpeedMps = 10.0f;  // ~B5
-    float waveDirRad = 0.0f;     // from north
-    float headingRad = PI;       // heading south (beam-ish)
-    float weather = 0.42f;       // B5
-
-    for (int i = 0; i < 3000; i++) {
-        float t = i * 0.01f;
-        // Synthetic wave surface (same for both)
-        float wave = 2.0f * std::sin(TWO_PI * t / 8.0f);
-        float waveBow = 2.0f * std::sin(TWO_PI * t / 8.0f + 0.3f);
-        float waveStern = 2.0f * std::sin(TWO_PI * t / 8.0f - 0.3f);
-        float wavePort = 2.0f * std::sin(TWO_PI * t / 8.0f + 0.2f);
-        float waveStbd = 2.0f * std::sin(TWO_PI * t / 8.0f - 0.2f);
-
-        update(tugState, tugParams, 0.01f, wave, waveBow, waveStern, wavePort, waveStbd,
-               windSpeedMps, headingRad, waveDirRad, weather);
-        update(ferryState, ferryParams, 0.01f, wave, waveBow, waveStern, wavePort, waveStbd,
-               windSpeedMps, headingRad, waveDirRad, weather);
-    }
-
-    // Tug should have larger pitch/roll amplitude than ferry
-    // (wavelength reduction is much lower for the large ferry)
-    // We can't directly compare max amplitudes from the current state,
-    // but we can check that the tug's pitch is larger
-    // Run a few more cycles and track maximums
     float tugMaxPitch = 0.0f, ferryMaxPitch = 0.0f;
     float tugMaxRoll = 0.0f, ferryMaxRoll = 0.0f;
 
-    for (int i = 3000; i < 5000; i++) {
+    for (int i = 0; i < 5000; i++) {
         float t = i * 0.01f;
         float wave = 2.0f * std::sin(TWO_PI * t / 8.0f);
         float waveBow = 2.0f * std::sin(TWO_PI * t / 8.0f + 0.3f);
@@ -253,17 +224,126 @@ TEST_CASE("Ship types respond differently to same waves", "[wavemotion][integrat
         float wavePort = 2.0f * std::sin(TWO_PI * t / 8.0f + 0.2f);
         float waveStbd = 2.0f * std::sin(TWO_PI * t / 8.0f - 0.2f);
 
-        update(tugState, tugParams, 0.01f, wave, waveBow, waveStern, wavePort, waveStbd,
-               windSpeedMps, headingRad, waveDirRad, weather);
-        update(ferryState, ferryParams, 0.01f, wave, waveBow, waveStern, wavePort, waveStbd,
-               windSpeedMps, headingRad, waveDirRad, weather);
+        update(tugState, tugParams, 0.01f, wave, waveBow, waveStern, wavePort, waveStbd);
+        update(ferryState, ferryParams, 0.01f, wave, waveBow, waveStern, wavePort, waveStbd);
 
-        tugMaxPitch = std::max(tugMaxPitch, std::abs(tugState.pitch.pos));
-        ferryMaxPitch = std::max(ferryMaxPitch, std::abs(ferryState.pitch.pos));
-        tugMaxRoll = std::max(tugMaxRoll, std::abs(tugState.roll.pos));
-        ferryMaxRoll = std::max(ferryMaxRoll, std::abs(ferryState.roll.pos));
+        if (i >= 3000) {
+            tugMaxPitch = std::max(tugMaxPitch, std::abs(tugState.pitch.pos));
+            ferryMaxPitch = std::max(ferryMaxPitch, std::abs(ferryState.pitch.pos));
+            tugMaxRoll = std::max(tugMaxRoll, std::abs(tugState.roll.pos));
+            ferryMaxRoll = std::max(ferryMaxRoll, std::abs(ferryState.roll.pos));
+        }
     }
 
     REQUIRE(tugMaxPitch > ferryMaxPitch);
     REQUIRE(tugMaxRoll > ferryMaxRoll);
+}
+
+// ── Multi-point buoyancy ────────────────────────────────────────────────────
+
+TEST_CASE("Hull grid has correct number of points", "[wavemotion][multipoint]") {
+    auto params = computeFromDimensions(100.0f, 15.0f, 5.0f, 0, 0, 0, 0, 0);
+    HullPoint grid[GRID_N];
+    computeHullGrid(params, grid);
+
+    REQUIRE(GRID_N == 15);  // 5x3
+}
+
+TEST_CASE("Hull grid spans ship dimensions", "[wavemotion][multipoint]") {
+    auto params = computeFromDimensions(100.0f, 15.0f, 5.0f, 0, 0, 0, 0, 0);
+    HullPoint grid[GRID_N];
+    computeHullGrid(params, grid);
+
+    float minX = 1e9f, maxX = -1e9f;
+    float minY = 1e9f, maxY = -1e9f;
+    for (int i = 0; i < GRID_N; i++) {
+        minX = std::min(minX, grid[i].x_local);
+        maxX = std::max(maxX, grid[i].x_local);
+        minY = std::min(minY, grid[i].y_local);
+        maxY = std::max(maxY, grid[i].y_local);
+    }
+
+    // Grid should span from stern (-50) to bow (+50)
+    REQUIRE(minX == Approx(-50.0f));
+    REQUIRE(maxX == Approx(50.0f));
+    // Midships beam should be +/- 7.5m (widest point)
+    REQUIRE(maxY > 6.0f);
+    REQUIRE(minY < -6.0f);
+}
+
+TEST_CASE("Hull grid elliptical: narrower at bow/stern", "[wavemotion][multipoint]") {
+    auto params = computeFromDimensions(100.0f, 20.0f, 5.0f, 0, 0, 0, 0, 0);
+    HullPoint grid[GRID_N];
+    computeHullGrid(params, grid);
+
+    // Midships station (ix=2, iy=0 and iy=2) should be wider than bow (ix=4)
+    // Grid layout: ix=0 stern, ix=4 bow; iy=0 port side, iy=2 stbd side
+    float midBeam = std::abs(grid[2*GRID_NY + 2].y_local - grid[2*GRID_NY + 0].y_local);
+    float bowBeam = std::abs(grid[4*GRID_NY + 2].y_local - grid[4*GRID_NY + 0].y_local);
+    REQUIRE(midBeam > bowBeam);
+}
+
+TEST_CASE("Buoyancy: flat water gives zero moments", "[wavemotion][multipoint]") {
+    auto params = computeFromDimensions(100.0f, 15.0f, 5.0f, 0, 0, 0, 0, 0);
+    HullPoint grid[GRID_N];
+    computeHullGrid(params, grid);
+
+    float heights[GRID_N];
+    for (int i = 0; i < GRID_N; i++) heights[i] = 2.0f;  // flat water at 2m
+
+    BuoyancyResult r = computeBuoyancy(grid, heights, params);
+    REQUIRE(r.meanHeight == Approx(2.0f));
+    REQUIRE(r.pitchMoment == Approx(0.0f).margin(0.001f));
+    REQUIRE(r.rollMoment == Approx(0.0f).margin(0.001f));
+}
+
+TEST_CASE("Buoyancy: bow-high wave gives positive pitch", "[wavemotion][multipoint]") {
+    auto params = computeFromDimensions(100.0f, 15.0f, 5.0f, 0, 0, 0, 0, 0);
+    HullPoint grid[GRID_N];
+    computeHullGrid(params, grid);
+
+    float heights[GRID_N];
+    for (int i = 0; i < GRID_N; i++) {
+        // Linear slope: bow high, stern low
+        heights[i] = grid[i].x_local * 0.02f;  // 2% slope
+    }
+
+    BuoyancyResult r = computeBuoyancy(grid, heights, params);
+    REQUIRE(r.pitchMoment > 0.0f);  // bow-up pitch
+    REQUIRE(r.rollMoment == Approx(0.0f).margin(0.01f));  // symmetric -> no roll
+}
+
+TEST_CASE("Buoyancy: port-high wave gives positive roll", "[wavemotion][multipoint]") {
+    auto params = computeFromDimensions(100.0f, 15.0f, 5.0f, 0, 0, 0, 0, 0);
+    HullPoint grid[GRID_N];
+    computeHullGrid(params, grid);
+
+    float heights[GRID_N];
+    for (int i = 0; i < GRID_N; i++) {
+        heights[i] = grid[i].y_local * 0.05f;  // 5% transverse slope
+    }
+
+    BuoyancyResult r = computeBuoyancy(grid, heights, params);
+    REQUIRE(r.rollMoment > 0.0f);  // port-up roll
+    REQUIRE(std::abs(r.pitchMoment) < 0.01f);  // minimal pitch
+}
+
+TEST_CASE("Multi-point update converges like 5-point", "[wavemotion][multipoint]") {
+    auto params = computeFromDimensions(50.0f, 10.0f, 3.0f, 0, 0, 0, 0, 0);
+    HullPoint grid[GRID_N];
+    computeHullGrid(params, grid);
+
+    MotionState state{};
+    float heights[GRID_N];
+
+    // Flat water at 1m - heave should converge to 1m
+    for (int i = 0; i < GRID_N; i++) heights[i] = 1.0f;
+
+    for (int frame = 0; frame < 6000; frame++) {
+        updateMultiPoint(state, params, 0.01f, grid, heights);
+    }
+
+    REQUIRE(state.heave.pos == Approx(1.0f).margin(0.05f));
+    REQUIRE(state.pitch.pos == Approx(0.0f).margin(0.01f));
+    REQUIRE(state.roll.pos == Approx(0.0f).margin(0.01f));
 }

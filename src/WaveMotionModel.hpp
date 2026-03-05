@@ -205,39 +205,138 @@ namespace WaveMotion {
         return 1.0f - 0.03f * std::max(0.0f, std::min(12.0f, beaufort));
     }
 
-    // ── Full update step ─────────────────────────────────────────────
+    // ── Multi-point buoyancy grid ───────────────────────────────────
 
-    /// Update ship motion from wave surface samples.
-    /// Wave readback at bow/stern/port/stbd naturally captures ship-length-vs-
-    /// wavelength filtering; the oscillator's frequency response handles the rest.
+    static constexpr int GRID_NX = 5;  // longitudinal sample points
+    static constexpr int GRID_NY = 3;  // transverse sample points
+    static constexpr int GRID_N  = GRID_NX * GRID_NY; // 15 total
+
+    /// Hull sample point in ship-local coordinates (origin at CG).
+    /// x_local: positive forward (bow), y_local: positive port.
+    struct HullPoint {
+        float x_local;  // m, along ship length from CG
+        float y_local;  // m, across ship beam from centerline
+    };
+
+    /// Compute the 5x3 grid of hull sample points for buoyancy.
+    /// Points are distributed across the waterplane area using an
+    /// elliptical footprint (waterplane coefficient Cw ~ 0.8).
+    inline void computeHullGrid(const SeakeepingParams& params, HullPoint grid[GRID_N]) {
+        float halfL = params.shipLength * 0.5f;
+        float halfB = params.shipBreadth * 0.5f;
+
+        int idx = 0;
+        for (int ix = 0; ix < GRID_NX; ix++) {
+            // Longitudinal: evenly from stern (-halfL) to bow (+halfL)
+            float t = (float)ix / (float)(GRID_NX - 1);  // 0..1
+            float x_local = -halfL + t * params.shipLength;
+
+            // Elliptical beam at this station: b(x) = halfB * sqrt(1 - (x/halfL)^2)
+            // This approximates a typical waterplane shape (widest at midships)
+            float xNorm = x_local / halfL;
+            float beamHere = halfB * std::sqrt(std::max(0.01f, 1.0f - xNorm * xNorm * 0.6f));
+
+            for (int iy = 0; iy < GRID_NY; iy++) {
+                float s = (float)iy / (float)(GRID_NY - 1);  // 0..1
+                float y_local = -beamHere + s * 2.0f * beamHere;
+                grid[idx].x_local = x_local;
+                grid[idx].y_local = y_local;
+                idx++;
+            }
+        }
+    }
+
+    /// Multi-point buoyancy result: mean wave height and moments about CG.
+    struct BuoyancyResult {
+        float meanHeight;      // mean wave elevation across all hull points (m)
+        float pitchMoment;     // net pitch excitation (rad) - positive = bow up
+        float rollMoment;      // net roll excitation (rad) - positive = port up
+    };
+
+    /// Compute heave/pitch/roll excitation from an array of wave heights
+    /// sampled at the hull grid points.
+    /// @param grid      Hull sample points (ship-local coords)
+    /// @param heights   Wave heights at each grid point (world-space, from getWaveHeight)
+    /// @param params    Ship seakeeping parameters
+    inline BuoyancyResult computeBuoyancy(const HullPoint grid[GRID_N],
+                                           const float heights[GRID_N],
+                                           const SeakeepingParams& params)
+    {
+        BuoyancyResult r{};
+        float sumH = 0;
+        float sumXH = 0;  // moment arm for pitch: sum(x * h)
+        float sumYH = 0;  // moment arm for roll: sum(y * h)
+
+        for (int i = 0; i < GRID_N; i++) {
+            float h = heights[i];
+            sumH += h;
+            sumXH += grid[i].x_local * h;
+            sumYH += grid[i].y_local * h;
+        }
+
+        r.meanHeight = sumH / (float)GRID_N;
+
+        // Pitch excitation: angle from distributed wave pressure
+        // Analogous to atan2(moment_arm, inertia_arm) but using the
+        // distributed wave slope over the hull waterplane.
+        float Ixx = 0;  // second moment of area about y-axis (for pitch)
+        float Iyy = 0;  // second moment of area about x-axis (for roll)
+        for (int i = 0; i < GRID_N; i++) {
+            Ixx += grid[i].x_local * grid[i].x_local;
+            Iyy += grid[i].y_local * grid[i].y_local;
+        }
+        // Avoid division by zero
+        if (Ixx > 0.01f) r.pitchMoment = std::atan2(sumXH, Ixx);
+        if (Iyy > 0.01f) r.rollMoment  = std::atan2(sumYH, Iyy);
+
+        return r;
+    }
+
+    // ── Full update step (5-point, backward compatible) ──────────────
+
+    /// Update ship motion from 5 wave surface samples (legacy interface).
     inline void update(MotionState& state, const SeakeepingParams& params,
                        float dt, float hCG,
                        float hBow, float hStern,
                        float hPort, float hStbd)
     {
-        // Clamp dt to avoid instability
         dt = std::min(dt, 0.1f);
         if (dt < 1e-6f) return;
 
-        // ── Heave: direct wave height at CG ──
         integrateOscillator(state.heave, params.omega_heave, params.zeta_heave,
                            hCG, dt);
 
-        // ── Pitch: wave slope along ship length ──
-        // The actual FFT readback at bow/stern already captures ship-length-vs-
-        // wavelength filtering naturally (short waves cancel out over the ship's
-        // length in the point samples, and the oscillator's natural frequency
-        // response attenuates high-frequency excitation).
         float pitchExcitation = std::atan2(hBow - hStern, params.shipLength);
-
         integrateOscillator(state.pitch, params.omega_pitch, params.zeta_pitch,
                            pitchExcitation, dt);
 
-        // ── Roll: wave slope across ship beam ──
         float rollExcitation = std::atan2(hPort - hStbd, params.shipBreadth);
-
         integrateOscillator(state.roll, params.omega_roll, params.zeta_roll,
                            rollExcitation, dt);
+    }
+
+    // ── Full update step (15-point multi-point buoyancy) ─────────────
+
+    /// Update ship motion from distributed buoyancy sampling.
+    /// Provides more accurate pitch/roll excitation than 5-point sampling,
+    /// especially for parametric rolling (beam seas) and bow slamming.
+    inline void updateMultiPoint(MotionState& state, const SeakeepingParams& params,
+                                  float dt, const HullPoint grid[GRID_N],
+                                  const float heights[GRID_N])
+    {
+        dt = std::min(dt, 0.1f);
+        if (dt < 1e-6f) return;
+
+        BuoyancyResult buoy = computeBuoyancy(grid, heights, params);
+
+        integrateOscillator(state.heave, params.omega_heave, params.zeta_heave,
+                           buoy.meanHeight, dt);
+
+        integrateOscillator(state.pitch, params.omega_pitch, params.zeta_pitch,
+                           buoy.pitchMoment, dt);
+
+        integrateOscillator(state.roll, params.omega_roll, params.zeta_roll,
+                           buoy.rollMoment, dt);
     }
 
 } // namespace WaveMotion

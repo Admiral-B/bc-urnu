@@ -24,6 +24,7 @@
 #include "TextureUpscaler.hpp"
 #include "MapScreen.hpp"
 #include "WaveMotionModel.hpp"
+#include "graphics/wicked/WickedMultiView.hpp"
 
 // ImGui header needed for IO access in game loop
 #include "graphics/wicked/imgui/imgui.h"
@@ -430,24 +431,6 @@ static wi::ecs::Entity createPlaceholderBox(wi::scene::Scene& scene, const std::
 //
 // Brightness follows Allard's Law: E = I * T^D / D^2 where T=0.8/nm (clear conditions).
 // COLREG Annex I candela: 2nm sidelight=4.3cd, 3nm=12cd, 5nm masthead=52cd, 6nm=94cd.
-static wi::Resource g_flareWhite, g_flareRed, g_flareGreen;
-
-static void writeTGA(const std::string& path, int w, int h, const uint8_t* rgba) {
-    std::ofstream f(path, std::ios::binary);
-    if (!f) return;
-    uint8_t header[18] = {};
-    header[2] = 2; // uncompressed true-color
-    header[12] = (uint8_t)(w & 0xFF); header[13] = (uint8_t)((w >> 8) & 0xFF);
-    header[14] = (uint8_t)(h & 0xFF); header[15] = (uint8_t)((h >> 8) & 0xFF);
-    header[16] = 32; // 32-bit BGRA
-    header[17] = 0x28; // top-left origin + 8 alpha bits
-    f.write((const char*)header, 18);
-    for (int i = 0; i < w * h; i++) {
-        uint8_t bgra[4] = { rgba[i*4+2], rgba[i*4+1], rgba[i*4+0], rgba[i*4+3] };
-        f.write((const char*)bgra, 4);
-    }
-}
-
 // Estimate COLREG candela from nominal range using Allard's Law inverted:
 // I = E_threshold * D_m^2 / T^D_nm
 // E_threshold = 2e-7 lux (COLREG Annex I), T = 0.8/nm (10nm met. visibility)
@@ -458,72 +441,72 @@ static float colregCandela(float rangeNM) {
     return 2.0e-7f * D_m * D_m / std::pow(0.8f, rangeNM);
 }
 
-static void generateNavLightFlareTextures() {
-    // 8x8 pixel textures with radial Gaussian falloff: bright center,
-    // smooth fade to edges. Billboard is ~8 screen pixels across at 1080p.
-    // Radial gradient looks like a natural point light glow rather than a
-    // colored square. WE bloom further spreads the bright center.
-    // Bridge window glass doesn't write depth, so keep billboard small (8px)
-    // to minimize frame bleed-through.
-    const int SZ = 8;
-    const float CENTER = (SZ - 1) * 0.5f;
-    const float SIGMA = SZ * 0.25f; // Gaussian sigma: tight core
-    struct FlareSpec { const char* name; float r, g, b; };
-    FlareSpec specs[] = {
-        {"flare_nav_white.tga", 1.0f, 1.0f, 0.95f},   // bright white
-        {"flare_nav_red.tga",   1.0f, 0.1f, 0.05f},    // COLREG red
-        {"flare_nav_green.tga", 0.05f, 1.0f, 0.15f},   // COLREG green
+// Create a tiny emissive quad mesh that acts as a nav light glow point.
+// The quad is 0.3m across (sub-pixel at distance), with very high emissive
+// intensity that drives WE's bloom post-process for natural radial glow.
+// Unlike lens flare billboards, this writes to the depth buffer and is
+// properly occluded by opaque geometry (hull, terrain, bridge structure).
+static void createNavLightSprite(wi::scene::Scene& scene,
+                                  wi::ecs::Entity& outEntity,
+                                  wi::ecs::Entity& outMaterial,
+                                  float r, float g, float b,
+                                  const std::string& name) {
+    // Create material with high emissive color (bloom will create glow)
+    outMaterial = scene.Entity_CreateMaterial(name + "_mat");
+    auto* mat = scene.materials.GetComponent(outMaterial);
+    if (!mat) return;
+
+    mat->baseColor = DirectX::XMFLOAT4(0, 0, 0, 1);  // black base (invisible without emissive)
+    mat->emissiveColor = DirectX::XMFLOAT4(r, g, b, 1.0f); // initial emissive
+    mat->roughness = 1.0f;
+    mat->metalness = 0.0f;
+    mat->SetDoubleSided(true);  // visible from all angles
+    mat->userBlendMode = wi::enums::BLENDMODE_ALPHA; // allow alpha fadeout
+
+    // Create a tiny quad mesh (2 triangles)
+    outEntity = scene.Entity_CreateMesh(name + "_mesh");
+    auto* mesh = scene.meshes.GetComponent(outEntity);
+    if (!mesh) return;
+
+    const float S = 0.15f;  // half-size (0.3m total)
+
+    // 4 vertices: centered at origin, in XY plane
+    mesh->vertex_positions = {
+        DirectX::XMFLOAT3(-S, -S, 0),
+        DirectX::XMFLOAT3( S, -S, 0),
+        DirectX::XMFLOAT3( S,  S, 0),
+        DirectX::XMFLOAT3(-S,  S, 0),
     };
+    mesh->vertex_normals = {
+        DirectX::XMFLOAT3(0, 0, -1),
+        DirectX::XMFLOAT3(0, 0, -1),
+        DirectX::XMFLOAT3(0, 0, -1),
+        DirectX::XMFLOAT3(0, 0, -1),
+    };
+    mesh->vertex_uvset_0 = {
+        DirectX::XMFLOAT2(0, 1),
+        DirectX::XMFLOAT2(1, 1),
+        DirectX::XMFLOAT2(1, 0),
+        DirectX::XMFLOAT2(0, 0),
+    };
+    mesh->indices = { 0, 1, 2, 0, 2, 3 };
 
-    std::vector<uint8_t> pixels(SZ * SZ * 4);
-    for (auto& spec : specs) {
-        for (int y = 0; y < SZ; y++) {
-            for (int x = 0; x < SZ; x++) {
-                float dx = x - CENTER, dy = y - CENTER;
-                float dist2 = dx * dx + dy * dy;
-                float falloff = std::exp(-dist2 / (2.0f * SIGMA * SIGMA));
-                int idx = (y * SZ + x) * 4;
-                pixels[idx + 0] = (uint8_t)(spec.r * 255.0f);
-                pixels[idx + 1] = (uint8_t)(spec.g * 255.0f);
-                pixels[idx + 2] = (uint8_t)(spec.b * 255.0f);
-                pixels[idx + 3] = (uint8_t)(falloff * 255.0f);
-            }
-        }
-        writeTGA(spec.name, SZ, SZ, pixels.data());
-    }
-}
+    wi::scene::MeshComponent::MeshSubset subset;
+    subset.materialID = outMaterial;
+    subset.indexOffset = 0;
+    subset.indexCount = 6;
+    mesh->subsets.push_back(subset);
 
-static void loadNavLightFlareTextures() {
-    generateNavLightFlareTextures();
-    g_flareWhite = wi::resourcemanager::Load("flare_nav_white.tga");
-    g_flareRed   = wi::resourcemanager::Load("flare_nav_red.tga");
-    g_flareGreen = wi::resourcemanager::Load("flare_nav_green.tga");
-    int loaded = (g_flareWhite.IsValid() ? 1 : 0) +
-                 (g_flareRed.IsValid() ? 1 : 0) +
-                 (g_flareGreen.IsValid() ? 1 : 0);
-    weLog("  Nav light flare textures: " + std::to_string(loaded) + "/3 loaded");
-}
+    mesh->CreateRenderData();
 
-static void attachLensFlare(wi::scene::Scene& scene, wi::ecs::Entity lightEntity,
-                             float r, float g, float b) {
-    // Pick colored flare matching light color (COLREG: red port, green stbd, white mast/stern)
-    wi::Resource* flare;
-    if (r > 0.5f && g < 0.3f && b < 0.3f)      flare = &g_flareRed;
-    else if (g > 0.5f && r < 0.3f && b < 0.3f)  flare = &g_flareGreen;
-    else                                          flare = &g_flareWhite;
+    // Create an object entity that references this mesh
+    wi::ecs::Entity objEntity = wi::ecs::CreateEntity();
+    scene.transforms.Create(objEntity);
+    auto& obj = scene.objects.Create(objEntity);
+    obj.meshID = outEntity;
 
-    if (!flare->IsValid()) {
-        weLog("  [FLARE] texture not valid for entity " + std::to_string(lightEntity));
-        return;
-    }
-    auto* lc = scene.lights.GetComponent(lightEntity);
-    if (!lc) {
-        weLog("  [FLARE] no LightComponent for entity " + std::to_string(lightEntity));
-        return;
-    }
-    lc->lensFlareRimTextures.push_back(*flare);
-    weLog("  [FLARE] attached to entity " + std::to_string(lightEntity) +
-          " flareCount=" + std::to_string(lc->lensFlareRimTextures.size()));
+    // The sprite entity we return is the object entity (it has the transform)
+    outEntity = objEntity;
 }
 
 // Cache of WE mesh entities created from Irrlicht-converted models (by filepath)
@@ -1537,6 +1520,39 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     ecdisDisplay.init(Utilities::getUserDirBase() + "tilecache/");
     weLog("  ImGui overlay initialized.");
 
+    // --- Multi-view bridge rendering ---
+    bc::graphics::wicked::WickedMultiView multiView;
+    {
+        std::string iniFile = userFolder + "bc5.ini";
+        if (!Utilities::pathExists(iniFile)) iniFile = "bc5.ini";
+        int wickedViews = (int)IniFile::iniFileTof32(iniFile, "wicked_views");
+        if (wickedViews > 1) {
+            float viewFov = IniFile::iniFileTof32(iniFile, "view_angle");
+            if (viewFov < 10.0f) viewFov = 60.0f;
+
+            // Read per-view yaw offsets (wicked_view_offset_1, _2, etc.)
+            // These are offsets from bow for extra views (not the main center view)
+            std::vector<float> offsets;
+            for (int v = 1; v < wickedViews; v++) {
+                float off = IniFile::iniFileTof32(iniFile,
+                    "wicked_view_offset_" + std::to_string(v));
+                offsets.push_back(off);
+            }
+            // Default offsets if not specified: symmetric around center
+            if (offsets.size() == 2 && offsets[0] == 0 && offsets[1] == 0) {
+                offsets[0] = -viewFov;  // port
+                offsets[1] = viewFov;   // starboard
+            }
+
+            if (multiView.init(hWnd, &wi::scene::GetScene(), wickedViews, viewFov, offsets.data())) {
+                weLog("  Multi-view: " + std::to_string(multiView.getExtraViewCount()) +
+                      " extra views created");
+            } else {
+                weLog("  Multi-view: no extra monitors available");
+            }
+        }
+    }
+
     // --- Initialize Sound ---
     Sound sound;
     sound.load("Sounds/Engine.wav", "Sounds/Bwave.wav",
@@ -1584,6 +1600,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     // WE-side wave motion: drives visual positioning from WE ocean (not Irrlicht water)
     bc::WaveMotion::SeakeepingParams weSeakeeping{};
     bc::WaveMotion::MotionState weMotionState{};
+    bc::WaveMotion::HullPoint weHullGrid[bc::WaveMotion::GRID_N]{};
     bool weSeakeepingInitialized = false;
     float iniRollPeriod = 8.0f, iniPitchPeriod = 12.0f;
     float iniGM = 0, iniRollDamping = 0, iniPitchDamping = 0;
@@ -1648,6 +1665,8 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     // setting intensity=0 when out of arc/range/flash-off.
     struct WENavLight {
         wi::ecs::Entity entity = wi::ecs::INVALID_ENTITY;       // point light
+        wi::ecs::Entity spriteEntity = wi::ecs::INVALID_ENTITY;  // emissive glow sprite
+        wi::ecs::Entity spriteMaterial = wi::ecs::INVALID_ENTITY; // material for emissive control
         int shipIndex = -1;      // index into otherShipStates, -1 for own ship, -2 for fixed/buoy
         int buoyIndex = -1;      // >= 0: buoyStates index (light attached to buoy)
         float localX = 0, localY = 0, localZ = 0; // ship-relative pos OR world pos (if fixed)
@@ -1662,9 +1681,6 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     std::vector<WENavLight> navLights;
 
     try { // Wrap scene setup in try-catch to diagnose crashes
-
-    // ===== LENS FLARE TEXTURES (colored per COLREG: red, green, white) =====
-    loadNavLightFlareTextures();
 
     // ===== SUN / LIGHTING =====
     pumpMessages(); // Keep window responsive during setup
@@ -2351,7 +2367,9 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                     lc->SetCastShadow(true); // shadows prevent light bleeding through hull into bridge
                     lc->SetVolumetricsEnabled(false);
                 }
-                attachLensFlare(scene, nlt.entity, nlt.r, nlt.g, nlt.b);
+                // Emissive sprite for bloom-driven glow (replaces lens flare billboards)
+                createNavLightSprite(scene, nlt.spriteEntity, nlt.spriteMaterial,
+                                     nlt.r, nlt.g, nlt.b, lightName + "_sprite");
                 navLights.push_back(nlt);
             };
 
@@ -2503,7 +2521,8 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 lightComp->SetCastShadow(false);
                 lightComp->SetVolumetricsEnabled(false);
             }
-            attachLensFlare(scene, nlt.entity, nlt.r, nlt.g, nlt.b);
+            createNavLightSprite(scene, nlt.spriteEntity, nlt.spriteMaterial,
+                                 nlt.r, nlt.g, nlt.b, lightName + "_sprite");
 
             navLights.push_back(nlt);
         }
@@ -2841,7 +2860,8 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                     lightComp->SetCastShadow(false);
                     lightComp->SetVolumetricsEnabled(false);
                 }
-                attachLensFlare(scene, nlt.entity, nlt.r, nlt.g, nlt.b);
+                createNavLightSprite(scene, nlt.spriteEntity, nlt.spriteMaterial,
+                                     nlt.r, nlt.g, nlt.b, lightName + "_sprite");
 
                 navLights.push_back(nlt);
                 createdCount++;
@@ -2929,7 +2949,8 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 lightComp->SetCastShadow(false);
                 lightComp->SetVolumetricsEnabled(false);
             }
-            attachLensFlare(scene, nlt.entity, nlt.r, nlt.g, nlt.b);
+            createNavLightSprite(scene, nlt.spriteEntity, nlt.spriteMaterial,
+                                 nlt.r, nlt.g, nlt.b, lightName + "_sprite");
             navLights.push_back(nlt);
             autoLightCount++;
         }
@@ -3267,13 +3288,15 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
         weSeakeeping = bc::WaveMotion::computeFromDimensions(
             shipL, shipB, shipT, iniRollPeriod, iniPitchPeriod,
             iniGM, iniRollDamping, iniPitchDamping);
+        bc::WaveMotion::computeHullGrid(weSeakeeping, weHullGrid);
         weMotionState = {};
         weSeakeepingInitialized = true;
         weLog("  WE wave motion: L=" + std::to_string(shipL) +
               " B=" + std::to_string(shipB) +
               " T=" + std::to_string(shipT) +
               " rollP=" + std::to_string(iniRollPeriod) +
-              " pitchP=" + std::to_string(iniPitchPeriod));
+              " pitchP=" + std::to_string(iniPitchPeriod) +
+              " hullGrid=" + std::to_string(bc::WaveMotion::GRID_N) + "pts");
     }
 
     // Update other ship seakeeping with actual dimensions from SimBridge
@@ -3820,24 +3843,25 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             float ownShipRoll = 0;
 
             if (weSeakeepingInitialized) {
-                // Sample WE ocean at 5 points around the ship
-                float halfL = weSeakeeping.shipLength * 0.5f;
-                float halfB = weSeakeeping.shipBreadth * 0.5f;
+                // Sample WE ocean at 15 hull grid points (5x3 waterplane grid)
                 float sinH = std::sin(headRad);
                 float cosH = std::cos(headRad);
 
-                float hCG = ocean.getWaveHeight(ownShipX, ownShipZ);
-                float hBow = ocean.getWaveHeight(ownShipX + sinH * halfL, ownShipZ + cosH * halfL);
-                float hStern = ocean.getWaveHeight(ownShipX - sinH * halfL, ownShipZ - cosH * halfL);
-                float hPort = ocean.getWaveHeight(ownShipX - cosH * halfB, ownShipZ + sinH * halfB);
-                float hStbd = ocean.getWaveHeight(ownShipX + cosH * halfB, ownShipZ - sinH * halfB);
+                float gridHeights[bc::WaveMotion::GRID_N];
+                for (int i = 0; i < bc::WaveMotion::GRID_N; i++) {
+                    // Transform hull-local (x_local=fwd, y_local=port) to world coords
+                    float xl = weHullGrid[i].x_local;
+                    float yl = weHullGrid[i].y_local;
+                    float wx = ownShipX + (xl * sinH + yl * (-cosH));
+                    float wz = ownShipZ + (xl * cosH + yl * sinH);
+                    gridHeights[i] = ocean.getWaveHeight(wx, wz);
+                    // Sanitize wave readbacks (NaN from GPU readback timing -> oscillator divergence)
+                    if (std::isnan(gridHeights[i]) || std::isinf(gridHeights[i]))
+                        gridHeights[i] = 0.0f;
+                }
 
-                // Sanitize wave readbacks (NaN from GPU readback timing -> oscillator divergence)
-                auto sanitize = [](float& v) { if (std::isnan(v) || std::isinf(v)) v = 0.0f; };
-                sanitize(hCG); sanitize(hBow); sanitize(hStern); sanitize(hPort); sanitize(hStbd);
-
-                bc::WaveMotion::update(weMotionState, weSeakeeping,
-                    dt, hCG, hBow, hStern, hPort, hStbd);
+                bc::WaveMotion::updateMultiPoint(weMotionState, weSeakeeping,
+                    dt, weHullGrid, gridHeights);
 
                 ownShipY = ownShipHeightCorr + weMotionState.heave.pos;
                 ownShipPitch = weMotionState.pitch.pos * 180.0f / (float)M_PI;
@@ -4043,26 +4067,45 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                         visible = inRange && arcVisible && flashOn;
                     }
 
-                    // Position the light (lens flare position is derived from the light entity)
+                    // Position the light entity
                     setEntityTransform(scene, nlt.entity, wx, wy, wz);
 
+                    // Allard's Law brightness
+                    float D_nm = std::max(0.1f, dist / 1852.0f);
+                    float transmittance = std::pow(0.8f, D_nm);
+                    float illuminance = nlt.intensity_cd * transmittance / (D_nm * D_nm);
+                    float weIntensity = visible ? std::min(3000.0f, illuminance * 50.0f) * lightAlpha : 0.0f;
+
+                    // Update point light (local PBR illumination on hull/buoy)
                     auto* lightComp = scene.lights.GetComponent(nlt.entity);
                     if (lightComp) {
-                        if (!visible) {
-                            lightComp->intensity = 0.0f; // hides lens flare too (IsInactive)
-                        } else {
-                            // Allard's Law: illuminance = I * T^D / D^2
-                            // T=0.8 per NM (10nm meteorological visibility, clear night)
-                            float D_nm = std::max(0.1f, dist / 1852.0f);
-                            float transmittance = std::pow(0.8f, D_nm);
-                            float illuminance = nlt.intensity_cd * transmittance / (D_nm * D_nm);
-                            // Scale to WE intensity units. With PBR range=30m and
-                            // volumetrics off, the light only illuminates nearby hull/buoy.
-                            // The 4px lens flare dot provides distant visibility.
-                            // Intensity just needs to be non-zero (keeps flare active)
-                            // and proportional to distance for subtle close-range bloom.
-                            float weIntensity = std::min(3000.0f, illuminance * 50.0f) * lightAlpha;
-                            lightComp->intensity = weIntensity;
+                        lightComp->intensity = weIntensity;
+                    }
+
+                    // Update emissive sprite (bloom-driven distant glow)
+                    if (nlt.spriteEntity != wi::ecs::INVALID_ENTITY) {
+                        auto* xform = scene.transforms.GetComponent(nlt.spriteEntity);
+                        if (xform) {
+                            xform->ClearTransform();
+                            xform->Translate(DirectX::XMFLOAT3(wx, wy, wz));
+                            // Billboard: face camera. Compute yaw from light->camera vector.
+                            float billYaw = std::atan2(dx, dz);
+                            xform->RotateRollPitchYaw(DirectX::XMFLOAT3(0, billYaw, 0));
+                            // Scale sprite with distance: stays ~4 pixels on screen
+                            // At 100m the 0.3m quad is ~3px at 1080p/60deg FOV.
+                            // At 2km it's sub-pixel. Scale up slightly at distance.
+                            float scaleFactor = std::max(1.0f, dist * 0.003f);
+                            xform->Scale(DirectX::XMFLOAT3(scaleFactor, scaleFactor, 1.0f));
+                            xform->UpdateTransform();
+                        }
+                        // Set emissive intensity on the sprite material
+                        auto* mat = scene.materials.GetComponent(nlt.spriteMaterial);
+                        if (mat) {
+                            // High emissive drives bloom. Scale by Allard illuminance.
+                            // 20.0 base * illuminance gives bright enough glow for bloom threshold.
+                            float emScale = visible ? std::min(50.0f, illuminance * 20.0f) * lightAlpha : 0.0f;
+                            mat->emissiveColor = DirectX::XMFLOAT4(
+                                nlt.r * emScale, nlt.g * emScale, nlt.b * emScale, 1.0f);
                         }
                     }
                 }
@@ -4081,13 +4124,13 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                             " entity=" + std::to_string(nlt.entity) +
                             " intensity=" + (lc ? std::to_string(lc->intensity) : "NO_LC") +
                             " range=" + (lc ? std::to_string(lc->range) : "?") +
-                            " flares=" + (lc ? std::to_string(lc->lensFlareRimTextures.size()) : "?") +
+                            " sprite=" + std::to_string(nlt.spriteEntity != wi::ecs::INVALID_ENTITY) +
                             " inactive=" + (lc ? std::to_string(lc->IsInactive()) : "?") +
                             " intensity_cd=" + std::to_string(nlt.intensity_cd) +
                             " shipIdx=" + std::to_string(nlt.shipIndex);
                         weLog(msg);
                     }
-                    weLog("  [DIAG] lensFlareEnabled=" + std::to_string(renderPath.getLensFlareEnabled()));
+                    weLog("  [DIAG] bloomEnabled=" + std::to_string(renderPath.getBloomEnabled()));
                     weLog("  [DIAG] total navLights=" + std::to_string(navLights.size()));
                 }
             }
@@ -4464,6 +4507,17 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             camera.TransformCamera(invView);
             if (frameCount <= 3) weLog("  Frame " + std::to_string(frameCount) + " post-camera");
 
+            // Update extra bridge view cameras (port, starboard, etc.)
+            if (multiView.hasExtraViews() && !camOrbitMode) {
+                float shipPitchRadMV = (ownShipPitchCorr + ownShipPitch) * (float)M_PI / 180.0f;
+                float shipRollRadMV = (ownShipRollCorr + ownShipRoll) * (float)M_PI / 180.0f;
+                float headRadMV = ownShipHeading * (float)M_PI / 180.0f;
+                DirectX::XMVECTOR mvShipQuat = DirectX::XMQuaternionRotationRollPitchYaw(
+                    shipPitchRadMV, headRadMV, shipRollRadMV);
+                multiView.updateCameras(mvShipQuat, camX, camY, camZ,
+                                         camYawOffset, camPitch);
+            }
+
             // Skip rendering when window is inactive (minimized or lost focus).
             // Must check BEFORE ImGuiNewFrame() to avoid NewFrame/EndFrame mismatch.
             // If focus is lost DURING application.Run(), Run() may skip Compose()
@@ -4619,6 +4673,11 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             // ImGui::Render() was never called. EndFrame() no-ops if already called.
             ImGui::EndFrame();
 
+            // Render extra bridge views (port, starboard) to their own windows
+            if (multiView.hasExtraViews()) {
+                multiView.renderAndPresent();
+            }
+
             if (frameCount <= 5)
                 weLog("  Frame " + std::to_string(frameCount) + " post-Run() OK");
 
@@ -4686,6 +4745,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     weLog("Shutting down SimulationBridge...");
     SimBridge::shutdown();
     weLog("Shutting down Wicked Engine...");
+    multiView.shutdown();
     ImGui_ImplWin32_Shutdown();
     bc::graphics::wicked::ImGuiShutdown();
     g_convertedMeshCache.clear();

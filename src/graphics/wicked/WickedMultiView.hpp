@@ -6,7 +6,11 @@
      published by the Free Software Foundation
 
      Multi-viewport rendering for bridge simulator.
-     Manages multiple cameras and render targets for the 3-monitor bridge setup. */
+     Manages multiple cameras and render targets for the 3-monitor bridge setup.
+
+     Each extra view gets its own RenderPath3D, CameraComponent, and SwapChain.
+     The main view (index 0) is rendered by the Application's own render path;
+     extra views (1, 2, ...) are rendered after Application::Run() each frame. */
 
 #ifndef BC_GRAPHICS_WICKED_MULTIVIEW_HPP
 #define BC_GRAPHICS_WICKED_MULTIVIEW_HPP
@@ -17,69 +21,75 @@
 #include "../Types.hpp"
 #include <vector>
 #include <string>
+#include <memory>
 
 namespace bc { namespace graphics { namespace wicked {
 
-// Represents a single bridge view (one monitor/window).
-struct BridgeView {
-    std::string name;                    // e.g. "Port", "Center", "Starboard"
-    wi::ecs::Entity cameraEntity = wi::ecs::INVALID_ENTITY;
-    wi::graphics::SwapChain swapChain;
-    wi::Canvas canvas;
-    void* windowHandle = nullptr;        // Platform window handle
+// Represents a single extra bridge view (one monitor/window).
+// View 0 (center) is the main application window -- not managed here.
+// Uses unique_ptr for non-copyable WE types so ExtraView can live in a vector.
+struct ExtraView {
+    std::string name;                    // e.g. "Port", "Starboard"
+    HWND hwnd = nullptr;                 // Win32 window handle
+    std::unique_ptr<wi::graphics::SwapChain> swapChain;
+    std::unique_ptr<wi::RenderPath3D> renderPath;
+    std::unique_ptr<wi::scene::CameraComponent> camera;
 
     // Camera parameters
     float yawOffset = 0;                 // Horizontal angle offset from bow (degrees)
     float fovDegrees = 60.0f;
-    float nearPlane = 0.1f;
+    float nearPlane = 0.5f;
     float farPlane = 50000.0f;           // 50km for maritime distances
 
-    bool active = false;                 // Whether this view is currently rendering
+    bool active = false;
 };
 
-// Manages multiple bridge views for the 3-monitor setup.
-// One shared scene is rendered with different cameras to different windows.
+// Manages extra bridge views for multi-monitor bridge setup.
+// The main view (center) is managed by WickedMain's BCRenderPath.
+// This class creates and renders additional views (port, starboard, etc).
 class WickedMultiView {
 public:
     WickedMultiView() = default;
     ~WickedMultiView();
 
-    // Initialize the multi-view system.
-    // scene: the shared WE scene
-    // views: number of views (typically 3 for port/center/starboard, or 1 for single monitor)
-    void init(wi::scene::Scene* scene, int viewCount);
+    // Create extra view windows on available monitors.
+    // mainHwnd: the main application window (used to determine which monitor it's on)
+    // viewCount: total views including main (e.g. 3 = main + port + starboard)
+    // fovDegrees: horizontal FOV per view
+    // yawOffsets: array of yaw offsets in degrees for each extra view (size = viewCount-1)
+    //   e.g. for 3-view: yawOffsets = {-60, +60} (port=-60, starboard=+60)
+    bool init(HWND mainHwnd, wi::scene::Scene* scene,
+              int viewCount, float fovDegrees,
+              const float* yawOffsets);
 
-    // Set up a view with its window handle and camera parameters.
-    // viewIndex: 0=port (or single), 1=center, 2=starboard
-    // windowHandle: platform window handle (HWND on Windows, NSWindow* on macOS)
-    // yawOffset: horizontal camera angle offset from bow in degrees
-    // fov: field of view in degrees
-    void setupView(int viewIndex, const std::string& name, void* windowHandle,
-                    float yawOffset, float fovDegrees, int width, int height);
+    // Update cameras for all extra views from the main camera state.
+    // Called each frame after the main camera has been positioned.
+    // shipQuat: full ship orientation quaternion (heading + pitch + roll)
+    // camPos: bridge camera position in world space
+    // camYawOffset: current mouse-look yaw offset (degrees)
+    void updateCameras(const DirectX::XMVECTOR& shipQuat,
+                       float camX, float camY, float camZ,
+                       float camYawOffset, float camPitch);
 
-    // Update all cameras based on a master position and heading.
-    // This is called each frame to sync cameras with the ship's bridge position.
-    // position: bridge window position in world coordinates
-    // heading: ship heading in degrees (0=north, clockwise)
-    // pitch: ship pitch in degrees
-    // roll: ship roll in degrees
-    void updateCameras(const Vec3& position, float heading, float pitch, float roll);
+    // Render and present all extra views.
+    // Called after application.Run() each frame.
+    void renderAndPresent();
 
-    // Get the number of active views.
-    int getActiveViewCount() const;
-
-    // Get a specific view for custom rendering.
-    BridgeView* getView(int index);
-    const BridgeView* getView(int index) const;
-
-    // Get the camera component for a specific view.
-    wi::scene::CameraComponent* getCamera(int viewIndex);
+    int getExtraViewCount() const { return (int)views.size(); }
+    bool hasExtraViews() const { return !views.empty(); }
 
     void shutdown();
 
 private:
     wi::scene::Scene* weScene = nullptr;
-    std::vector<BridgeView> views;
+    std::vector<ExtraView> views;
+    float baseFovDegrees = 60.0f;
+
+    // Create a borderless window on a specific monitor
+    static HWND createViewWindow(HMONITOR monitor, const std::wstring& title);
+    // WndProc for extra view windows
+    static LRESULT CALLBACK extraViewWndProc(HWND hwnd, UINT msg,
+                                              WPARAM wParam, LPARAM lParam);
 };
 
 }}} // namespace bc::graphics::wicked
