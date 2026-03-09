@@ -147,6 +147,7 @@ static bool camOrbitMode = false;
 static float camDistance = 200.0f;
 static float camYaw = 0.0f;    // horizontal look angle (degrees, CW from north)
 static float camYawOffset = 0.0f; // mouse look offset from ship heading (bridge mode)
+static float camLookAngle = 0.0f; // base look angle offset from bc5.ini (degrees, for secondary mode)
 static float camPitch = 0.0f;  // vertical look angle (degrees, + = up)
 static float camPosX = 0.0f;   // camera world position (WE coords)
 static float camPosY = 10.0f;
@@ -159,6 +160,28 @@ static float walkLocalZ = 0.0f;
 static bool mouseRightDown = false;
 static bool mouseLeftDown = false;
 static int lastMouseX = 0, lastMouseY = 0;
+
+// Wake trail recording -- per-ship ring buffers of stern positions left in the water
+static const int WAKE_TRAIL_POINTS_PER_SHIP = 64;
+static const int WAKE_TRAIL_MAX_SHIPS = 9; // own ship + 8 others
+static const float WAKE_TRAIL_SPACING = 4.0f; // metres between breadcrumbs
+struct WakeTrailRecord {
+    float x, z;
+    float hdirX, hdirZ;
+    float halfWidth;
+    float speed;
+    float shipLength;
+    float timestamp; // seconds since start, for time-based decay
+};
+struct ShipTrailBuffer {
+    WakeTrailRecord points[WAKE_TRAIL_POINTS_PER_SHIP];
+    int count = 0;
+    int head = 0;
+    float lastX = 0, lastZ = 0;
+    bool initialized = false;
+};
+static float g_wakeTimeAccum = 0; // monotonic time for trail aging
+static ShipTrailBuffer g_shipTrails[WAKE_TRAIL_MAX_SHIPS]; // [0] = own ship, [1..8] = others
 
 // Persistent radar texture for rendering (must be before BCRenderPath)
 static wi::graphics::Texture g_radarTex;
@@ -412,6 +435,58 @@ static wi::ecs::Entity createPlaceholderBox(wi::scene::Scene& scene, const std::
     wi::ecs::Entity entity = scene.Entity_CreateObject(name);
     auto* object = scene.objects.GetComponent(entity);
     if (object) object->meshID = sharedMesh;
+    return entity;
+}
+
+// Create a placeholder rectangular column (width x height) for landmarks like towers
+static wi::ecs::Entity createPlaceholderEntity(wi::scene::Scene& scene, const std::string& name,
+                                                float r, float g, float b,
+                                                float width, float height) {
+    wi::ecs::Entity meshEntity = scene.Entity_CreateMesh(name + "_mesh");
+    auto* mesh = scene.meshes.GetComponent(meshEntity);
+    if (!mesh) return wi::ecs::INVALID_ENTITY;
+
+    wi::ecs::Entity matEntity = scene.Entity_CreateMaterial(name + "_mat");
+    auto* material = scene.materials.GetComponent(matEntity);
+    if (material) {
+        material->baseColor = DirectX::XMFLOAT4(r, g, b, 1.0f);
+        material->roughness = 0.85f;
+        material->CreateRenderData();
+    }
+
+    float hw = width * 0.5f;
+    DirectX::XMFLOAT3 verts[8] = {
+        {-hw, 0,      -hw}, { hw, 0,      -hw}, { hw, height, -hw}, {-hw, height, -hw},
+        {-hw, 0,       hw}, { hw, 0,       hw}, { hw, height,  hw}, {-hw, height,  hw}
+    };
+    // Face normals for proper lighting
+    DirectX::XMFLOAT3 normals[8] = {
+        {-0.577f, -0.577f, -0.577f}, { 0.577f, -0.577f, -0.577f},
+        { 0.577f,  0.577f, -0.577f}, {-0.577f,  0.577f, -0.577f},
+        {-0.577f, -0.577f,  0.577f}, { 0.577f, -0.577f,  0.577f},
+        { 0.577f,  0.577f,  0.577f}, {-0.577f,  0.577f,  0.577f}
+    };
+    uint32_t indices[36] = {
+        0,2,1, 0,3,2, 4,5,6, 4,6,7,
+        0,1,5, 0,5,4, 3,6,2, 3,7,6,
+        0,4,7, 0,7,3, 1,2,6, 1,6,5
+    };
+
+    mesh->subsets.push_back(wi::scene::MeshComponent::MeshSubset());
+    mesh->subsets.back().materialID = matEntity;
+    mesh->subsets.back().indexOffset = 0;
+    for (int i = 0; i < 8; i++) {
+        mesh->vertex_positions.push_back(verts[i]);
+        mesh->vertex_normals.push_back(normals[i]);
+        mesh->vertex_uvset_0.push_back(DirectX::XMFLOAT2(0, 0));
+    }
+    for (int i = 0; i < 36; i++) mesh->indices.push_back(indices[i]);
+    mesh->subsets.back().indexCount = 36;
+    mesh->CreateRenderData();
+
+    wi::ecs::Entity entity = scene.Entity_CreateObject(name);
+    auto* object = scene.objects.GetComponent(entity);
+    if (object) object->meshID = meshEntity;
     return entity;
 }
 
@@ -1364,15 +1439,20 @@ static DWORD g_frameSEHCode = 0;
 static void* g_frameSEHAddr = nullptr;
 
 int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioData,
-                    int width, int height, bool fullscreen) {
+                    int width, int height, bool fullscreen,
+                    int operatingMode, const std::string& hostname,
+                    int udpPort, const std::string& iniFilename) {
     // Install global crash handler FIRST (before any WE code runs)
     SetUnhandledExceptionFilter(weCrashHandler);
 
     // Open crash diagnostic log
     g_weLog.open("wicked_engine.log", std::ios::out | std::ios::trunc);
 
+    bool isSecondary = (operatingMode == 1);
+
     const std::string& worldName = scenarioData.worldName;
     weLog("Starting Wicked Engine backend (DX12)...");
+    weLog("  Mode: " + std::string(isSecondary ? "SECONDARY" : "NORMAL"));
     weLog("  Scenario: " + scenarioData.scenarioName);
     weLog("  World: " + worldName);
     weLog("  Window: " + std::to_string(width) + "x" + std::to_string(height) +
@@ -1520,11 +1600,17 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     ecdisDisplay.init(Utilities::getUserDirBase() + "tilecache/");
     weLog("  ImGui overlay initialized.");
 
+    // --- Read bc5.ini settings ---
+    // iniFilename comes from main.cpp (-c flag or default resolution)
+    std::string iniFile = iniFilename;
+    camLookAngle = IniFile::iniFileTof32(iniFile, "look_angle");
+    if (isSecondary && camLookAngle != 0) {
+        weLog("  Secondary look_angle: " + std::to_string(camLookAngle) + " degrees");
+    }
+
     // --- Multi-view bridge rendering ---
     bc::graphics::wicked::WickedMultiView multiView;
     {
-        std::string iniFile = userFolder + "bc5.ini";
-        if (!Utilities::pathExists(iniFile)) iniFile = "bc5.ini";
         int wickedViews = (int)IniFile::iniFileTof32(iniFile, "wicked_views");
         if (wickedViews > 1) {
             float viewFov = IniFile::iniFileTof32(iniFile, "view_angle");
@@ -2622,6 +2708,13 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 if (lhHeight < 1.0f) lhHeight = 15.0f;
                 loEntity = createProceduralLighthouse(scene, objName, lhHeight);
                 loScale = 1.0f;
+            } else if (objType == "Tower") {
+                // Procedural tower: stone-grey narrow rectangular column
+                float towerH = IniFile::iniFileTof32(landObjIniFile, IniFile::enumerate1("HeightAbove", lo));
+                if (towerH < 3.0f) towerH = 20.0f;
+                loEntity = createPlaceholderEntity(scene, objName, 0.65f, 0.63f, 0.60f,
+                                                    3.0f, towerH);
+                loScale = 1.0f;
             } else {
                 loEntity = loadModelOrPlaceholder(scene, loModelPath,
                                                    objName, 0.5f, 0.35f, 0.2f, 8.0f);
@@ -3256,9 +3349,16 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
 
     weLog("  Scene setup complete.");
 
+    // --- Initialize network for secondary mode ---
+    if (isSecondary) {
+        weLog("  Initializing network (secondary mode, port=" +
+              std::to_string(udpPort) + " host=" + hostname + ")...");
+        SimBridge::initNetwork(operatingMode, udpPort, hostname);
+    }
+
     // --- Initialize full SimulationModel via headless Irrlicht device ---
     weLog("  Initializing SimulationBridge (physics/AI)...");
-    SimBridge::init(&sound, scenarioData);
+    SimBridge::init(&sound, scenarioData, operatingMode, iniFile);
     SimBridge::start();
     // OwnShip's constructor already sets the engine to the correct proportion
     // for the initial speed (using the quadratic dynamics model). Read it back
@@ -3879,18 +3979,44 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                                    ownShipPitchCorr + ownShipPitch, ownShipRollCorr + ownShipRoll);
             }
 
-            // Shader-based Kelvin wake: write ship data into ocean static wake storage
+            // Wake: Kelvin V-arms (per-ship live data) + prop wash trail (breadcrumbs)
+            g_wakeTimeAccum += dt;
+            float spdMps = ownShipSpeed * KNOTS_TO_MPS;
+            float shipL = SimBridge::getShipLength();
             int wakeIdx = 0;
+            float ownHdX = std::sin(headRad);
+            float ownHdZ = std::cos(headRad);
             {
-                float spdMps = ownShipSpeed * KNOTS_TO_MPS;
+                // Kelvin arms from current bow position
                 if (spdMps > 0.5f && wakeIdx < 8) {
                     auto& w = wi::Ocean::wakeShips[wakeIdx++];
-                    w.posX = ownShipX;
-                    w.posZ = ownShipZ;
-                    w.headingDirX = std::sin(headRad);
-                    w.headingDirZ = std::cos(headRad);
+                    w.posX = ownShipX + ownHdX * shipL * 0.5f;
+                    w.posZ = ownShipZ + ownHdZ * shipL * 0.5f;
+                    w.headingDirX = ownHdX;
+                    w.headingDirZ = ownHdZ;
                     w.speed = spdMps;
-                    w.wakeLength = std::min(300.0f, 20.0f * spdMps);
+                    w.shipLength = shipL;
+                    w.wakeLength = shipL * 2.0f; // 3D displacement + foam V-arms
+                }
+                // Trail recording from stern
+                float sternX = ownShipX - ownHdX * shipL * 0.5f;
+                float sternZ = ownShipZ - ownHdZ * shipL * 0.5f;
+                auto& trail = g_shipTrails[0];
+                if (spdMps > 0.5f) {
+                    if (!trail.initialized) {
+                        trail.lastX = sternX; trail.lastZ = sternZ;
+                        trail.initialized = true;
+                    }
+                    float tdx = sternX - trail.lastX;
+                    float tdz = sternZ - trail.lastZ;
+                    if (tdx * tdx + tdz * tdz >= WAKE_TRAIL_SPACING * WAKE_TRAIL_SPACING) {
+                        float beamEst = shipL * 0.15f;
+                        float hw = beamEst * 0.5f + spdMps * 0.15f;
+                        trail.points[trail.head] = {sternX, sternZ, ownHdX, ownHdZ, hw, spdMps, shipL, g_wakeTimeAccum};
+                        trail.head = (trail.head + 1) % WAKE_TRAIL_POINTS_PER_SHIP;
+                        if (trail.count < WAKE_TRAIL_POINTS_PER_SHIP) trail.count++;
+                        trail.lastX = sternX; trail.lastZ = sternZ;
+                    }
                 }
             }
 
@@ -3945,20 +4071,163 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                     setEntityTransform(scene, st.entity, st.x, otherY, st.z,
                                        st.heading + st.angleCorr, st.scaleFactor,
                                        st.pitchCorr + otherPitch, st.rollCorr + otherRoll);
+                    // Kelvin arms + trail for other ships
                     float otherSpeedMps = SimBridge::getOtherShipSpeed(s);
-                    if (otherSpeedMps > 0.5f && wakeIdx < 8) {
+                    if (otherSpeedMps > 0.5f) {
                         float hRad = st.heading * (float)M_PI / 180.0f;
-                        auto& w = wi::Ocean::wakeShips[wakeIdx++];
-                        w.posX = st.x;
-                        w.posZ = st.z;
-                        w.headingDirX = std::sin(hRad);
-                        w.headingDirZ = std::cos(hRad);
-                        w.speed = otherSpeedMps;
-                        w.wakeLength = std::min(300.0f, 20.0f * otherSpeedMps);
+                        float otherShipL = SimBridge::getOtherShipLength(s);
+                        if (otherShipL < 1.0f) otherShipL = 50.0f;
+                        float oHdX = std::sin(hRad);
+                        float oHdZ = std::cos(hRad);
+                        // Kelvin V-arms from bow
+                        if (wakeIdx < 8) {
+                            auto& w = wi::Ocean::wakeShips[wakeIdx++];
+                            w.posX = st.x + oHdX * otherShipL * 0.5f;
+                            w.posZ = st.z + oHdZ * otherShipL * 0.5f;
+                            w.headingDirX = oHdX;
+                            w.headingDirZ = oHdZ;
+                            w.speed = otherSpeedMps;
+                            w.shipLength = otherShipL;
+                            w.wakeLength = otherShipL * 2.0f;
+                        }
+                        // Trail recording from stern
+                        if (s + 1 < WAKE_TRAIL_MAX_SHIPS) {
+                            float oSternX = st.x - oHdX * otherShipL * 0.5f;
+                            float oSternZ = st.z - oHdZ * otherShipL * 0.5f;
+                            auto& oTrail = g_shipTrails[s + 1];
+                            if (!oTrail.initialized) {
+                                oTrail.lastX = oSternX; oTrail.lastZ = oSternZ;
+                                oTrail.initialized = true;
+                            }
+                            float otdx = oSternX - oTrail.lastX;
+                            float otdz = oSternZ - oTrail.lastZ;
+                            if (otdx * otdx + otdz * otdz >= WAKE_TRAIL_SPACING * WAKE_TRAIL_SPACING) {
+                                float oBeam = otherShipL * 0.15f;
+                                float oHw = oBeam * 0.5f + otherSpeedMps * 0.15f;
+                                oTrail.points[oTrail.head] = {oSternX, oSternZ, oHdX, oHdZ, oHw, otherSpeedMps, otherShipL, g_wakeTimeAccum};
+                                oTrail.head = (oTrail.head + 1) % WAKE_TRAIL_POINTS_PER_SHIP;
+                                if (oTrail.count < WAKE_TRAIL_POINTS_PER_SHIP) oTrail.count++;
+                                oTrail.lastX = oSternX; oTrail.lastZ = oSternZ;
+                            }
+                        }
                     }
                 }
             }
+
             wi::Ocean::wakeShipCount = wakeIdx;
+
+            // Pack all ship trails into GPU array (128 points total)
+            // For each ship: inject live stern as point 0, then ring buffer newest-first
+            {
+                // Precompute live stern positions for each ship trail
+                struct LiveStern { float x, z, hdX, hdZ, hw, spd, shipL; bool valid; };
+                LiveStern liveStems[WAKE_TRAIL_MAX_SHIPS] = {};
+                // Own ship
+                if (spdMps > 0.5f) {
+                    float beamEst = shipL * 0.15f;
+                    liveStems[0] = {
+                        ownShipX - ownHdX * shipL * 0.5f,
+                        ownShipZ - ownHdZ * shipL * 0.5f,
+                        ownHdX, ownHdZ,
+                        beamEst * 0.5f + spdMps * 0.15f,
+                        spdMps, shipL, true
+                    };
+                }
+                // Other ships
+                int numOther = SimBridge::getNumberOfOtherShips();
+                for (int s = 0; s < numOther && s + 1 < WAKE_TRAIL_MAX_SHIPS; s++) {
+                    float oSpd = SimBridge::getOtherShipSpeed(s);
+                    if (oSpd > 0.5f) {
+                        auto& st = otherShipStates[s];
+                        float hRad = st.heading * (float)M_PI / 180.0f;
+                        float oShipL = SimBridge::getOtherShipLength(s);
+                        if (oShipL < 1.0f) oShipL = 50.0f;
+                        float oHdX = std::sin(hRad), oHdZ = std::cos(hRad);
+                        float oBeam = oShipL * 0.15f;
+                        liveStems[s + 1] = {
+                            st.x - oHdX * oShipL * 0.5f,
+                            st.z - oHdZ * oShipL * 0.5f,
+                            oHdX, oHdZ,
+                            oBeam * 0.5f + oSpd * 0.15f,
+                            oSpd, oShipL, true
+                        };
+                    }
+                }
+
+                // Wake lifetime depends on sea state: calm seas preserve wakes, rough seas destroy them
+                // Beaufort 0-2: ~120s, B3-5: ~60s, B6+: ~20s
+                float wakeLifetime = 120.0f / (1.0f + beaufortScale * 0.8f);
+
+                uint32_t gpuIdx = 0;
+                for (int ship = 0; ship < WAKE_TRAIL_MAX_SHIPS && gpuIdx < 128; ship++) {
+                    auto& trail = g_shipTrails[ship];
+                    auto& live = liveStems[ship];
+                    int totalPts = trail.count + (live.valid ? 1 : 0);
+                    if (totalPts == 0) continue;
+
+                    float prevX = 0, prevZ = 0;
+                    float cumDist = live.valid ? live.shipL : 0;
+                    uint32_t shipStartIdx = gpuIdx;
+
+                    // Point 0: live stern position (newest, full intensity)
+                    if (live.valid && gpuIdx < 128) {
+                        auto& dst = wi::Ocean::wakeTrail[gpuIdx++];
+                        dst.posX = live.x; dst.posZ = live.z;
+                        dst.headingDirX = live.hdX; dst.headingDirZ = live.hdZ;
+                        dst.halfWidth = live.hw;
+                        dst.intensity = 1.0f;
+                        dst.speed = live.spd;
+                        dst.distFromBow = cumDist;
+                        prevX = live.x; prevZ = live.z;
+                    }
+
+                    // Remaining points from ring buffer (newest first, aging)
+                    bool allDead = true;
+                    for (int p = 0; p < trail.count && gpuIdx < 128; p++) {
+                        int ringIdx = (trail.head - 1 - p + WAKE_TRAIL_POINTS_PER_SHIP) % WAKE_TRAIL_POINTS_PER_SHIP;
+                        auto& src = trail.points[ringIdx];
+
+                        // Time-based decay: how old is this breadcrumb?
+                        float pointAge = g_wakeTimeAccum - src.timestamp;
+                        if (pointAge < 0) pointAge = 0; // guard against time reset
+                        float timeFade = std::max(0.0f, 1.0f - pointAge / wakeLifetime);
+                        timeFade = timeFade * timeFade; // quadratic for natural decay
+
+                        if (timeFade < 0.001f) break; // points are newest-first; once dead, all older points are too
+
+                        allDead = false;
+
+                        // Accumulate distance along trail; skip if segment is too long (teleport/gap)
+                        if (gpuIdx > shipStartIdx) {
+                            float segDx = src.x - prevX;
+                            float segDz = src.z - prevZ;
+                            float segLenSq = segDx * segDx + segDz * segDz;
+                            if (segLenSq > 400.0f) break; // >20m gap = discontinuity, stop trail here
+                            cumDist += std::sqrt(segLenSq);
+                        }
+
+                        // Width spreads as wake ages (turbulent diffusion)
+                        // Real prop wash spreads ~2-3x over its full lifetime
+                        float spread = 1.0f + pointAge * 0.02f;
+
+                        auto& dst = wi::Ocean::wakeTrail[gpuIdx++];
+                        dst.posX = src.x; dst.posZ = src.z;
+                        dst.headingDirX = src.hdirX; dst.headingDirZ = src.hdirZ;
+                        dst.halfWidth = src.halfWidth * spread;
+                        dst.intensity = timeFade;
+                        dst.speed = src.speed;
+                        dst.distFromBow = cumDist;
+                        prevX = src.x; prevZ = src.z;
+                    }
+
+                    // Sentinel to break connectivity between ships
+                    if (!allDead && gpuIdx < 128) {
+                        auto& sentinel = wi::Ocean::wakeTrail[gpuIdx++];
+                        sentinel = {};
+                    }
+                }
+                wi::Ocean::wakeTrailCount = gpuIdx;
+            }
 
             // ===== BUOY POSITIONS (tidal + wave height for bobbing) =====
             {
@@ -4365,8 +4634,9 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             mouseRightDown = rbDown;
 
             // Yaw in WE left-handed space (heading convention)
-            // In bridge mode, camYaw = ownShipHeading + camYawOffset (set above in ship controls)
-            float effectiveYaw = camOrbitMode ? camYaw : (ownShipHeading + camYawOffset);
+            // In bridge mode, camYaw = ownShipHeading + camYawOffset + camLookAngle
+            // camLookAngle is the bc5.ini look_angle (non-zero for secondary instances)
+            float effectiveYaw = camOrbitMode ? camYaw : (ownShipHeading + camYawOffset + camLookAngle);
             float yawRad = effectiveYaw * (float)M_PI / 180.0f;
 
             // Scroll wheel: zoom in orbit, FOV in bridge
@@ -4413,7 +4683,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             } else {
                 // Bridge first-person mode with WASD walking
                 // Walk direction is relative to camera look (in ship-local frame)
-                float walkYawRad = camYawOffset * (float)M_PI / 180.0f;
+                float walkYawRad = (camYawOffset + camLookAngle) * (float)M_PI / 180.0f;
                 float walkSpeed = 1.5f * dt; // ~1.5 m/s walk
                 if (GetAsyncKeyState(VK_SHIFT) & 0x8000) walkSpeed = 4.0f * dt;
 
@@ -4465,7 +4735,8 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
 
                 // Look direction: camera yaw/pitch offsets in ship-local space,
                 // then rotated by ship orientation
-                float lookYawRad = camYawOffset * (float)M_PI / 180.0f;
+                // camLookAngle is the bc5.ini look_angle (non-zero for secondary instances)
+                float lookYawRad = (camYawOffset + camLookAngle) * (float)M_PI / 180.0f;
                 float lookPitchRad = camPitch * (float)M_PI / 180.0f;
                 DirectX::XMVECTOR localForward = DirectX::XMVectorSet(
                     std::sin(lookYawRad) * std::cos(lookPitchRad),
@@ -4515,7 +4786,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 DirectX::XMVECTOR mvShipQuat = DirectX::XMQuaternionRotationRollPitchYaw(
                     shipPitchRadMV, headRadMV, shipRollRadMV);
                 multiView.updateCameras(mvShipQuat, camX, camY, camZ,
-                                         camYawOffset, camPitch);
+                                         camYawOffset + camLookAngle, camPitch);
             }
 
             // Skip rendering when window is inactive (minimized or lost focus).

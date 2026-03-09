@@ -75,20 +75,14 @@ int getNetworkPort() {
     return g_network ? g_network->getPort() : 0;
 }
 
-void init(ISound* sound, const ScenarioData& scenarioData, int operatingMode) {
+void init(ISound* sound, const ScenarioData& scenarioData, int operatingMode,
+          const std::string& iniFilename) {
     ensureDevice();
     if (!g_device) return;
 
     // Update mode if passed explicitly (may differ from initNetwork call)
     if (operatingMode == 1)
         g_mode = OperatingMode::Secondary;
-
-    // Read bc5.ini for model parameters (same defaults as main.cpp)
-    std::string userFolder = Utilities::getUserDir();
-    std::string iniFilename = "bc5.ini";
-    if (Utilities::pathExists(userFolder + iniFilename)) {
-        iniFilename = userFolder + iniFilename;
-    }
 
     SimulationModel::ModelParameters mp = {};
     mp.mode = g_mode;

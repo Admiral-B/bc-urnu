@@ -16,7 +16,8 @@ class ISound;
 namespace SimBridge {
 
 // Lifecycle
-void init(ISound* sound, const ScenarioData& scenarioData, int operatingMode = 0);
+void init(ISound* sound, const ScenarioData& scenarioData, int operatingMode = 0,
+          const std::string& iniFilename = "bc5.ini");
 void start();      // unpause physics timer -- call once before game loop
 void syncTimer();  // flush Irrlicht timer -- call just before entering game loop
 void update();     // advance physics one frame (call device->run + model.update)

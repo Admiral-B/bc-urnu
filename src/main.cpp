@@ -1027,17 +1027,20 @@ int main(int argc, char ** argv)
 
     // Wicked Engine backend: use WE for rendering after scenario selection
     #ifdef WITH_WICKED_ENGINE
-    if (useWickedEngine && mode == OperatingMode::Normal) {
-        std::cout << "Switching to Wicked Engine renderer for scenario: "
-                  << scenarioData.scenarioName << std::endl;
+    if (useWickedEngine && (mode == OperatingMode::Normal || mode == OperatingMode::Secondary)) {
+        std::cout << "Switching to Wicked Engine renderer"
+                  << (mode == OperatingMode::Secondary ? " (secondary mode)" : "")
+                  << " for scenario: " << scenarioData.scenarioName << std::endl;
         IniFile::irrlichtLogger = nullptr; // Clear before dropping device to avoid dangling pointer
         // Hide the Irrlicht window immediately so it doesn't linger behind WE
         HWND irrHwnd = reinterpret_cast<HWND>(device->getVideoDriver()->getExposedVideoData().OpenGLWin32.HWnd);
         if (irrHwnd) ShowWindow(irrHwnd, SW_HIDE);
         device->closeDevice();
         device->drop();
+        int opMode = (mode == OperatingMode::Secondary) ? 1 : 0;
         return runWickedEngine(userFolder, scenarioData,
-                               graphicsWidth, graphicsHeight, fullScreen);
+                               graphicsWidth, graphicsHeight, fullScreen,
+                               opMode, hostname, udpPort, iniFilename);
     }
     #endif
 

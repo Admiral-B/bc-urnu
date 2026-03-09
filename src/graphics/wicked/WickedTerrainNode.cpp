@@ -269,11 +269,36 @@ bool WickedTerrainNode::createTerrainMesh(const std::string& texturePath) {
     mesh->subsets.back().materialID = matEntity;
     mesh->subsets.back().indexOffset = 0;
 
+    // Coastal shelf: depress terrain near sea level so the ocean surface
+    // (with FFT wave displacement +/-3m) doesn't z-fight with the land.
+    // Transition band: 2m above sea level (smooth cliff edge) down to 0m,
+    // then everything at or below sea level gets pushed to -4m.
+    const float coastTop = 2.0f;      // above: untouched land
+    const float coastTransition = 0.0f; // at sea level: fully depressed
+    const float coastDepressTo = -4.0f; // target depth (below max wave trough)
+
     for (int r = 0; r < meshRows; r++) {
         for (int c = 0; c < meshCols; c++) {
             int srcR = std::min(r * step, rows - 1);
             int srcC = std::min(c * step, cols - 1);
             float height = heightData_[srcR][srcC];
+
+            // Compute world Y for this vertex to detect coastal zone
+            float worldY = position_.y + height;
+
+            // Coastal shelf depression: smooth cliff from coastTop down to coastDepressTo
+            if (worldY < coastTop) {
+                if (worldY <= coastTransition) {
+                    // At or below sea level: fully depressed
+                    worldY = std::min(worldY, coastDepressTo);
+                } else {
+                    // Transition band (coastTransition to coastTop): smoothstep cliff
+                    float t = (coastTop - worldY) / (coastTop - coastTransition);
+                    t = t * t * (3.0f - 2.0f * t); // smoothstep
+                    worldY = worldY * (1.0f - t) + coastDepressTo * t;
+                }
+                height = worldY - position_.y;
+            }
 
             DirectX::XMFLOAT3 pos(
                 c * cellWidth,
