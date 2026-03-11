@@ -33,15 +33,16 @@ namespace OceanMath {
         0, 2, 5, 8.5f, 13, 19, 24, 30, 37, 44, 52, 60, 68
     };
 
-    /// Wave amplitude for WE ocean at each Beaufort step (WE units).
-    /// Calibrated for patch_length=1000m with PhillipsHasselmann spectrum.
-    static constexpr float BEAUFORT_AMPLITUDE[13] = {
-    //  B0        B1       B2       B3      B4      B5      B6      B7      B8      B9     B10    B11    B12
-        0.00002f, 0.00008f,0.0002f, 0.0008f,0.002f, 0.005f, 0.009f, 0.013f, 0.017f, 0.020f,0.022f,0.023f,0.024f
+    /// Target significant wave height Hs (meters) for each Beaufort step.
+    /// Based on WMO Sea State table. The spectrum is normalized at runtime
+    /// to produce exactly this Hs via computeSpectrumScale().
+    static constexpr float BEAUFORT_HS[13] = {
+    //  B0    B1    B2    B3    B4    B5    B6    B7    B8     B9     B10    B11    B12
+        0.0f, 0.1f, 0.3f, 0.6f, 1.0f, 2.0f, 3.0f, 4.0f, 5.5f,  7.0f,  9.0f, 11.5f, 14.0f
     };
 
     struct OceanParams {
-        float waveAmplitude;   ///< WE wave_amplitude parameter
+        float targetHs;        ///< Target significant wave height (meters)
         float choppyScale;     ///< WE choppy_scale parameter
         float windSpeedCmps;   ///< Wind speed in cm/s (WE CGS convention)
         float windDirX;        ///< Wind propagation direction X (unit or zero)
@@ -61,9 +62,9 @@ namespace OceanMath {
         float frac = beaufort - bi;
         frac = std::max(0.0f, std::min(1.0f, frac));
 
-        // Interpolate amplitude
-        float nextAmp = (bi < 12) ? BEAUFORT_AMPLITUDE[bi + 1] : BEAUFORT_AMPLITUDE[12];
-        p.waveAmplitude = BEAUFORT_AMPLITUDE[bi] + frac * (nextAmp - BEAUFORT_AMPLITUDE[bi]);
+        // Interpolate target Hs
+        float nextHs = (bi < 12) ? BEAUFORT_HS[bi + 1] : BEAUFORT_HS[12];
+        p.targetHs = BEAUFORT_HS[bi] + frac * (nextHs - BEAUFORT_HS[bi]);
 
         // Choppy scale: lateral displacement multiplier. Controls Jacobian folds
         // (foam/whitecaps). Low at B0-B3 (calm-slight), ramps up from B4.

@@ -51,12 +51,10 @@ void WickedMultiCascadeOcean::load(wi::scene::Scene* scene, float weather, int /
     // Convert Beaufort to wind parameters for init
     auto p = beaufortToOceanParams(weather, 0.0f, 0.0f);
 
-    // Set amplitudes on cascade configs before init
-    configs[0].waveAmplitude = p.waveAmplitude * 0.3f;  // swells: 30% of primary
-    configs[1].waveAmplitude = p.waveAmplitude;          // primary wind waves
-    configs[2].waveAmplitude = p.waveAmplitude * 0.15f;  // ripples: 15% of primary
+    // Store target Hs for spectrum normalization
+    targetHs_ = p.targetHs;
 
-    configs[0].choppyScale = p.choppyScale * 0.6f;
+    configs[0].choppyScale = p.choppyScale * 0.35f;
     configs[1].choppyScale = p.choppyScale;
     configs[2].choppyScale = p.choppyScale * 1.2f;
 
@@ -75,6 +73,7 @@ void WickedMultiCascadeOcean::update(float tideHeight, const Vec3& viewPosition,
 
     // Map Beaufort + wind to ocean parameters using shared math
     auto p = beaufortToOceanParams(weather, windSpeedKts, windDirectionDeg);
+    targetHs_ = p.targetHs;
 
     // Fetch estimation: recompute when ship moves >500m or wind changes >15deg
     float windDirRad = std::atan2(p.windDirX, p.windDirZ);
@@ -95,23 +94,20 @@ void WickedMultiCascadeOcean::update(float tideHeight, const Vec3& viewPosition,
             std::cout << "[Ocean] Fetch estimate: " << (cachedFetch_ / 1000.0f)
                       << " km, wind=" << p.windSpeedMps << " m/s"
                       << ", reduction=" << fs
-                      << ", amp " << p.waveAmplitude << " -> " << (p.waveAmplitude * fs)
+                      << ", Hs " << p.targetHs << " -> " << (p.targetHs * std::sqrt(fs))
                       << std::endl;
         }
     }
 
-    // Apply fetch reduction to wave amplitude
+    // Apply fetch reduction to target Hs (Hs scales as sqrt of energy, energy scales as fetchScale)
     float fetchScale = fetchReductionFactor(p.windSpeedMps, cachedFetch_);
-    float adjustedAmp = p.waveAmplitude * fetchScale;
+    float adjustedHs = p.targetHs * std::sqrt(fetchScale);
 
-    // Update primary cascade amplitude/choppiness from Beaufort
+    // Update primary cascade choppiness from Beaufort
     auto& op = weScene->weather.oceanParameters;
     op.waterHeight = tideHeight;
-    op.wave_amplitude = adjustedAmp;
-    op.choppy_scale = p.choppyScale * 0.3f * std::sqrt(fetchScale);
-    // WE uses CGS gravity (981 cm/s^2) in the dispersion relation omega=sqrt(g*|K|),
-    // but K is in rad/m (from patch_length in meters). This makes omega 10x too fast.
-    // time_scale = 0.1 exactly compensates: waves propagate at physically correct speed.
+    op.wave_amplitude = 1.0f;  // Not used by spectrum callback, but WE reads it for other things
+    op.choppy_scale = p.choppyScale * 0.35f * std::sqrt(fetchScale);
     op.time_scale = 0.1f;
     op.surfaceDisplacementTolerance = 2.0f + currentWeather_ * 0.5f;
 
@@ -132,11 +128,15 @@ void WickedMultiCascadeOcean::update(float tideHeight, const Vec3& viewPosition,
         op.wind_dir = XMFLOAT2(p.windDirX, p.windDirZ);
         op.wind_speed = p.windSpeedCmps;
 
-        // Reset spectrumCallback with current wind params (captured by value)
+        // Recompute spectrum scale for new wind + target Hs
         float wsCmps = op.wind_speed;
-        float wAmp = op.wave_amplitude;
-        op.spectrumCallback = [wsCmps, wAmp](float kx, float kz, float wdx, float wdz) -> float {
-            return OceanSpectrum::PhillipsHasselmann(kx, kz, wdx, wdz, wsCmps, wAmp);
+        float specScale = OceanSpectrum::computeSpectrumScale(
+            adjustedHs, wsCmps, p.windDirX, p.windDirZ,
+            op.patch_length, op.dmap_dim);
+        cachedSpectrumScale_ = specScale;
+
+        op.spectrumCallback = [wsCmps, specScale](float kx, float kz, float wdx, float wdz) -> float {
+            return OceanSpectrum::PhillipsHasselmann(kx, kz, wdx, wdz, wsCmps, specScale);
         };
 
         weScene->ocean.Create(op);
@@ -308,8 +308,8 @@ void WickedMultiCascadeOcean::init(wi::scene::Scene* scene,
     auto& op = weScene->weather.oceanParameters;
     op.patch_length = configs[1].patchLength;
     op.dmap_dim = configs[1].fftResolution;
-    op.wave_amplitude = configs[1].waveAmplitude;
-    op.choppy_scale = configs[1].choppyScale * 0.3f;
+    op.wave_amplitude = 1.0f;  // Not used by spectrum callback; PhillipsHasselmann uses scaleFactor
+    op.choppy_scale = configs[1].choppyScale * 0.35f;
     // WE uses CGS gravity (981 cm/s^2) in the dispersion relation omega=sqrt(g*|K|),
     // but K is in rad/m (from patch_length in meters). This makes omega 10x too fast.
     // time_scale = 0.1 exactly compensates: waves propagate at physically correct speed.
@@ -335,12 +335,15 @@ void WickedMultiCascadeOcean::init(wi::scene::Scene* scene,
 
     // Phillips spectrum with Hasselmann frequency-dependent directional spreading.
     // Replaces WE's cos^2(theta) spreading which creates uniform parallel ridges.
-    // Hasselmann: long waves are directional (realistic), short waves spread broadly
-    // (creating the chaotic multi-directional surface of a real ocean).
+    // The spectrum is normalized to produce the target Hs from the Beaufort table.
     float wsCmps = op.wind_speed;
-    float wAmp = op.wave_amplitude;
-    op.spectrumCallback = [wsCmps, wAmp](float kx, float kz, float wdx, float wdz) -> float {
-        return OceanSpectrum::PhillipsHasselmann(kx, kz, wdx, wdz, wsCmps, wAmp);
+    float wdx = op.wind_dir.x, wdz = op.wind_dir.y;
+    float specScale = OceanSpectrum::computeSpectrumScale(
+        targetHs_, wsCmps, wdx, wdz,
+        op.patch_length, op.dmap_dim);
+    cachedSpectrumScale_ = specScale;
+    op.spectrumCallback = [wsCmps, specScale](float kx, float kz, float wdxCb, float wdzCb) -> float {
+        return OceanSpectrum::PhillipsHasselmann(kx, kz, wdxCb, wdzCb, wsCmps, specScale);
     };
 
     // Bind normal overlay texture for tiling breakup
@@ -357,24 +360,9 @@ void WickedMultiCascadeOcean::init(wi::scene::Scene* scene,
     // on the primary cascade, geometric tiling is invisible at ship scale.
     // Future: aux cascades at different patch sizes (500m, 50m) for multi-scale detail.
 
-    // Diagnostic: compare Hasselmann vs cos^2 for a few wave modes
-    {
-        float testK = 2.0f * 3.14159f / configs[1].patchLength; // lowest non-zero k
-        float wdx = op.wind_dir.x, wdz = op.wind_dir.y;
-        // Downwind mode (kx=testK, kz=0 with wind along x)
-        float downwind = OceanSpectrum::PhillipsHasselmann(testK * wdx, testK * wdz, wdx, wdz, wsCmps, wAmp);
-        // Cross-wind mode (perpendicular)
-        float crosswind = OceanSpectrum::PhillipsHasselmann(-testK * wdz, testK * wdx, wdx, wdz, wsCmps, wAmp);
-        // Phillips reference: cos^2=1 downwind, cos^2=0 crosswind
-        float phillipsRef = OceanSpectrum::Phillips(testK * testK, testK, wsCmps, wAmp * 1e-7f, 0.4f);
-        std::cout << "  Spectrum check at k=" << testK << ": downwind=" << downwind
-                  << " crosswind=" << crosswind << " ratio=" << (downwind > 0 ? crosswind / downwind : 0)
-                  << " (Phillips ref sqrt=" << std::sqrt(phillipsRef) << ")" << std::endl;
-    }
-
     std::cout << "WickedMultiCascadeOcean: Primary cascade initialized (patch="
               << configs[1].patchLength << "m, fft=" << configs[1].fftResolution
-              << ", amp=" << configs[1].waveAmplitude << ")" << std::endl;
+              << ", targetHs=" << targetHs_ << "m, specScale=" << specScale << ")" << std::endl;
 }
 
 void WickedMultiCascadeOcean::createCascade(int index, float windSpeedMps, float windDirRad) {
@@ -432,14 +420,16 @@ void WickedMultiCascadeOcean::updateWind(float windSpeedMps, float windDirRad) {
     op.wind_dir = XMFLOAT2(dirX, dirZ);
     op.wind_speed = std::max(30.0f, std::min(windSpeedMps * 100.0f, 1500.0f));
 
-    op.choppy_scale = configs[1].choppyScale * 0.3f;
+    op.choppy_scale = configs[1].choppyScale * 0.35f;
     op.surfaceDisplacementTolerance = 2.0f + currentWeather_ * 0.5f;
 
     // Phillips + Hasselmann spreading (must reset callback with new wind params)
     float wsCmps = op.wind_speed;
-    float wAmp = op.wave_amplitude;
-    op.spectrumCallback = [wsCmps, wAmp](float kx, float kz, float wdx, float wdz) -> float {
-        return OceanSpectrum::PhillipsHasselmann(kx, kz, wdx, wdz, wsCmps, wAmp);
+    float specScale = OceanSpectrum::computeSpectrumScale(
+        targetHs_, wsCmps, dirX, dirZ, op.patch_length, op.dmap_dim);
+    cachedSpectrumScale_ = specScale;
+    op.spectrumCallback = [wsCmps, specScale](float kx, float kz, float wdx, float wdz) -> float {
+        return OceanSpectrum::PhillipsHasselmann(kx, kz, wdx, wdz, wsCmps, specScale);
     };
 
     // Recreate the primary ocean with new spectrum
@@ -453,15 +443,156 @@ void WickedMultiCascadeOcean::setWaterHeight(float height) {
     }
 }
 
+/// Compute analytical wake wave height at a world position from all wake sources.
+/// Mirrors the vertex shader physics:
+///   Noblesse bow wave: Z_b = 0.25 * V^2/g * planingFactor
+///   Far-field: 1/sqrt(r/L) decay (energy conservation)
+///   Transverse wavelength: 2*pi*V^2/g
+///   Planing suppression: (0.5/Fn)^2.5 for Fn > 0.5
+static float computeWakeHeightAt(float worldX, float worldZ) {
+    static constexpr float PI2 = 6.2832f;
+    static constexpr float GRAV = 9.81f;
+    float wakeY = 0.0f;
+
+    // Live ship wakes
+    for (uint32_t w = 0; w < wi::Ocean::wakeShipCount && w < 8; w++) {
+        const auto& ship = wi::Ocean::wakeShips[w];
+        float spd = ship.speed;
+        if (spd < 1.0f) continue;
+
+        float toX = worldX - ship.posX;
+        float toZ = worldZ - ship.posZ;
+        float along = -(toX * ship.headingDirX + toZ * ship.headingDirZ);
+        float across = -toX * ship.headingDirZ + toZ * ship.headingDirX;
+        float sl = ship.shipLength;
+
+        if (along < -sl * 0.4f || along > ship.wakeLength) continue;
+
+        float absAcross = std::abs(across);
+        float kelvinHalf = std::max(0.0f, along) * 0.3533f;
+        if (absAcross > kelvinHalf + sl * 0.6f) continue;
+
+        float Fn = spd / std::max(1.0f, std::sqrt(GRAV * sl));
+        float planingFactor = (Fn > 0.5f) ? std::pow(0.5f / Fn, 2.5f) : 1.0f;
+        float bowWaveH = std::min(3.0f, 0.25f * spd * spd / GRAV * planingFactor);
+
+        // Bow wave
+        if (along > -sl * 0.4f && along < sl * 0.15f) {
+            float bowT = (along + sl * 0.4f) / (sl * 0.55f);
+            float bowLateral = std::exp(-across * across / std::max(1.0f, sl * sl * 0.02f));
+            wakeY += bowWaveH * std::sin(bowT * 3.14159f) * bowLateral;
+        }
+
+        // Stern depression
+        if (along > 0) {
+            float sternFade = std::exp(-along * along / (sl * sl * 1.0f));
+            float sternLat = std::exp(-across * across / std::max(1.0f, sl * sl * 0.02f));
+            wakeY += -bowWaveH * 0.6f * sternFade * sternLat;
+        }
+
+        // Far-field transverse + divergent waves
+        if (along > sl * 0.2f) {
+            float farAmp = bowWaveH * 0.3f;
+            float decay = 1.0f / std::max(1.0f, std::sqrt(along / std::max(1.0f, sl)));
+
+            float transWL = std::max(3.0f, PI2 * spd * spd / GRAV);
+            float transEnv = std::exp(-across * across / std::max(1.0f, kelvinHalf * kelvinHalf * 0.25f));
+            wakeY += farAmp * decay * std::sin(along * PI2 / transWL) * transEnv;
+
+            if (kelvinHalf > 2.0f) {
+                float armDist = std::abs(absAcross - kelvinHalf);
+                float armWidth = std::max(2.0f, kelvinHalf * 0.10f);
+                float armEnv = std::exp(-armDist * armDist / (armWidth * armWidth));
+                float cuspBoost = 1.0f + 0.5f * armEnv;
+                float divWL = transWL * 0.7f;
+                float divPhase = std::sqrt(along * along + absAcross * absAcross) * PI2 / divWL;
+                wakeY += farAmp * 0.6f * decay * std::sin(divPhase) * armEnv * cuspBoost;
+            }
+        }
+    }
+
+    // Trail-based persistent wake waves
+    uint32_t trailCount = std::min(wi::Ocean::wakeTrailCount, (uint32_t)128);
+    for (uint32_t t = 0; t + 1 < trailCount; t++) {
+        const auto& tp0 = wi::Ocean::wakeTrail[t];
+        const auto& tp1 = wi::Ocean::wakeTrail[t + 1];
+        if (tp0.intensity < 0.01f || tp1.intensity < 0.01f) continue;
+        if (tp0.speed < 1.5f && tp1.speed < 1.5f) continue;
+
+        float segX = tp1.posX - tp0.posX;
+        float segZ = tp1.posZ - tp0.posZ;
+        float segLenSq = segX * segX + segZ * segZ;
+        if (segLenSq < 0.01f || segLenSq > 400.0f) continue;
+
+        float toX = worldX - tp0.posX;
+        float toZ = worldZ - tp0.posZ;
+        float tParam = std::max(0.0f, std::min(1.0f, (toX * segX + toZ * segZ) / segLenSq));
+        float closestX = tp0.posX + segX * tParam;
+        float closestZ = tp0.posZ + segZ * tParam;
+        float diffX = worldX - closestX;
+        float diffZ = worldZ - closestZ;
+        float perpDist = std::sqrt(diffX * diffX + diffZ * diffZ);
+
+        float inten = tp0.intensity + tParam * (tp1.intensity - tp0.intensity);
+        float spd = tp0.speed + tParam * (tp1.speed - tp0.speed);
+        float dBow = tp0.distFromBow + tParam * (tp1.distFromBow - tp0.distFromBow);
+        float hw = tp0.halfWidth + tParam * (tp1.halfWidth - tp0.halfWidth);
+
+        float hdx = tp0.headingDirX + tParam * (tp1.headingDirX - tp0.headingDirX);
+        float hdz = tp0.headingDirZ + tParam * (tp1.headingDirZ - tp0.headingDirZ);
+        float hlen = std::sqrt(hdx * hdx + hdz * hdz);
+        if (hlen < 0.01f) continue;
+        hdx /= hlen; hdz /= hlen;
+        float cdx = -hdz, cdz = hdx;
+
+        float kelvinHalf = dBow * 0.3533f;
+        float across = diffX * cdx + diffZ * cdz;
+        float absAcross = std::abs(across);
+        if (absAcross > kelvinHalf + hw * 3.0f) continue;
+
+        float estShipLen = std::max(5.0f, hw * 5.0f);
+        float Fn = spd / std::max(1.0f, std::sqrt(GRAV * estShipLen));
+        float planingFactor = (Fn > 0.5f) ? std::pow(0.5f / Fn, 2.5f) : 1.0f;
+        float bowWaveH = std::min(3.0f, 0.25f * spd * spd / GRAV * planingFactor);
+
+        float farAmp = bowWaveH * 0.3f * inten;
+        float decay = 1.0f / std::max(1.0f, std::sqrt(dBow / std::max(1.0f, estShipLen)));
+
+        float transWL = std::max(3.0f, PI2 * spd * spd / GRAV);
+        float transEnv = std::exp(-across * across / std::max(1.0f, kelvinHalf * kelvinHalf * 0.25f));
+        float transWave = farAmp * decay * std::sin(dBow * PI2 / transWL) * transEnv;
+
+        float divWave = 0.0f;
+        if (dBow > hw * 4.0f && kelvinHalf > 2.0f) {
+            float armDist = std::abs(absAcross - kelvinHalf);
+            float armWidth = std::max(2.0f, kelvinHalf * 0.10f);
+            float armEnv = std::exp(-armDist * armDist / (armWidth * armWidth));
+            float cuspBoost = 1.0f + 0.5f * armEnv;
+            float divWL = transWL * 0.7f;
+            float divPhase = std::sqrt(dBow * dBow + absAcross * absAcross) * PI2 / divWL;
+            divWave = farAmp * 0.6f * decay * std::sin(divPhase) * armEnv * cuspBoost;
+        }
+
+        float depressionEnv = std::exp(-perpDist * perpDist / std::max(1.0f, hw * hw * 4.0f));
+        float depression = -bowWaveH * 0.15f * inten * depressionEnv * decay;
+
+        wakeY += transWave + divWave + depression;
+    }
+
+    return wakeY;
+}
+
 float WickedMultiCascadeOcean::getWaveHeight(float worldX, float worldZ) const {
     if (!weScene || !weScene->weather.IsOceanEnabled()) return waterHeight_;
 
-    // Use WE's built-in readback for the primary cascade
-    // When auxiliary cascades are fully implemented, their displacements
-    // would be added here for a blended result
+    // FFT ocean displacement from readback
     XMFLOAT3 queryPos(worldX, 0.0f, worldZ);
     XMFLOAT3 displaced = weScene->GetOceanPosAt(queryPos);
-    return displaced.y;
+
+    // Add analytical wake wave displacement (matches vertex shader math)
+    float wakeH = computeWakeHeightAt(worldX, worldZ);
+
+    return displaced.y + wakeH;
 }
 
 Vec2 WickedMultiCascadeOcean::getLocalNormals(float worldX, float worldZ) const {

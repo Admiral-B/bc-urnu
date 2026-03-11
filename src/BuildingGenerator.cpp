@@ -20,6 +20,83 @@ struct nth<1, std::pair<float, float>> {
 } // namespace util
 } // namespace mapbox
 
+// ---- Material Classification ----
+
+BuildingMaterialClass classifyBuildingMaterial(const std::string& type, float height) {
+    if (type == "church" || type == "cathedral" || type == "chapel" ||
+        type == "temple" || type == "mosque" || type == "synagogue")
+        return BuildingMaterialClass::Stone;
+    if (type == "industrial" || type == "warehouse" || type == "manufacture" ||
+        type == "factory" || type == "hangar")
+        return BuildingMaterialClass::Industrial;
+    if (type == "commercial" || type == "office" || type == "retail") {
+        if (height > 20.0f) return BuildingMaterialClass::Glass;
+        return BuildingMaterialClass::Concrete;
+    }
+    if (type == "apartments" || type == "hotel") {
+        if (height > 30.0f) return BuildingMaterialClass::Glass;
+        return BuildingMaterialClass::Concrete;
+    }
+    if (type == "residential" || type == "house" || type == "detached" ||
+        type == "semi" || type == "terrace" || type == "bungalow")
+        return BuildingMaterialClass::Brick;
+    if (type == "garage" || type == "garages" || type == "shed" ||
+        type == "barn" || type == "farm_auxiliary")
+        return BuildingMaterialClass::Industrial;
+    // Height-based fallback: tall = concrete/glass, short = brick
+    if (height > 25.0f) return BuildingMaterialClass::Glass;
+    if (height > 15.0f) return BuildingMaterialClass::Concrete;
+    return BuildingMaterialClass::Brick;
+}
+
+// Pack RGBA into uint32_t (WE vertex color format)
+static uint32_t packColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a = 255) {
+    return (uint32_t)r | ((uint32_t)g << 8) | ((uint32_t)b << 16) | ((uint32_t)a << 24);
+}
+
+// Get wall and roof vertex colors for a material class with slight random variation
+static void getMaterialColors(BuildingMaterialClass matClass, size_t seed,
+                               uint32_t& wallColor, uint32_t& roofColor) {
+    // Deterministic variation from seed
+    uint32_t h = (uint32_t)(seed * 2654435761u); // Knuth multiplicative hash
+    int var = (int)(h % 30) - 15; // -15 to +14
+
+    auto clamp = [](int v) -> uint8_t { return (uint8_t)std::max(0, std::min(255, v)); };
+
+    switch (matClass) {
+    case BuildingMaterialClass::Brick:
+        // Warm brick: reddish-brown to sandy, varied
+        wallColor = packColor(clamp(195 + var), clamp(160 + var), clamp(135 + var));
+        roofColor = packColor(clamp(120 + var/2), clamp(90 + var/2), clamp(75 + var/2));
+        break;
+    case BuildingMaterialClass::Concrete:
+        // Cool grey concrete
+        wallColor = packColor(clamp(200 + var), clamp(200 + var), clamp(205 + var));
+        roofColor = packColor(clamp(140 + var/2), clamp(140 + var/2), clamp(145 + var/2));
+        break;
+    case BuildingMaterialClass::Stone:
+        // Warm limestone/sandstone
+        wallColor = packColor(clamp(215 + var), clamp(205 + var), clamp(185 + var));
+        roofColor = packColor(clamp(130 + var/2), clamp(125 + var/2), clamp(110 + var/2));
+        break;
+    case BuildingMaterialClass::Industrial:
+        // Dark grey-brown, weathered
+        wallColor = packColor(clamp(155 + var), clamp(150 + var), clamp(140 + var));
+        roofColor = packColor(clamp(110 + var/2), clamp(110 + var/2), clamp(105 + var/2));
+        break;
+    case BuildingMaterialClass::Glass:
+        // Blue-grey glass (high brightness, texture roughness/metalness will do the rest)
+        wallColor = packColor(clamp(190 + var), clamp(205 + var), clamp(220 + var));
+        roofColor = packColor(clamp(150 + var/2), clamp(150 + var/2), clamp(155 + var/2));
+        break;
+    default:
+        // Neutral white (texture color shows through)
+        wallColor = packColor(clamp(230 + var), clamp(225 + var), clamp(220 + var));
+        roofColor = packColor(clamp(160 + var/2), clamp(155 + var/2), clamp(150 + var/2));
+        break;
+    }
+}
+
 // ---- BuildingMesh ----
 
 void BuildingMesh::append(const BuildingMesh& other) {
@@ -27,6 +104,7 @@ void BuildingMesh::append(const BuildingMesh& other) {
     positions.insert(positions.end(), other.positions.begin(), other.positions.end());
     normals.insert(normals.end(), other.normals.begin(), other.normals.end());
     uvs.insert(uvs.end(), other.uvs.begin(), other.uvs.end());
+    colors.insert(colors.end(), other.colors.begin(), other.colors.end());
 
     // Keep wall indices [0..wallIndexCount) and roof indices [wallIndexCount..end).
     // We need to splice other's walls into our wall section and other's roofs at end.
@@ -109,7 +187,8 @@ BuildingMesh BuildingGenerator::generate(const BuildingFootprint& fp,
                                           CoordFunc coordFunc,
                                           float groundY,
                                           int wallType,
-                                          int roofType) {
+                                          int roofType,
+                                          BuildingMaterialClass materialClass) {
     BuildingMesh mesh;
     if (fp.outline.size() < 3) return mesh;
 
@@ -119,6 +198,14 @@ BuildingMesh BuildingGenerator::generate(const BuildingFootprint& fp,
     // Roof atlas: 2x2 grid (each cell 0.5 x 0.5 in UV space)
     float roofCellU = (roofType % 2) * 0.5f;
     float roofCellV = (roofType / 2) * 0.5f;
+
+    // Per-building vertex color tint (seed from outline to be deterministic)
+    size_t colorSeed = fp.outline.size();
+    if (!fp.outline.empty()) {
+        colorSeed ^= (size_t)(fp.outline[0].first * 100000.0) ^ (size_t)(fp.outline[0].second * 100000.0);
+    }
+    uint32_t wallColor, roofColor;
+    getMaterialColors(materialClass, colorSeed, wallColor, roofColor);
 
     float height = fp.height;
     float roofY = groundY + height;
@@ -178,18 +265,22 @@ BuildingMesh BuildingGenerator::generate(const BuildingFootprint& fp,
         mesh.positions.insert(mesh.positions.end(), {x0, groundY, z0});
         mesh.normals.insert(mesh.normals.end(), {nx, 0.0f, nz});
         mesh.uvs.insert(mesh.uvs.end(), {u0, v0});
+        mesh.colors.push_back(wallColor);
 
         mesh.positions.insert(mesh.positions.end(), {x1, groundY, z1});
         mesh.normals.insert(mesh.normals.end(), {nx, 0.0f, nz});
         mesh.uvs.insert(mesh.uvs.end(), {u1, v0});
+        mesh.colors.push_back(wallColor);
 
         mesh.positions.insert(mesh.positions.end(), {x1, roofY, z1});
         mesh.normals.insert(mesh.normals.end(), {nx, 0.0f, nz});
         mesh.uvs.insert(mesh.uvs.end(), {u1, v1});
+        mesh.colors.push_back(wallColor);
 
         mesh.positions.insert(mesh.positions.end(), {x0, roofY, z0});
         mesh.normals.insert(mesh.normals.end(), {nx, 0.0f, nz});
         mesh.uvs.insert(mesh.uvs.end(), {u0, v1});
+        mesh.colors.push_back(wallColor);
 
         // Two triangles (CCW winding when viewed from outside)
         mesh.indices.insert(mesh.indices.end(), {base, base + 1, base + 2});
@@ -222,6 +313,7 @@ BuildingMesh BuildingGenerator::generate(const BuildingFootprint& fp,
                 atlasUV(x * uvScale, 0.5f, roofCellU),
                 atlasUV(z * uvScale, 0.5f, roofCellV)
             });
+            mesh.colors.push_back(roofColor);
         }
 
         for (uint32_t idx : floorIndices) {
@@ -238,8 +330,8 @@ BuildingMesh BuildingGenerator::generateBatch(const std::vector<BuildingFootprin
     BuildingMesh batch;
     int idx = 0;
     for (const auto& fp : footprints) {
-        // Vary wall/roof types across batch using index
-        BuildingMesh single = generate(fp, coordFunc, groundY, idx % 4, (idx * 3 + 1) % 4);
+        auto matClass = classifyBuildingMaterial(fp.type, fp.height);
+        BuildingMesh single = generate(fp, coordFunc, groundY, idx % 4, (idx * 3 + 1) % 4, matClass);
         if (!single.empty()) {
             batch.append(single);
         }

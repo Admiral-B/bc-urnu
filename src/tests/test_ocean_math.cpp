@@ -9,17 +9,17 @@ using namespace bc::OceanMath;
 
 // ── Beaufort-to-ocean-params mapping ────────────────────────────────────────
 
-TEST_CASE("Beaufort 0 gives minimal waves", "[ocean][beaufort]") {
+TEST_CASE("Beaufort 0 gives zero target Hs", "[ocean][beaufort]") {
     auto p = beaufortToOceanParams(0.0f, 0.0f, 0.0f);
-    REQUIRE(p.waveAmplitude == Approx(2.0f));
+    REQUIRE(p.targetHs == Approx(0.0f));
     REQUIRE(p.choppyScale == Approx(0.4f));
     // Calm: wind direction defaults to north
     REQUIRE(p.windDirZ == Approx(1.0f).margin(0.01f));
 }
 
-TEST_CASE("Beaufort 12 gives maximum waves", "[ocean][beaufort]") {
+TEST_CASE("Beaufort 12 gives maximum Hs", "[ocean][beaufort]") {
     auto p = beaufortToOceanParams(12.0f, 68.0f, 180.0f);
-    REQUIRE(p.waveAmplitude == Approx(50.0f));
+    REQUIRE(p.targetHs == Approx(14.0f));
     REQUIRE(p.choppyScale == Approx(1.24f).margin(0.01f));  // 0.4 + 12*0.07, capped at 1.3
     REQUIRE(p.windSpeedCmps == Approx(2000.0f));  // capped for Phillips spectrum
 }
@@ -29,19 +29,19 @@ TEST_CASE("Beaufort interpolation is linear between steps", "[ocean][beaufort]")
     auto p4 = beaufortToOceanParams(4.0f, 13.0f, 0.0f);
     auto p35 = beaufortToOceanParams(3.5f, 10.0f, 0.0f);
 
-    float expected_amp = (BEAUFORT_AMPLITUDE[3] + BEAUFORT_AMPLITUDE[4]) / 2.0f;
-    REQUIRE(p35.waveAmplitude == Approx(expected_amp).margin(1.0f));
-    REQUIRE(p35.waveAmplitude > p3.waveAmplitude);
-    REQUIRE(p35.waveAmplitude < p4.waveAmplitude);
+    float expected_hs = (BEAUFORT_HS[3] + BEAUFORT_HS[4]) / 2.0f;
+    REQUIRE(p35.targetHs == Approx(expected_hs).margin(0.1f));
+    REQUIRE(p35.targetHs > p3.targetHs);
+    REQUIRE(p35.targetHs < p4.targetHs);
 }
 
-TEST_CASE("Beaufort amplitude is monotonically increasing", "[ocean][beaufort]") {
-    float prevAmp = 0.0f;
+TEST_CASE("Beaufort Hs is monotonically increasing", "[ocean][beaufort]") {
+    float prevHs = -1.0f;
     for (int b = 0; b <= 12; b++) {
         auto p = beaufortToOceanParams(static_cast<float>(b),
                                         BEAUFORT_WIND_KTS[b], 0.0f);
-        REQUIRE(p.waveAmplitude > prevAmp);
-        prevAmp = p.waveAmplitude;
+        REQUIRE(p.targetHs >= prevHs);
+        prevHs = p.targetHs;
     }
 }
 
@@ -69,10 +69,10 @@ TEST_CASE("Wind speed has 30 cm/s floor", "[ocean][beaufort]") {
 
 TEST_CASE("Beaufort clamped to 0-12 range", "[ocean][beaufort]") {
     auto pNeg = beaufortToOceanParams(-1.0f, 0.0f, 0.0f);
-    REQUIRE(pNeg.waveAmplitude == Approx(2.0f));  // B0
+    REQUIRE(pNeg.targetHs == Approx(0.0f));  // B0
 
     auto pOver = beaufortToOceanParams(15.0f, 68.0f, 0.0f);
-    REQUIRE(pOver.waveAmplitude == Approx(50.0f));  // B12 max
+    REQUIRE(pOver.targetHs == Approx(14.0f));  // B12 max
 }
 
 // ── Cascade blending weights ────────────────────────────────────────────────

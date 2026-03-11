@@ -64,6 +64,20 @@ public:
         (void)id; (void)vx; (void)vy; (void)vz;
     }
 
+    // Environmental audio: Beaufort-driven wave volume and procedural wind
+    // beaufort: 0-12, windSpeedKn: wind speed in knots
+    virtual void setEnvironment(float beaufort, float windSpeedKn) {
+        (void)beaufort; (void)windSpeedKn;
+    }
+
+    // Engine character: configure procedural diesel synthesis per vessel
+    // maxRPM: engine max RPM (60=slow-speed, 1000=medium, 6000=high-speed)
+    // cylinders: number of cylinders (4, 6, 8, etc.)
+    // stroke: 2 or 4 (2-stroke fires every rev, 4-stroke every other rev)
+    virtual void setEngineCharacter(float maxRPM, int cylinders, int stroke) {
+        (void)maxRPM; (void)cylinders; (void)stroke;
+    }
+
     // HRTF for VR — no-op for non-spatial backends
     virtual bool enableHRTF() { return false; }
     virtual void disableHRTF() {}

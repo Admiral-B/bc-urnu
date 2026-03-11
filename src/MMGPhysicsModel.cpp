@@ -393,6 +393,56 @@ void MMGPhysicsModel::computeRudderForces(double u, double v, double r_rad,
     Nr = -(coeffs.x_R_prime + coeffs.a_H * coeffs.x_H_prime) * dims.length * F_N * cos(delta);
 }
 
+// ── Azimuth drive forces ───────────────────────────────────────────────────
+// Each azimuth drive produces thrust at an arbitrary angle.
+// Uses the same K_T propeller model for thrust magnitude, then decomposes
+// into body-frame surge/sway components. Moment arm from CG produces yaw.
+
+void MMGPhysicsModel::computeAzimuthForces(double u, double portEngine, double stbdEngine,
+                                             double portAngleDeg, double stbdAngleDeg,
+                                             double leverArm,
+                                             double& Xa, double& Ya, double& Na) const {
+    Xa = 0; Ya = 0; Na = 0;
+
+    // Compute thrust magnitude for each drive using K_T model
+    auto thrustFromEngine = [&](double engineSetting) -> double {
+        double n = fabs(engineSetting) * dims.maxRPM / 60.0; // rev/s
+        if (n < 0.01) return 0.0;
+
+        double w_P = coeffs.w_P0;
+        double u_a = u * (1.0 - w_P);
+        double J = u_a / (n * dims.propellerDiameter);
+        double K_T = coeffs.k_0 + coeffs.k_1 * J + coeffs.k_2 * J * J;
+        if (K_T < 0) K_T = 0;
+
+        double T = RHO * n * n * pow(dims.propellerDiameter, 4) * K_T;
+        if (engineSetting < 0) T = -T;
+        return (1.0 - coeffs.t_P) * T;
+    };
+
+    double portT = thrustFromEngine(portEngine);
+    double stbdT = thrustFromEngine(stbdEngine);
+
+    // Decompose into body-frame components
+    // Azimuth angle convention: 90 deg = ahead, 0 = starboard, 180 = port
+    double portRad = portAngleDeg * DEG_TO_RAD;
+    double stbdRad = stbdAngleDeg * DEG_TO_RAD;
+
+    double portXa = portT * cos(portRad);  // surge component
+    double portYa = portT * sin(portRad);  // sway component (+ve = stbd in this convention)
+    double stbdXa = stbdT * cos(stbdRad);
+    double stbdYa = stbdT * sin(stbdRad);
+
+    Xa = portXa + stbdXa;
+    Ya = portYa + stbdYa;
+
+    // Yaw moment from lever arms
+    // Axial thrust differential: port is at +propellorSpacing/2, stbd at -propellorSpacing/2
+    double halfSpacing = dims.propellorSpacing * 0.5;
+    Na = (portXa - stbdXa) * halfSpacing   // differential axial thrust
+       - (portYa + stbdYa) * leverArm;     // lateral thrust at lever arm from CG
+}
+
 // ── Time step (RK2 midpoint method) ────────────────────────────────────────
 
 void MMGPhysicsModel::step(double dt, const PhysicsInput& input, PhysicsState& state) {
@@ -411,33 +461,41 @@ void MMGPhysicsModel::step(double dt, const PhysicsInput& input, PhysicsState& s
     double u_rel = u - input.currentSurge;
     double v_rel = v - input.currentSway;
 
-    // Engine setting (average for propulsion force; differential handled separately)
-    double engine = dims.singleEngine ? input.portEngine
-                                       : (input.portEngine + input.stbdEngine) / 2.0;
-
-    // Differential thrust yaw moment (twin screw only)
-    // Each engine produces half of maxEngineForce; moment arm is propellorSpacing/2
-    double N_diff = 0.0;
-    if (!dims.singleEngine && dims.propellorSpacing > 0) {
-        double portForce = input.portEngine * dims.maxEngineForce * 0.5;
-        double stbdForce = input.stbdEngine * dims.maxEngineForce * 0.5;
-        N_diff = (portForce - stbdForce) * dims.propellorSpacing * 0.5;
-    }
-
     // Shallow water correction factor
     double hT_ratio = (input.waterDepth + dims.draught) / dims.draught; // Total depth / draught
     double swFactor = shallowWaterFactor(hT_ratio);
 
     // ── Compute forces at current state ──
-    // Hull, propeller, rudder, bank use relative velocity (water flow past hull)
+    // Hull forces always apply (hydrodynamic resistance/damping)
     double Xh, Yh, Nh;
     computeHullForces(u_rel, v_rel, r_rad, swFactor, Xh, Yh, Nh);
 
-    double Xp;
-    computePropellerForce(u_rel, engine, Xp);
+    // Propulsion: either azimuth drives or conventional propeller + rudder
+    double Xp = 0, Yp = 0, Np = 0;
+    if (input.isAzimuthDrive) {
+        // Azimuth drives: vectored thrust replaces propeller + rudder
+        computeAzimuthForces(u_rel, input.portEngine, input.stbdEngine,
+                             input.portAzimuthAngleDeg, input.stbdAzimuthAngleDeg,
+                             input.aziDriveLeverArm, Xp, Yp, Np);
+    } else {
+        // Conventional: propeller thrust + rudder forces + differential thrust
+        double engine = dims.singleEngine ? input.portEngine
+                                           : (input.portEngine + input.stbdEngine) / 2.0;
+        computePropellerForce(u_rel, engine, Xp);
 
-    double Xr, Yr, Nr;
-    computeRudderForces(u_rel, v_rel, r_rad, input.rudderAngle, engine, Xr, Yr, Nr);
+        double Xr, Yr, Nr;
+        computeRudderForces(u_rel, v_rel, r_rad, input.rudderAngle, engine, Xr, Yr, Nr);
+        Xp += Xr;
+        Yp += Yr;
+        Np += Nr;
+
+        // Differential thrust yaw moment (twin screw only)
+        if (!dims.singleEngine && dims.propellorSpacing > 0) {
+            double portForce = input.portEngine * dims.maxEngineForce * 0.5;
+            double stbdForce = input.stbdEngine * dims.maxEngineForce * 0.5;
+            Np += (portForce - stbdForce) * dims.propellorSpacing * 0.5;
+        }
+    }
 
     // Bank effects (use relative velocity - bank effect is hydrodynamic)
     double Yb = 0, Nb = 0;
@@ -452,10 +510,10 @@ void MMGPhysicsModel::step(double dt, const PhysicsInput& input, PhysicsState& s
                       input.superstructureAft,
                       Xw, Yw, Nw);
 
-    // Total forces (N_diff adds differential thrust yaw moment for twin screw)
-    double Fx = Xh + Xp + Xr + Xw;
-    double Fy = Yh + Yr + Yb + Yw;
-    double Mz = Nh + Nr + Nb + Nw + N_diff;
+    // Total forces
+    double Fx = Xh + Xp + Xw;
+    double Fy = Yh + Yp + Yb + Yw;
+    double Mz = Nh + Np + Nb + Nw;
 
     // Mass with added mass
     double mx = getMassX();
@@ -483,8 +541,26 @@ void MMGPhysicsModel::step(double dt, const PhysicsInput& input, PhysicsState& s
     double u_mid_rel = u_mid - input.currentSurge;
     double v_mid_rel = v_mid - input.currentSway;
     computeHullForces(u_mid_rel, v_mid_rel, r_mid, swFactor, Xh, Yh, Nh);
-    computePropellerForce(u_mid_rel, engine, Xp);
-    computeRudderForces(u_mid_rel, v_mid_rel, r_mid, input.rudderAngle, engine, Xr, Yr, Nr);
+
+    Xp = 0; Yp = 0; Np = 0;
+    if (input.isAzimuthDrive) {
+        computeAzimuthForces(u_mid_rel, input.portEngine, input.stbdEngine,
+                             input.portAzimuthAngleDeg, input.stbdAzimuthAngleDeg,
+                             input.aziDriveLeverArm, Xp, Yp, Np);
+    } else {
+        double engine = dims.singleEngine ? input.portEngine
+                                           : (input.portEngine + input.stbdEngine) / 2.0;
+        computePropellerForce(u_mid_rel, engine, Xp);
+        double Xr, Yr, Nr;
+        computeRudderForces(u_mid_rel, v_mid_rel, r_mid, input.rudderAngle, engine, Xr, Yr, Nr);
+        Xp += Xr; Yp += Yr; Np += Nr;
+        if (!dims.singleEngine && dims.propellorSpacing > 0) {
+            double portForce = input.portEngine * dims.maxEngineForce * 0.5;
+            double stbdForce = input.stbdEngine * dims.maxEngineForce * 0.5;
+            Np += (portForce - stbdForce) * dims.propellorSpacing * 0.5;
+        }
+    }
+
     computeBankForces(u_mid_rel, dims.length, dims.draught,
                       input.bankDistancePort, input.bankDistanceStbd, Yb, Nb);
     computeWindForces(input.windSpeed, input.windDirection, state.heading, u_mid, v_mid,
@@ -493,9 +569,9 @@ void MMGPhysicsModel::step(double dt, const PhysicsInput& input, PhysicsState& s
                       input.superstructureAft,
                       Xw, Yw, Nw);
 
-    Fx = Xh + Xp + Xr + Xw;
-    Fy = Yh + Yr + Yb + Yw;
-    Mz = Nh + Nr + Nb + Nw + N_diff;
+    Fx = Xh + Xp + Xw;
+    Fy = Yh + Yp + Yb + Yw;
+    Mz = Nh + Np + Nb + Nw;
 
     du_dt = (Fx + (m + m_y_add) * v_mid * r_mid) / mx;
     dv_dt = (Fy - (m + m_x_add) * u_mid * r_mid) / my;

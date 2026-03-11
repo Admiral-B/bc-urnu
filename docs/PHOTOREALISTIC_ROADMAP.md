@@ -9,7 +9,7 @@ Goal: transform Bridge Command into a photorealistic maritime simulator with acc
 
 **Working:** WickedEngine PBR rendering (DX12), GPU FFT ocean (512x512 Phillips), MMG 3-DOF physics (8 ships), ImGui HUD, OSM procedural buildings, S-57 chart world generation, multi-point collision, Isherwood wind, procedural lighthouses, engine audio with diesel synthesis.
 
-**Scaffolded but not integrated:** Multi-cascade ocean (headers ready), JONSWAP/TMA spectra (headers ready), Kelvin wake (class ready), multi-window bridge (class ready), VR stereo (class ready).
+**Scaffolded but not integrated:** Multi-cascade ocean (headers ready), multi-window bridge (class ready), VR stereo (class ready).
 
 **Missing entirely:** 6-DOF buoyancy, volumetric atmosphere, dynamic sky, rain/spray particles, PBR terrain splatting, ship model PBR upgrades, radar rendering, underwater caustics, screen-space water interaction.
 
@@ -87,13 +87,17 @@ Current foam uses Jacobian fold detection (single threshold). Upgrade to two-lay
 
 **Files:** Custom water pixel shader override, foam texture assets
 
-### 1.4 Kelvin Wake Integration -- IN PROGRESS
+### 1.4 Kelvin Wake Integration -- COMPLETE
 
-**Approach:** Shader-based. Ship wake data (position, heading, speed) is passed to the ocean constant buffer (`OceanCB`). The ocean pixel shader (`oceanSurfacePS.hlsl`) computes Kelvin V-pattern foam analytically per-pixel, integrated into the existing 3-layer foam system (shore/shallow/whitecap). Foam renders ON the ocean surface, moves with waves, uses same noise/lighting. No separate mesh or render pass.
+**Implemented:** Full physics-based ship wake system with both visual and physical effects.
 
-Previous mesh-based approach (`WickedKelvinWake` class) abandoned -- flat polygons above the ocean cannot look realistic regardless of material/blending.
+1. **3D vertex displacement** (`oceanSurfaceVS.hlsl`): Noblesse (2008) bow wave (`Z_b = 0.25*V^2/g`), stern depression, transverse + divergent far-field waves with 1/sqrt(r) decay and cusp-line Airy enhancement. Planing suppression above Fn~0.5. Both live ship data (`wakeShips[8]`) and persistent trail breadcrumbs (`wakeTrail[128]`).
 
-**Files:** `ShaderInterop_Ocean.h` (wake struct in CB), `wiOcean.h/cpp` (OceanParameters extension), `oceanSurfacePS.hlsl` (foam_wake computation), `WickedMain.cpp` (per-frame ship data)
+2. **Surface foam** (`oceanSurfacePS.hlsl`): Centerline wake foam from trail segments with Gaussian lateral falloff. Kelvin V-arm envelope as continuous port/starboard lines (not per-point rays). Intensity dissipation + cubic distance fade.
+
+3. **Ship handling** (`WickedMultiCascadeOcean::computeWakeHeightAt()`): CPU mirror of VS wake physics. `getWaveHeight()` includes wake contribution so ships experience heave/pitch/roll from other ships' wakes.
+
+**Files:** `ShaderInterop_Ocean.h`, `wiOcean.h`, `oceanSurfaceVS.hlsl`, `oceanSurfacePS.hlsl`, `WickedMultiCascadeOcean.cpp`, `WickedMain.cpp`
 
 ### 1.5 Underwater Rendering
 
@@ -149,66 +153,19 @@ Low priority but dramatic effect.
 
 ## Phase 3: Ship Physics Upgrade (Weeks 4-8)
 
-The MMG 3-DOF model is solid for maneuvering. The gap is wave-induced motion: ships currently use sinusoidal roll/pitch independent of actual waves. This breaks immersion.
+Most of Phase 3 is complete. Remaining: azimuth drive MMG support (3.6).
 
-### 3.1 Wave-Excited 6-DOF Extension
+### 3.1 Wave-Excited 6-DOF Extension -- COMPLETE
 
-Extend MMG from 3-DOF (surge/sway/yaw) to 6-DOF (add heave/roll/pitch).
+**Implemented:** `WaveMotionModel.hpp` -- second-order damped harmonic oscillators for heave, pitch, roll. Driven by wave surface sampling at hull points. Parameters from boat.ini (GM, RollPeriod, PitchPeriod, damping ratios) or auto-estimated from ship dimensions. Semi-implicit Euler integration. Wavelength reduction (sinc filter), added resistance in waves (Stawave-1/ITTC), rudder sea state degradation.
 
-**Two-timescale approach** (standard in maritime simulation, per Fossen 2011):
-- **Low frequency (maneuvering):** Existing MMG handles surge/sway/yaw. Timescale: seconds to minutes.
-- **High frequency (seakeeping):** New module handles heave/roll/pitch from wave excitation. Timescale: wave period (5-15s).
+**Files:** `WaveMotionModel.hpp`, `OwnShip.cpp` (5-point path), `WickedMain.cpp` (15-point path)
 
-**Heave model:**
-```
-m_z * z_ddot = F_hydrostatic + F_wave_excitation + F_damping
-F_hydrostatic = -rho * g * A_wp * z   (waterplane area restoring force)
-F_wave_excitation = rho * g * A_wp * eta(x,y,t)  (wave elevation at CG)
-F_damping = -B_33 * z_dot  (heave damping, ~5-10% critical)
-```
-Sample `eta(x,y,t)` from `WickedWater::getWaveHeight()` at ship CG.
+### 3.2 Multi-Point Buoyancy -- COMPLETE
 
-**Roll model (critical for realism):**
-```
-I_xx * phi_ddot = -K_roll * phi - B_roll * phi_dot + M_wave + M_wind
-K_roll = rho * g * V * GM_T  (hydrostatic restoring, GM from boat.ini)
-B_roll = 2 * zeta * sqrt(K_roll * I_xx)  (damping ratio zeta ~0.05-0.15)
-M_wave = rho * g * V * GM_T * slope_y(x,y,t)  (wave slope excitation)
-M_wind = Y_wind * z_wind_center  (wind heeling moment)
-```
-Sample wave slope from `WickedWater::getLocalNormals()` (already implemented).
+**Implemented:** 15-point hull grid (5 longitudinal x 3 transverse) with elliptical waterplane footprint. Distributed buoyancy computes net heave, pitch moment, and roll moment from wave heights across hull. Gives parametric rolling in beam seas, bow slamming in head seas, broaching in following seas.
 
-**Pitch model:** Same structure as roll with longitudinal metacentric height GM_L and wave slope in x-direction.
-
-**New boat.ini parameters:**
-```
-GM_T=1.5          ; Transverse metacentric height (meters)
-GM_L=100.0        ; Longitudinal metacentric height (meters)
-RollDamping=0.08  ; Damping ratio (fraction of critical)
-WaterplaneArea=0  ; Auto-estimate from L*B*Cw if 0
-```
-
-**Integration:** RK2 (same as existing MMG), 50Hz. The 6-DOF state feeds into camera (heave/roll/pitch applied) and into ship model transform.
-
-**Files:** New `SeakeepingModel.hpp/cpp`, modify `OwnShip.cpp` (replace sinusoidal pitch/roll), modify `boat.ini` parser
-
-### 3.2 Multi-Point Buoyancy
-
-Replace single-CG wave height lookup with distributed buoyancy sampling:
-
-1. Define N buoyancy sample points on the hull waterplane (typically 5x3 grid = 15 points)
-2. Each frame, query wave height at each point's world position
-3. Compute net force and moments from submerged volume approximation
-4. Feed into 6-DOF equations as `F_wave_excitation` and `M_wave`
-
-This gives:
-- **Parametric rolling** in beam seas (wave slope varies along hull length)
-- **Bow slamming** in head seas (bow rides up on crest, drops into trough)
-- **Broaching** in following seas (stern lifted by overtaking wave)
-
-**Performance:** 15 wave height queries per ship per frame at 60fps = 900 queries/s. `getWaveHeight()` uses CPU readback from GPU (async, 2-3 frame latency). Acceptable if we batch the queries.
-
-**Files:** New `BuoyancySampler.hpp/cpp`, modify `SeakeepingModel.cpp`
+**Files:** `WaveMotionModel.hpp` (computeHullGrid, computeBuoyancy, updateMultiPoint), `WickedMain.cpp` (15-point sampling loop)
 
 ### 3.3 Applied Squat -- COMPLETE
 
@@ -222,16 +179,11 @@ Force-based tidal current in MMG. Body-frame current components passed to `Physi
 
 Implemented in both legacy physics (`LegacyPhysicsModel.cpp`) and own ship physics (`OwnShip.cpp`). Configurable via `PropWalkAhead`/`PropWalkAstern` in `boat.ini`. Single and twin-screw support.
 
-### 3.6 Azimuth Drive Support for MMG
+### 3.6 Azimuth Drive Support for MMG -- COMPLETE
 
-Currently azimuth drives (VIC56_360) must use legacy physics. Extend MMG to handle vectored thrust:
+**Implemented:** `computeAzimuthForces()` in MMGPhysicsModel uses K_T propeller model for thrust magnitude, decomposes into body-frame surge/sway via cos/sin of azimuth angle. Yaw moment from differential axial thrust (propeller spacing) plus lateral thrust at lever arm. Replaces propeller + rudder forces when `PhysicsInput::isAzimuthDrive` is set. Clutch gating in OwnShip.cpp passes zero engine when declutched.
 
-1. Add `thrustAngle` to `PhysicsInput` (azimuth angle, -180 to 180 deg)
-2. Compute thrust components: `Xp = T*cos(thrustAngle)`, `Yp = T*sin(thrustAngle)`
-3. Moment from offset: `Np = Yp * x_prop * L`
-4. Skip rudder model when azimuth drive active
-
-**Files:** `MMGPhysicsModel.cpp`, `PhysicsModel.hpp`, `OwnShip.cpp`
+**Files:** `PhysicsModel.hpp` (azimuth fields), `MMGPhysicsModel.hpp/cpp` (computeAzimuthForces, step branch), `OwnShip.cpp` (removed !azimuthDrive restriction, passes azimuth data), `ShetlandTrader/boat.ini` and `3111_Tug/boat.ini` (MMGMode=1 enabled)
 
 ---
 
@@ -286,15 +238,23 @@ Run 50-100 iterations of thermal erosion on heightmap during world generation:
 
 **Files:** New `ThermalErosion.hpp/cpp`, called from `HeightmapGenerator.cpp`
 
-### 4.5 Vegetation (Grass and Trees)
+### 4.5 Vegetation (Grass and Trees) -- DONE (trees)
 
-WE's hair particle system supports grass rendering:
+**Implemented:**
+1. **VegetationPlacer** (`editor/VegetationPlacer.hpp/cpp`): Generates tree placements from OSM land use grid + heightmap. Density varies by land use type (Forest=80/ha, Heath=15, Residential=8, Grass=5, Farmland=2). Slope >35 deg rejected. Max 15000 trees per world.
+2. **4-species system:** Deciduous (broadleaf), Conifer (tall/narrow), Shrub (low/wide), Palm (tropical). Species selected by land use type + latitude (palms <35 deg, more conifers >55 deg).
+3. **2x2 atlas texture:** Procedurally generated 512x512 RGBA billboard atlas with all 4 species. Alpha-tested cutoff for transparency.
+4. **Multi-species rendering:** WickedMain reads Species(N) from trees.ini, maps to UV sub-regions in the atlas. Per-species base dimensions (conifer 5x16m, deciduous 8x12m, shrub 6x4m, palm 4x14m).
+5. **Terrain-relative placement:** Trees snap to actual terrain height via `terrainNode->getHeightAt()`. Trees in water (height <0.3m) are skipped.
+6. **Legacy compatibility:** Worlds with old trees.ini (no Species field) render with full UV range as before.
 
-1. **Grass:** Scatter on terrain where splat_grass_weight > 0.5 and slope < 30 deg. Use WE hair particles with wind animation. Density falls off with camera distance.
-2. **Trees:** Place tree models at strategic locations from OSM `natural=tree` or procedurally along roads/parks. Use LOD billboards at distance. Start with 3-4 species (oak, pine, birch, palm depending on latitude).
-3. **Wind animation:** WE's built-in wind affects hair particles and tree foliage. Tie wind speed/direction to BC weather system.
+**Integrated into world generation pipeline** (EditorApp.cpp): runs after land use grid is populated, outputs trees.ini + tree_billboard.png.
 
-**Files:** New `VegetationPlacer.hpp/cpp`, WE terrain chunk setup
+**Remaining:**
+- Grass (WE hair particles) -- deferred due to rain particle crash risk (same particle system)
+- Wind animation for tree billboards
+- LOD billboards at distance
+- OSM `natural=tree` individual tree placement
 
 ### 4.6 WE Native Terrain Migration (Stretch)
 
@@ -375,57 +335,40 @@ Current ship models are .3ds/.x format with simple diffuse textures. For photore
 
 **Files:** `WickedMain.cpp` (light creation + update loop), `lensFlareVS/PS.hlsl` (modified with per-pixel depth test, kept for reference)
 
-### 5.4 PBR Building Materials
+### 5.4 PBR Building Materials -- PARTIALLY DONE
 
-Current buildings use flat color or basic texture atlas. Upgrade:
+**Implemented:**
 
-1. **Material variety:** During world generation, assign building materials from a library:
-   - Brick (red, yellow, brown variants) with mortar-line normal maps
-   - Concrete (smooth, rough, weathered)
-   - Glass curtain wall (reflective, high metalness)
-   - Stone (limestone, granite)
-   - Cladding (metal panels, wood)
+1. **Material classification:** `classifyBuildingMaterial()` maps OSM building type + height to 6 material classes: Brick, Concrete, Stone, Industrial, Glass, Default. Residential/houses -> brick, commercial/office -> concrete (or glass if >20m), churches -> stone, warehouses -> industrial, tall buildings -> glass.
+2. **Per-building vertex color tinting:** Each building gets a unique RGBA vertex color based on its material class with deterministic random variation (Knuth hash from outline coords). WE materials use `SetUseVertexColors(true)` to multiply texture by vertex color. Breaks up uniform appearance even when all buildings share one atlas texture.
+3. **Glass building batch:** Tall commercial/office buildings (Glass class) are batched separately with distinct PBR properties: roughness 0.15, metalness 0.3 for reflective curtain-wall look.
+4. **Roof color variety:** Roof vertex colors vary by material class (dark slate for brick, lighter for concrete, etc.)
 
-2. **Roof materials:** Slate, tile, flat/membrane (already partially done)
+**Not yet done:**
 
-3. **Window placement:** Procedurally place window rectangles on wall faces with glass material (emissive at night)
+- Window placement (procedural rectangles with glass/emissive material)
+- Age/weathering overlay (dirt/stain on lower floors)
+- Expanded texture atlas (16+ facade types instead of 2x2)
 
-4. **Age/weathering:** Random dirt/stain overlay on lower floors
-
-**Files:** `BuildingGenerator.cpp`, material texture atlas expansion
+**Files:** `BuildingGenerator.hpp/cpp`, `WickedMain.cpp` (createBuildingMeshEntity + runtime generation loop)
 
 ---
 
 ## Phase 6: Multi-View and Platform (Weeks 8-14)
 
-### 6.1 Multi-Window Bridge Rendering
+### 6.1 Multi-Window Bridge Rendering -- COMPLETE
 
-Wire `WickedMultiView` into `WickedMain`. The 3-monitor bridge setup needs:
+**Implemented:** `WickedMultiView` creates borderless fullscreen windows on extra monitors (auto-detected via `EnumDisplayMonitors`). Each gets its own `SwapChain`, `RenderPath3D`, and `CameraComponent` with configurable yaw offset. Camera updates use ship quaternion for proper pitch/roll coupling. Secondary mode also works via ENet network with `look_angle` offset.
 
-1. **3 render targets:** Left (-60 deg yaw offset), Center (0 deg), Right (+60 deg)
-2. **Shared scene:** All 3 cameras render the same WE scene
-3. **Per-camera:** Yaw offset applied to ship heading, independent FOV
-4. **Sync:** All 3 views update from same physics tick (no frame tearing between monitors)
+**Config (bc5.ini):** `wicked_views=3`, `wicked_view_offset_1=-60`, `wicked_view_offset_2=60`, `view_angle=90`
 
-**Approach:** WE supports multiple swapchains. Create 3 `RenderPath3D` instances, each with its own camera entity. Share the same `Scene`. On multi-GPU systems, consider SLI/NVLink for distributing viewports.
+**Files:** `WickedMultiView.hpp/cpp`, `WickedMain.cpp` (lines 1612-1640 init, 4793-4802 per-frame)
 
-**Fallback:** If multi-swapchain is problematic, render all 3 views to a single large framebuffer (e.g., 5760x1080 for 3x 1920x1080) and split output via NVIDIA Surround / AMD Eyefinity.
+### 6.2 Radar Rendering -- COMPLETE
 
-**Files:** `WickedMultiView.cpp`, `WickedMain.cpp`
+**Implemented:** Full radar simulation with `RadarCalculation` (360-degree sweep, RCS, sea/rain clutter, noise, STC). ARPA tracking with CPA/TCPA. ImGui fullscreen PPI display (`RadarDisplay`, R key toggle) with range rings, controls, and ARPA contact table. 3D console display scaffolded but disabled (geometry clipping).
 
-### 6.2 Radar Rendering
-
-Currently stubbed (`setRenderTarget()` and `draw2DImage()` TODO in `WickedRenderer.cpp`). Implement:
-
-1. **Render target:** Create WE texture as render target (512x512 or 1024x1024)
-2. **Radar sweep:** Rotate camera 360 deg, project to polar coordinates
-3. **Target detection:** Ray-cast from own ship to terrain/other ships, compute signal return
-4. **Display:** Green-on-black PPI display rendered via ImGui to secondary monitor
-5. **Features:** Range rings, bearing cursor, EBL/VRM, guard zones, ARPA tracking
-
-**Alternative approach:** Render depth buffer from top-down camera, threshold for radar returns. Simpler than ray-casting, gives terrain/ship echoes automatically.
-
-**Files:** `WickedRenderer.cpp`, new `RadarRenderer.hpp/cpp`
+**Files:** `RadarCalculation.hpp/cpp`, `RadarScreen.hpp/cpp`, `RadarDisplay.hpp/cpp`, `RadarData.hpp`, `WickedMain.cpp`
 
 ### 6.3 VR Support (OpenXR)
 
@@ -446,15 +389,22 @@ Currently stubbed (`setRenderTarget()` and `draw2DImage()` TODO in `WickedRender
 
 ## Phase 7: Audio and Immersion (Weeks 10-14)
 
-### 7.1 Environmental Audio
+### 7.1 Environmental Audio -- PARTIALLY DONE
 
 Extend existing PortAudio/OpenAL system:
 
-1. **Wave sounds:** Continuous ocean ambient, intensity scales with Beaufort. Low-frequency rumble for heavy seas.
-2. **Wind:** Procedural wind noise (filtered white noise), pitch increases with speed. Whistle through rigging at high wind.
-3. **Rain:** Stochastic rain impact sounds when weather includes rain. Intensity from `Rain` parameter.
-4. **Fog horn:** Own ship horn (user-triggered), AI ship horns at interval in restricted visibility
-5. **Harbour ambient:** Gulls, distant traffic, port machinery when near land
+1. **Wave sounds:** DONE. Bwave.wav volume scales with Beaufort (silent at B0, full at B6+). Driven per-frame via `ISound::setEnvironment()`.
+2. **Wind:** DONE. Procedural wind noise synthesis in PortAudio callback: LP-filtered white noise (broadband) + BP tonal howl + slow gust modulation. Audible from B3, full intensity at B7+. Cutoff frequency rises with wind speed (200-2000 Hz).
+3. **Engine character:** DONE. `ISound::setEngineCharacter(maxRPM, cylinders, stroke)` auto-classifies vessels into 5 engine classes from MaxRevs in boat.ini. Tunes LP filter cutoff, diesel synthesis mix, playback rate range, firing frequency (2/4-stroke aware), pulse width, and sub-harmonic rumble per class. Slow-speed (<=200 RPM) engines get heavy individual thumps and sub-bass; high-speed (3000+ RPM) get mostly WAV-driven pitch shift with minimal synthesis.
+4. **Rain:** Deferred (rain particles disabled due to WE crash).
+5. **Fog horn:** Own ship horn works (user-triggered). AI ship fog horn intervals: not yet implemented.
+6. **Harbour ambient:** Not yet implemented.
+
+**Future engine audio improvements:**
+- Exhaust waveguide resonance model (delay line per exhaust path creates formant peaks, the biggest differentiator between engine types). Reference: Antonio-R1/engine-sound-generator, Manes et al. SIVE 2015.
+- Turbocharger whine: additive sine at blade-pass frequency (2-5 kHz), amplitude proportional to load.
+- Mechanical noise layer: injector clicks, piston slap synchronized to crank angle.
+- Granular synthesis from RPM-sweep recordings (CrankcaseAudio REV approach) for highest fidelity.
 
 ### 7.2 Crew and Bridge Sounds
 
@@ -529,21 +479,21 @@ This ordering maximizes visual impact per unit of effort:
 | 5 | Ocean normal map overlay | 1.1+ | High | Low-Medium | BLOCKED (shader) |
 | 6 | Multi-cascade blending | 1.1c | Huge | High | BLOCKED (shader) |
 | 7 | PBR terrain splatting | 4.1 | High | High | BLOCKED (shader) |
-| 8 | Kelvin wakes (shader-based) | 1.4 | Medium | Medium | IN PROGRESS |
-| 9 | 6-DOF seakeeping | 3.1 | High | High | Not started |
-| 10 | Multi-window bridge | 6.1 | Critical | Medium | Not started |
-| 11 | Multi-point buoyancy | 3.2 | High | High | Not started |
-| 12 | Radar rendering | 6.2 | Critical | High | Not started |
+| ~8~ | ~Kelvin wakes (shader-based)~ | ~1.4~ | ~Medium~ | ~Medium~ | DONE |
+| ~9~ | ~6-DOF seakeeping~ | ~3.1~ | ~High~ | ~High~ | DONE |
+| ~10~ | ~Multi-window bridge~ | ~6.1~ | ~Critical~ | ~Medium~ | DONE |
+| ~11~ | ~Multi-point buoyancy~ | ~3.2~ | ~High~ | ~High~ | DONE |
+| ~12~ | ~Radar rendering~ | ~6.2~ | ~Critical~ | ~High~ | DONE |
 | 13 | Nav light visuals | 5.3 | Medium | Medium | BLOCKED (technique) |
 | 14 | PBR ship models | 5.1 | High | High (art) | Not started |
 | 15 | Rain particles | 2.4 | Medium | Medium | BLOCKED (WE crash) |
-| 16 | Azimuth drive MMG | 3.6 | Medium | Medium | Not started |
+| ~16~ | ~Azimuth drive MMG~ | ~3.6~ | ~Medium~ | ~Medium~ | DONE |
 | ~17~ | ~Applied squat~ | ~3.3~ | ~Medium~ | ~Low~ | DONE |
 | ~18~ | ~Current forces~ | ~3.4~ | ~Medium~ | ~Low~ | DONE |
 | ~19~ | ~Propeller walk~ | ~3.5~ | ~Medium~ | ~Low~ | DONE |
-| 20 | Environmental audio | 7.1 | Medium | Medium | Not started |
-| 21 | PBR buildings | 5.4 | Medium | Medium | Not started |
-| 22 | Vegetation | 4.5 | Medium | High | Not started |
+| 20 | Environmental audio | 7.1 | Medium | Medium | DONE (wave + wind) |
+| 21 | PBR buildings | 5.4 | Medium | Medium | DONE (vertex color tint + glass) |
+| 22 | Vegetation | 4.5 | Medium | High | DONE (trees, 4-species atlas) |
 | 23 | VR support | 6.3 | Low (niche) | High | Not started |
 
 ---
@@ -552,7 +502,7 @@ This ordering maximizes visual impact per unit of effort:
 
 | Risk | Mitigation |
 |------|-----------|
-| WE `patch_length` hard limit at 50m | **CONFIRMED.** Crashes at other values. Multi-cascade must use same patch size with different spectrum seeds. Custom shader required to blend. |
+| WE `patch_length` was thought to be hard-limited at 50m | **RESOLVED.** Crash was sizeof(Scene) mismatch, not WE limitation. Now using 1000m patch. |
 | H(0) spectrum override requires WE source modification | Fork `wiOcean.cpp` H(0) init. Minimal change (replace Phillips call with JONSWAP). |
 | 6-DOF stability with large waves | RK2 at 50Hz should handle wave periods >5s. Add implicit damping if needed. Cap heave/roll/pitch rates. |
 | Multi-swapchain on varied hardware | Test on Intel/NVIDIA/AMD. Fallback to single-framebuffer split via display driver. |

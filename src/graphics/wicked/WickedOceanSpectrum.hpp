@@ -161,37 +161,43 @@ namespace OceanSpectrum {
     /// Phillips spectrum with Hasselmann directional spreading.
     /// Uses the same non-directional Phillips energy as WE, but replaces
     /// the cos^2(theta) term with frequency-dependent Hasselmann spreading.
-    /// This is the key fix for the "accordion" pattern: short waves spread
-    /// broadly across directions, creating a chaotic sea surface.
+    ///
+    /// UNIT FIX: L is computed in METERS (not cm) so that L*k is dimensionless
+    /// when k is in rad/m from the FFT grid. Without this fix, a 1000m patch
+    /// has no exponential cutoff and dumps all energy into the longest waves.
+    ///
+    /// The `scaleFactor` parameter replaces wave_amplitude as the energy control.
+    /// It should be pre-computed via computeSpectrumScale() to produce a target Hs.
     ///
     /// @param kx, kz Wave vector components (rad/m, from FFT grid)
     /// @param windDirX, windDirZ Normalized wind direction
     /// @param windSpeedCmps Wind speed (cm/s, WE convention)
-    /// @param waveAmplitude WE wave_amplitude parameter
+    /// @param scaleFactor Pre-computed normalization (from computeSpectrumScale)
     inline float PhillipsHasselmann(float kx, float kz,
                                      float windDirX, float windDirZ,
-                                     float windSpeedCmps, float waveAmplitude) {
+                                     float windSpeedCmps, float scaleFactor) {
         float k2 = kx * kx + kz * kz;
         if (k2 < 1e-12f) return 0.0f;
         float k = std::sqrt(k2);
 
-        // Phillips non-directional spectrum.
-        // WE Phillips = a * exp(-1/(L^2*k^2)) / k^6 * (kDotW)^2
-        //             = a * exp(-1/(L^2*k^2)) / k^4 * cos^2(theta)
-        // Non-directional part is / k^4 (the k^2 from (kDotW)^2 cancels two of the k^6).
-        float v = windSpeedCmps;
-        float L = v * v / G_CM;
-        float dampL = L / 1000.0f;
-        float a = waveAmplitude * 1e-7f;
-        float S_nd = a * std::exp(-1.0f / (L * L * k2)) / (k2 * k2);  // k^4, NOT k^6
+        // Phillips non-directional spectrum with CONSISTENT units.
+        // L = U^2/g in METERS (converting wind from cm/s to m/s first).
+        float windMps = windSpeedCmps / 100.0f;
+        if (windMps < 0.3f) return 0.0f;
+        float L = windMps * windMps / G;        // meters
+        float dampL = L / 1000.0f;              // high-k damping scale (meters)
+
+        // Phillips alpha constant (Pierson-Moskowitz standard)
+        constexpr float ALPHA_PM = 8.1e-3f;
+
+        float S_nd = ALPHA_PM * std::exp(-1.0f / (L * L * k2)) / (k2 * k2);
         S_nd *= std::exp(-k2 * dampL * dampL);
         if (S_nd <= 0.0f) return 0.0f;
 
         // Deep water dispersion: omega = sqrt(g * k)
         float omega = std::sqrt(G * k);
         // Peak frequency from Pierson-Moskowitz: omega_p = g / U
-        float windMps = windSpeedCmps / 100.0f;
-        float omega_peak = (windMps > 0.3f) ? G / windMps : 30.0f;
+        float omega_peak = G / windMps;
 
         // Frequency-dependent spreading
         float s = hasselmannS(omega, omega_peak);
@@ -203,8 +209,52 @@ namespace OceanSpectrum {
 
         float D = hasselmannD(cosTheta, s);
 
-        // Return sqrt(S * D) -- matches WE's sqrt(Phillips(...)) format
-        return std::sqrt(S_nd * D);
+        // Return scaleFactor * sqrt(S * D) -- matches WE's sqrt(Phillips(...)) format
+        return scaleFactor * std::sqrt(S_nd * D);
+    }
+
+    /// Compute the raw (unscaled) spectrum energy sum over an FFT grid.
+    /// Returns Σ S_nd(k)*D(k) for all modes, where the callback uses scaleFactor=1.
+    /// Used to derive the correct scaleFactor for a target Hs.
+    inline float computeSpectrumEnergySum(float windSpeedCmps,
+                                           float windDirX, float windDirZ,
+                                           float patchLength, int fftDim) {
+        float totalEnergy = 0.0f;
+        float dk = 2.0f * PI / patchLength;
+        int halfDim = fftDim / 2;
+
+        for (int i = 0; i <= fftDim; i++) {
+            float ky = (-halfDim + (float)i) * dk;
+            for (int j = 0; j <= fftDim; j++) {
+                float kx = (-halfDim + (float)j) * dk;
+                if (kx == 0.0f && ky == 0.0f) continue;
+
+                float val = PhillipsHasselmann(kx, ky, windDirX, windDirZ,
+                                                windSpeedCmps, 1.0f);
+                totalEnergy += val * val;  // callback returns sqrt(S*D), so val²=S*D
+            }
+        }
+        return totalEnergy;
+    }
+
+    /// Compute the scale factor for PhillipsHasselmann to produce a target Hs.
+    /// Hs = 4*sqrt(m0), where m0 = Σ callback² / 2 = Σ (scale² * S*D) / 2.
+    /// So scale = Hs / (4 * sqrt(energySum / 2)).
+    /// Returns 0 if the spectrum has no energy (wind too low for this FFT grid).
+    inline float computeSpectrumScale(float targetHs,
+                                       float windSpeedCmps,
+                                       float windDirX, float windDirZ,
+                                       float patchLength, int fftDim) {
+        if (targetHs < 0.001f) return 0.0f;
+
+        float energySum = computeSpectrumEnergySum(windSpeedCmps, windDirX, windDirZ,
+                                                    patchLength, fftDim);
+        if (energySum < 1e-20f) return 0.0f;
+
+        // m0 = scale² * energySum / 2
+        // Hs = 4 * sqrt(m0) = 4 * scale * sqrt(energySum / 2)
+        // scale = Hs / (4 * sqrt(energySum / 2))
+        return targetHs / (4.0f * std::sqrt(energySum * 0.5f));
     }
 
     /// TMA spectrum (Texel-MARSEN-ARSLOE) for shallow water.

@@ -114,6 +114,7 @@ public:
         bc::graphics::Vec3 getWheelControlPosition() const;
         float getWheelControlScale() const;
         bool isSingleEngine() const;
+        float getMaxEngineRevs() const;
         bool isAzimuthDrive() const;
         bool isAzimuthAsternAllowed() const;
         bool isAzimuth1Master() const;

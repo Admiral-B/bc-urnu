@@ -254,6 +254,7 @@
     <ClCompile Include="..\graphics\wicked\miniply.cpp" />
     <ClCompile Include="..\graphics\wicked\WickedMultiView.cpp" />
     <ClCompile Include="..\graphics\wicked\WickedVRView.cpp" />
+    <ClCompile Include="..\graphics\wicked\WickedVRSession.cpp" />
     <ClCompile Include="..\graphics\wicked\WickedKelvinWake.cpp" />
     <ClCompile Include="..\graphics\wicked\WickedMultiCascadeOcean.cpp" />
     <ClCompile Include="..\graphics\wicked\WickedImGui.cpp" />
@@ -361,6 +362,8 @@
     <ClInclude Include="..\graphics\wicked\WickedWater.hpp" />
     <ClInclude Include="..\graphics\wicked\WickedTerrainNode.hpp" />
     <ClInclude Include="..\graphics\wicked\WickedMultiView.hpp" />
+    <ClInclude Include="..\graphics\wicked\WickedVRView.hpp" />
+    <ClInclude Include="..\graphics\wicked\WickedVRSession.hpp" />
     <ClInclude Include="..\graphics\wicked\WickedModelImporter.hpp" />
     <ClInclude Include="..\graphics\wicked\miniply.h" />
     <ClInclude Include="..\graphics\wicked\WickedImGui.hpp" />

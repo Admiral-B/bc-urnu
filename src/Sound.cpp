@@ -34,6 +34,8 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 	float Sound::getVolumeHorn() const {return 0;}
 	float Sound::getVolumeAlarm() const {return 0;}
 	void Sound::setEnginePitch(float pitch) {}
+	void Sound::setEnvironment(float beaufort, float windSpeedKn) {}
+	void Sound::setEngineCharacter(float maxRPM, int cylinders, int stroke) {}
 
 #else // WITH_SOUND
 
@@ -57,6 +59,20 @@ int Sound::engineSampleRate = 44100;
 double Sound::enginePhase = 0;
 double Sound::dieselPhase = 0;
 float Sound::lpState[2] = {0.0f, 0.0f};
+float Sound::beaufortLevel = 0.0f;
+float Sound::windSpeedKnots = 0.0f;
+float Sound::windLpState[2] = {0.0f, 0.0f};
+float Sound::windBpState[2] = {0.0f, 0.0f};
+float Sound::windGustPhase = 0.0f;
+float Sound::engMaxRPM = 1000.0f;
+int Sound::engCylinders = 6;
+int Sound::engStroke = 4;
+float Sound::engIdleRPM = 200.0f;
+float Sound::engLpBase = 1200.0f;
+float Sound::engLpRange = 3000.0f;
+float Sound::engDieselMix = 0.25f;
+float Sound::engPlayRateBase = 0.85f;
+float Sound::engPlayRateRange = 0.23f;
 
 Sound::Sound() {
 
@@ -238,6 +254,65 @@ void Sound::setEnginePitch(float pitch) {
 	if (pitch < 0.25f) pitch = 0.25f;
 	if (pitch > 4.0f) pitch = 4.0f;
 	Sound::enginePitchValue = pitch;
+}
+
+void Sound::setEngineCharacter(float maxRPM, int cylinders, int stroke) {
+	if (maxRPM < 10.0f) maxRPM = 1000.0f;
+	if (cylinders < 1) cylinders = 6;
+	if (stroke != 2) stroke = 4;
+
+	Sound::engMaxRPM = maxRPM;
+	Sound::engCylinders = cylinders;
+	Sound::engStroke = stroke;
+	Sound::engIdleRPM = maxRPM * 0.3f;
+
+	if (maxRPM <= 200.0f) {
+		// Slow-speed marine diesel (large cargo, tanker, paddle steamer)
+		Sound::engLpBase = 300.0f;
+		Sound::engLpRange = 800.0f;
+		Sound::engDieselMix = 0.45f;
+		Sound::engPlayRateBase = 0.80f;
+		Sound::engPlayRateRange = 0.10f;
+	} else if (maxRPM <= 500.0f) {
+		// Medium-slow (older cargo, fishing vessels)
+		Sound::engLpBase = 500.0f;
+		Sound::engLpRange = 1500.0f;
+		Sound::engDieselMix = 0.35f;
+		Sound::engPlayRateBase = 0.82f;
+		Sound::engPlayRateRange = 0.15f;
+	} else if (maxRPM <= 1200.0f) {
+		// Medium-speed (tugs, workboats, modern cargo)
+		Sound::engLpBase = 800.0f;
+		Sound::engLpRange = 2500.0f;
+		Sound::engDieselMix = 0.25f;
+		Sound::engPlayRateBase = 0.85f;
+		Sound::engPlayRateRange = 0.23f;
+	} else if (maxRPM <= 3000.0f) {
+		// High-speed diesel (fast ferries, patrol boats)
+		Sound::engLpBase = 1500.0f;
+		Sound::engLpRange = 4000.0f;
+		Sound::engDieselMix = 0.15f;
+		Sound::engPlayRateBase = 0.75f;
+		Sound::engPlayRateRange = 0.50f;
+	} else {
+		// Very high-speed (outboards, jet drives, RIBs)
+		Sound::engLpBase = 2000.0f;
+		Sound::engLpRange = 6000.0f;
+		Sound::engDieselMix = 0.08f;
+		Sound::engPlayRateBase = 0.60f;
+		Sound::engPlayRateRange = 0.80f;
+	}
+
+	std::cout << "Engine character: " << maxRPM << " RPM, "
+	          << cylinders << "-cyl " << stroke << "-stroke"
+	          << ", lpBase=" << engLpBase << ", dieselMix=" << engDieselMix << std::endl;
+}
+
+void Sound::setEnvironment(float beaufort, float windSpeedKn) {
+	if (beaufort < 0.0f) beaufort = 0.0f;
+	if (beaufort > 12.0f) beaufort = 12.0f;
+	Sound::beaufortLevel = beaufort;
+	Sound::windSpeedKnots = windSpeedKn;
 }
 
 Sound::~Sound() {

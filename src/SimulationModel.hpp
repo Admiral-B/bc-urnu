@@ -329,6 +329,7 @@ public:
     void setManOverboardPos(float positionX, float positionZ);   //To be used directly, eg when in secondary display mode only
     bool hasGPS() const;
     bool isSingleEngine() const;
+    float getMaxEngineRevs() const;
     bool isAzimuthDrive() const;
     bool isAzimuthAsternAllowed() const;
     float inputToAzimuthEngineMapping(float inputAngle) const;

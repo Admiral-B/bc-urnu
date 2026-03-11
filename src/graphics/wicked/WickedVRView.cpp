@@ -10,6 +10,7 @@
 #include "WickedVRView.hpp"
 #include <iostream>
 #include <cmath>
+#include <cstring>
 
 namespace bc { namespace graphics { namespace wicked {
 
@@ -24,18 +25,26 @@ void WickedVRView::init(wi::scene::Scene* scene, int eyeWidth, int eyeHeight) {
 
     weScene = scene;
 
+    wi::graphics::GraphicsDevice* device = wi::graphics::GetDevice();
+
     for (int eye = 0; eye < EYE_COUNT; ++eye) {
         auto& ev = eyes[eye];
         ev.width = eyeWidth;
         ev.height = eyeHeight;
 
-        // Create a camera entity for this eye
+        // Create a standalone camera component (not entity-based, like MultiView)
+        ev.camera = std::make_unique<wi::scene::CameraComponent>();
+        ev.camera->zNearP = nearPlane;
+        ev.camera->zFarP = farPlane;
+        ev.camera->width = (float)eyeWidth;
+        ev.camera->height = (float)eyeHeight;
+
+        // Also create an entity-based camera for scene queries
         std::string name = (eye == EYE_LEFT) ? "BC_VR_LeftEye" : "BC_VR_RightEye";
         ev.cameraEntity = weScene->Entity_CreateCamera(
             name, eyeWidth, eyeHeight, nearPlane, farPlane);
 
-        // Create render target texture for this eye.
-        // The rendered image will be copied into the OpenXR swapchain.
+        // Create render target texture for this eye
         wi::graphics::TextureDesc desc;
         desc.width = eyeWidth;
         desc.height = eyeHeight;
@@ -48,7 +57,6 @@ void WickedVRView::init(wi::scene::Scene* scene, int eyeWidth, int eyeHeight) {
         desc.array_size = 1;
         desc.layout = wi::graphics::ResourceState::RENDERTARGET;
 
-        wi::graphics::GraphicsDevice* device = wi::graphics::GetDevice();
         bool ok = device->CreateTexture(&desc, nullptr, &ev.renderTarget);
         if (!ok) {
             std::cerr << "WickedVRView: Failed to create render target for eye " << eye << std::endl;
@@ -73,6 +81,29 @@ void WickedVRView::init(wi::scene::Scene* scene, int eyeWidth, int eyeHeight) {
             continue;
         }
 
+        // Create RenderPath3D for this eye (same pattern as WickedMultiView)
+        ev.renderPath = std::make_unique<wi::RenderPath3D>();
+        ev.renderPath->init(eyeWidth, eyeHeight);
+        ev.renderPath->scene = weScene;
+        ev.renderPath->camera = ev.camera.get();
+        ev.renderPath->setSceneUpdateEnabled(false); // Main path updates the scene
+
+        // VR quality: favor performance over quality for 90fps target
+        ev.renderPath->setSSREnabled(false);        // SSR is expensive
+        ev.renderPath->setFXAAEnabled(true);
+        ev.renderPath->setBloomEnabled(true);
+        ev.renderPath->setLensFlareEnabled(false);   // Distracting in VR
+        ev.renderPath->setAO(wi::RenderPath3D::AO_HBAO);
+        ev.renderPath->setAORange(1.5f);
+        ev.renderPath->setAOPower(1.5f);
+        ev.renderPath->setEyeAdaptionEnabled(true);
+        ev.renderPath->setEyeAdaptionKey(0.08f);
+        ev.renderPath->setLightShaftsEnabled(true);
+        ev.renderPath->setLightShaftsStrength(0.03f);
+        ev.renderPath->setExposure(1.1f);
+        ev.renderPath->setSharpenFilterEnabled(false); // Can cause shimmer in VR
+        ev.renderPath->setDitherEnabled(true);
+
         ev.active = true;
     }
 
@@ -89,32 +120,22 @@ void WickedVRView::updateEyePose(int eyeIndex,
     if (eyeIndex < 0 || eyeIndex >= EYE_COUNT || !initialized) return;
 
     auto& ev = eyes[eyeIndex];
-    if (!ev.active) return;
+    if (!ev.active || !ev.camera) return;
 
-    auto* cam = weScene->cameras.GetComponent(ev.cameraEntity);
-    if (!cam) return;
+    auto* cam = ev.camera.get();
 
     // Set eye position
     cam->Eye = XMFLOAT3(position.x, position.y, position.z);
 
-    // Convert quaternion orientation to a forward/up vector pair for WE camera
-    // OpenXR uses right-handed coordinates; WE uses left-handed.
-    // The coordinate transform (Z negation) should be applied by the caller,
-    // consistent with how VRInterface already transforms poses.
-
-    // Convert quaternion to rotation matrix manually
+    // Convert quaternion to rotation matrix for forward/up extraction
+    // OpenXR: right-handed. WE: left-handed. Caller must Z-flip poses.
     float qx = orientation.x, qy = orientation.y, qz = orientation.z, qw = orientation.w;
     float xx = qx * qx, yy = qy * qy, zz = qz * qz;
     float xy = qx * qy, xz = qx * qz, xw = qx * qw;
     float yz = qy * qz, yw = qy * qw, zw = qz * qw;
 
-    // Forward direction (negative Z in OpenXR convention, already Z-flipped by caller)
+    // Forward = -Z column of rotation matrix
     XMFLOAT3 forward;
-    forward.x = 2.0f * (xy - zw);
-    forward.y = 1.0f - 2.0f * (xx + zz);
-    forward.z = 2.0f * (yz + xw);
-
-    // Actually, forward is -Z column of rotation matrix:
     forward.x = -(2.0f * (xz + yw));
     forward.y = -(2.0f * (yz - xw));
     forward.z = -(1.0f - 2.0f * (xx + yy));
@@ -124,21 +145,18 @@ void WickedVRView::updateEyePose(int eyeIndex,
         cam->Eye.y + forward.y,
         cam->Eye.z + forward.z);
 
-    // Up direction (Y column of rotation matrix)
+    // Up = Y column of rotation matrix
     cam->Up = XMFLOAT3(
         2.0f * (xy - zw),
         1.0f - 2.0f * (xx + zz),
         2.0f * (yz + xw));
 
-    // Set asymmetric projection from OpenXR FOV angles.
-    // WE's CameraComponent supports custom projection matrices.
-    float tanLeft = std::tan(fovLeft);    // negative for left
-    float tanRight = std::tan(fovRight);  // positive for right
-    float tanUp = std::tan(fovUp);        // positive for up
-    float tanDown = std::tan(fovDown);    // negative for down
+    // Build asymmetric projection from OpenXR FOV angles
+    float tanLeft = std::tan(fovLeft);
+    float tanRight = std::tan(fovRight);
+    float tanUp = std::tan(fovUp);
+    float tanDown = std::tan(fovDown);
 
-    // Build asymmetric perspective projection matrix (row-major for WE/DirectXMath)
-    // This matches the OpenXR asymmetric frustum exactly.
     float nearZ = nearPlane;
     float farZ = farPlane;
     float invWidth = 1.0f / (tanRight - tanLeft);
@@ -157,33 +175,50 @@ void WickedVRView::updateEyePose(int eyeIndex,
 
     cam->Projection = proj;
     cam->SetDirty();
+
+    // Also update the view matrix via TransformCamera for WE internal use
+    DirectX::XMVECTOR vEye = DirectX::XMVectorSet(position.x, position.y, position.z, 1.0f);
+    DirectX::XMVECTOR vAt = DirectX::XMVectorSet(cam->At.x, cam->At.y, cam->At.z, 1.0f);
+    DirectX::XMVECTOR vUp = DirectX::XMVectorSet(cam->Up.x, cam->Up.y, cam->Up.z, 0.0f);
+    DirectX::XMMATRIX viewMat = DirectX::XMMatrixLookAtLH(vEye, vAt, vUp);
+    DirectX::XMMATRIX invView = DirectX::XMMatrixInverse(nullptr, viewMat);
+    cam->TransformCamera(invView);
+
+    // Override projection after TransformCamera (it recomputes from fov)
+    cam->Projection = proj;
 }
 
 void WickedVRView::renderEye(int eyeIndex) {
     if (eyeIndex < 0 || eyeIndex >= EYE_COUNT || !initialized) return;
 
     auto& ev = eyes[eyeIndex];
-    if (!ev.active) return;
+    if (!ev.active || !ev.renderPath) return;
 
-    // TODO: When OpenXR graphics binding is changed from OpenGL to Vulkan/D3D12,
-    // render the scene using WE's RenderPath3D targeting ev.renderTarget.
-    //
-    // The render flow would be:
-    //   1. Set the active camera to this eye's camera
-    //   2. Configure the render path to output to ev.renderTarget
-    //   3. Execute the render path for this eye
-    //   4. The resulting texture can then be copied to the OpenXR swapchain
-    //
-    // For now, this is a no-op as the actual rendering integration requires
-    // the OpenXR Vulkan/D3D12 extension and swapchain interop that can only
-    // be tested with VR hardware.
-    //
-    // Approach options:
-    //   A) Render to WE texture, then CopyTexture into OpenXR swapchain image
-    //   B) Create OpenXR swapchains with WE-compatible format and render directly
-    //   C) Use WE's render-to-texture, resolve MSAA, then blit to OpenXR
-    //
-    // Option B is preferred for performance (avoids copy).
+    // Run the full render pipeline for this eye (same sequence as WickedMultiView)
+    ev.renderPath->init(ev.width, ev.height);
+    ev.renderPath->PreUpdate();
+    ev.renderPath->Update(0);
+    ev.renderPath->PostUpdate();
+    ev.renderPath->PreRender();
+    ev.renderPath->Render();
+    ev.renderPath->PostRender();
+
+    // Compose the final image into our render target
+    auto* device = wi::graphics::GetDevice();
+    wi::graphics::CommandList cmd = device->BeginCommandList();
+    wi::graphics::Viewport viewport;
+    viewport.width = (float)ev.width;
+    viewport.height = (float)ev.height;
+    device->BindViewports(1, &viewport, cmd);
+
+    wi::graphics::RenderPassImage rpImages[] = {
+        wi::graphics::RenderPassImage::RenderTarget(&ev.renderTarget,
+            wi::graphics::RenderPassImage::LoadOp::CLEAR),
+    };
+    device->RenderPassBegin(rpImages, 1, cmd);
+    ev.renderPath->Compose(cmd);
+    device->RenderPassEnd(cmd);
+    device->SubmitCommandLists();
 }
 
 const wi::graphics::Texture* WickedVRView::getEyeTexture(int eyeIndex) const {
@@ -194,7 +229,7 @@ const wi::graphics::Texture* WickedVRView::getEyeTexture(int eyeIndex) const {
 
 wi::scene::CameraComponent* WickedVRView::getCamera(int eyeIndex) {
     if (eyeIndex < 0 || eyeIndex >= EYE_COUNT || !initialized) return nullptr;
-    return weScene->cameras.GetComponent(eyes[eyeIndex].cameraEntity);
+    return eyes[eyeIndex].camera.get();
 }
 
 void WickedVRView::setClipPlanes(float nearZ, float farZ) {
@@ -207,6 +242,8 @@ void WickedVRView::shutdown() {
 
     for (int eye = 0; eye < EYE_COUNT; ++eye) {
         auto& ev = eyes[eye];
+        ev.renderPath.reset();
+        ev.camera.reset();
         if (ev.cameraEntity != wi::ecs::INVALID_ENTITY && weScene) {
             weScene->Entity_Remove(ev.cameraEntity);
             ev.cameraEntity = wi::ecs::INVALID_ENTITY;

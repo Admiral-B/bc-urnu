@@ -120,10 +120,12 @@ namespace WaveMotion {
         }
         p.omega_pitch = TWO_PI / T_pitch;
 
-        // Damping ratios
-        p.zeta_heave = 0.30f;  // heavily damped by waterplane area
-        p.zeta_pitch = (pitchDamping > 0.01f) ? pitchDamping : 0.20f;
-        p.zeta_roll  = (rollDamping > 0.01f) ? rollDamping : 0.10f;
+        // Damping ratios: scale with ship size (larger vessels have bilge keels,
+        // anti-roll tanks, and more hull form damping). Small boats ~0.08, ferries ~0.25.
+        float sizeFactor = std::min(1.0f, p.shipLength / 200.0f); // 0..1 over 0..200m
+        p.zeta_heave = 0.30f + sizeFactor * 0.15f;
+        p.zeta_pitch = (pitchDamping > 0.01f) ? pitchDamping : (0.20f + sizeFactor * 0.10f);
+        p.zeta_roll  = (rollDamping > 0.01f) ? rollDamping : (0.10f + sizeFactor * 0.20f);
 
         return p;
     }
@@ -322,21 +324,31 @@ namespace WaveMotion {
     /// especially for parametric rolling (beam seas) and bow slamming.
     inline void updateMultiPoint(MotionState& state, const SeakeepingParams& params,
                                   float dt, const HullPoint grid[GRID_N],
-                                  const float heights[GRID_N])
+                                  const float heights[GRID_N],
+                                  float windSpeedMps = 10.0f, float headingRelWaveRad = 0.0f)
     {
         dt = std::min(dt, 0.1f);
         if (dt < 1e-6f) return;
 
         BuoyancyResult buoy = computeBuoyancy(grid, heights, params);
 
+        // Large ships bridge over short waves: reduce excitation by
+        // the ratio of ship dimension to dominant wavelength.
+        // Pitch uses ship length, roll uses ship breadth.
+        float lambda = dominantWavelength(windSpeedMps, 1000.0f);
+        float heaveReduction = wavelengthReduction(params.shipLength, lambda, headingRelWaveRad);
+        float pitchReduction = wavelengthReduction(params.shipLength, lambda, headingRelWaveRad);
+        // Roll: beam seas (mu=PI/2) are worst, use breadth as effective length
+        float rollReduction = wavelengthReduction(params.shipBreadth, lambda, headingRelWaveRad + PI * 0.5f);
+
         integrateOscillator(state.heave, params.omega_heave, params.zeta_heave,
-                           buoy.meanHeight, dt);
+                           buoy.meanHeight * heaveReduction, dt);
 
         integrateOscillator(state.pitch, params.omega_pitch, params.zeta_pitch,
-                           buoy.pitchMoment, dt);
+                           buoy.pitchMoment * pitchReduction, dt);
 
         integrateOscillator(state.roll, params.omega_roll, params.zeta_roll,
-                           buoy.rollMoment, dt);
+                           buoy.rollMoment * rollReduction, dt);
     }
 
 } // namespace WaveMotion

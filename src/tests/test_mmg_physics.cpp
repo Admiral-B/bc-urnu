@@ -1070,3 +1070,133 @@ TEST_CASE("Zero current gives same result as no current", "[mmg][current]") {
     REQUIRE(state1.surge == Approx(state2.surge).margin(0.001));
     REQUIRE(state1.posZ == Approx(state2.posZ).margin(0.01));
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Azimuth Drive MMG Tests
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Helper: create a twin azimuth tug for testing
+static MMGPhysicsModel createAzimuthTug() {
+    ShipDimensions dims;
+    dims.length = 30.0;
+    dims.beam = 10.0;
+    dims.draught = 4.0;
+    dims.displacement = 400.0 * 1000.0; // 400 tonnes
+    dims.blockCoefficient = 0.87;
+    dims.maxSpeed = 6.0 * 0.5144; // 6 knots
+    dims.maxEngineForce = 300000.0; // Total (split between two drives)
+    dims.propellerDiameter = 1.5;
+    dims.maxRPM = 1600.0;
+    dims.singleEngine = false;
+    dims.propellorSpacing = 6.0;
+
+    MMGCoefficients coeffs;
+    coeffs.estimateFromDimensions(dims);
+    return MMGPhysicsModel(dims, coeffs);
+}
+
+TEST_CASE("Azimuth drive ahead produces forward motion", "[mmg][azimuth]") {
+    auto model = createAzimuthTug();
+
+    PhysicsInput input;
+    input.isAzimuthDrive = true;
+    input.portEngine = 0.5;
+    input.stbdEngine = 0.5;
+    input.portAzimuthAngleDeg = 90.0;  // ahead
+    input.stbdAzimuthAngleDeg = 270.0; // ahead
+    input.aziDriveLeverArm = 30.0 * (0.5 - 0.3); // stern drives
+
+    PhysicsState state;
+    state = simulate(model, input, state, 60.0);
+
+    REQUIRE(state.surge > 1.0); // Must move forward
+    REQUIRE(std::abs(state.sway) < 0.5); // Minimal lateral drift
+    REQUIRE(std::abs(state.heading) < 5.0); // Roughly straight
+}
+
+TEST_CASE("Azimuth drive lateral produces sway without much yaw", "[mmg][azimuth]") {
+    auto model = createAzimuthTug();
+
+    PhysicsInput input;
+    input.isAzimuthDrive = true;
+    // Both drives pointing to starboard
+    input.portEngine = 0.3;
+    input.stbdEngine = 0.3;
+    input.portAzimuthAngleDeg = 0.0;   // starboard
+    input.stbdAzimuthAngleDeg = 180.0; // port... wait, 180 = port direction
+    // Actually for both pointing stbd: port=0, stbd=360(=0)
+    input.portAzimuthAngleDeg = 0.0;
+    input.stbdAzimuthAngleDeg = 0.0;
+    input.aziDriveLeverArm = 30.0 * (0.5 - 0.3);
+
+    PhysicsState state;
+    state = simulate(model, input, state, 30.0);
+
+    // Ship should have moved laterally
+    REQUIRE(std::abs(state.sway) > 0.1);
+}
+
+TEST_CASE("Azimuth drive differential angle produces yaw", "[mmg][azimuth]") {
+    auto model = createAzimuthTug();
+
+    PhysicsInput input;
+    input.isAzimuthDrive = true;
+    input.portEngine = 0.5;
+    input.stbdEngine = 0.5;
+    // Port ahead, stbd astern = turning moment
+    input.portAzimuthAngleDeg = 90.0;  // ahead
+    input.stbdAzimuthAngleDeg = 90.0;  // also ahead but reversed angle convention
+    // Actually, starboard at 270 is ahead. Let's do port ahead, stbd reversed:
+    input.portAzimuthAngleDeg = 90.0;  // ahead
+    input.stbdAzimuthAngleDeg = 90.0;  // this means the stbd drive also points "ahead" but in azimuth coords
+    input.aziDriveLeverArm = 30.0 * (0.5 - 0.3);
+
+    // For yaw: put port ahead, stbd astern
+    input.portEngine = 0.5;
+    input.stbdEngine = -0.5; // astern
+
+    PhysicsState state;
+    state = simulate(model, input, state, 30.0);
+
+    // Differential thrust should produce significant yaw
+    REQUIRE(std::abs(state.yawRate) > 0.1);
+}
+
+TEST_CASE("Azimuth drive zero engine produces no motion", "[mmg][azimuth]") {
+    auto model = createAzimuthTug();
+
+    PhysicsInput input;
+    input.isAzimuthDrive = true;
+    input.portEngine = 0.0;
+    input.stbdEngine = 0.0;
+    input.portAzimuthAngleDeg = 90.0;
+    input.stbdAzimuthAngleDeg = 270.0;
+    input.aziDriveLeverArm = 6.0;
+
+    PhysicsState state;
+    state = simulate(model, input, state, 10.0);
+
+    REQUIRE(std::abs(state.surge) < 0.01);
+    REQUIRE(std::abs(state.sway) < 0.01);
+    REQUIRE(std::abs(state.yawRate) < 0.01);
+}
+
+TEST_CASE("Azimuth hull forces still apply (drag decelerates)", "[mmg][azimuth]") {
+    auto model = createAzimuthTug();
+
+    // Give ship initial forward speed, no engine thrust
+    PhysicsInput input;
+    input.isAzimuthDrive = true;
+    input.portEngine = 0.0;
+    input.stbdEngine = 0.0;
+    input.portAzimuthAngleDeg = 90.0;
+    input.stbdAzimuthAngleDeg = 270.0;
+
+    PhysicsState state;
+    state.surge = 3.0; // 3 m/s initial forward speed
+
+    state = simulate(model, input, state, 60.0);
+
+    // Should have decelerated due to hull drag
+    REQUIRE(state.surge < 1.0);
+}

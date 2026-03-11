@@ -1609,6 +1609,11 @@ SimulationModel::~SimulationModel()
         return ownShip.isSingleEngine();
     }
 
+    float SimulationModel::getMaxEngineRevs() const
+    {
+        return ownShip.getMaxEngineRevs();
+    }
+
     bool SimulationModel::isAzimuthDrive() const
     {
         return ownShip.isAzimuthDrive();
@@ -2049,6 +2054,9 @@ SimulationModel::~SimulationModel()
         //update the camera position
         camera.update(deltaTime);
         }{ IPROF("Update 3D audio");
+        // Environmental audio: scale wave/wind by Beaufort
+        sound->setEnvironment(weather, windSpeed);
+
         // Position listener at camera, engine source aft of ship
         bc::graphics::Vec3 camPos = camera.getPosition();
         bc::graphics::Vec3 camFwd = camera.getForwardVector();

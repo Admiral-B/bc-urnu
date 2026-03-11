@@ -131,6 +131,13 @@ private:
     void computeRudderForces(double u, double v, double r,
                               double rudderAngle, double engineSetting,
                               double& Xr, double& Yr, double& Nr) const;
+
+    // Azimuth drive: vectored thrust replaces propeller + rudder
+    // Returns surge force Xa, sway force Ya, yaw moment Na
+    void computeAzimuthForces(double u, double portEngine, double stbdEngine,
+                               double portAngleDeg, double stbdAngleDeg,
+                               double leverArm,
+                               double& Xa, double& Ya, double& Na) const;
 };
 
 #endif // __MMGPHYSICSMODEL_HPP_INCLUDED__

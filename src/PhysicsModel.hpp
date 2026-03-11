@@ -47,6 +47,12 @@ struct PhysicsInput {
     double bankDistancePort = 1000.0;  // Distance to bank on port side (m, 1000 = no effect)
     double bankDistanceStbd = 1000.0;  // Distance to bank on starboard side (m, 1000 = no effect)
 
+    // Azimuth drive parameters (ignored when isAzimuthDrive is false)
+    bool isAzimuthDrive = false;
+    double portAzimuthAngleDeg = 90.0;  // Port azimuth angle (degrees, 90=ahead, 0=stbd, 180=port)
+    double stbdAzimuthAngleDeg = 270.0; // Stbd azimuth angle (degrees, 270=ahead)
+    double aziDriveLeverArm = 0.0;      // Distance from CG to azimuth drives along ship length (m, +ve = aft of CG)
+
     // Wind area parameters for Isherwood model (0 = use defaults from dims)
     double lateralWindArea = 0.0;  // Lateral projected area above waterline (m^2)
     double frontalWindArea = 0.0;  // Frontal/transverse projected area (m^2)

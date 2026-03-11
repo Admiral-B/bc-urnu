@@ -1207,6 +1207,20 @@ int main(int argc, char ** argv)
 	//Load sound files
 	sound.load(model.getOwnShipEngineSound(), model.getOwnShipWaveSound(), model.getOwnShipHornSound(), model.getOwnShipAlarmSound());
 
+    // Configure engine sound character from vessel parameters
+    {
+        float maxRevs = model.getMaxEngineRevs();
+        // Default cylinders/stroke based on engine class if not specified in ini
+        int cylinders = 6;
+        int stroke = 4;
+        if (maxRevs <= 200.0f) { cylinders = 6; stroke = 2; }       // slow-speed: 2-stroke
+        else if (maxRevs <= 500.0f) { cylinders = 6; stroke = 4; }   // medium-slow
+        else if (maxRevs <= 1200.0f) { cylinders = 6; stroke = 4; }  // medium-speed
+        else if (maxRevs <= 3000.0f) { cylinders = 4; stroke = 4; }  // high-speed
+        else { cylinders = 4; stroke = 4; }                           // very high-speed
+        sound.setEngineCharacter(maxRevs, cylinders, stroke);
+    }
+
     sound.setVolumeWave(IniFile::iniFileTof32(iniFilename, "wave_volume"));
 
     //Set up initial options

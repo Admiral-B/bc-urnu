@@ -36,6 +36,7 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 #include "OSMBuildingReader.hpp"
 #include "OSMWaterReader.hpp"
 #include "OSMLandUseReader.hpp"
+#include "VegetationPlacer.hpp"
 #include "../BuildingGenerator.hpp"
 #include "CoastlineData.hpp"
 #include "OSMLandPolygons.hpp"
@@ -3788,6 +3789,25 @@ void EditorApp::generateWorldFromArea() {
         for (int i = 0; i < resolution * resolution; i++) {
             if (dockEdgeMask[i] && heightGrid[i] > 0.0f)
                 landUseGrid[i] = static_cast<uint8_t>(LandUseType::Waterfront);
+        }
+
+        // Generate vegetation (trees) from land use classification
+        {
+            generateStatus = "Placing vegetation from land use data...";
+            VegetationPlacer placer;
+            placer.generate(landUseGrid.data(), heightGrid.data(), resolution,
+                            minLat, maxLat, minLon, maxLon, 15000,
+                            [this](const std::string& msg) { generateStatus = msg; });
+            if (!placer.getTrees().empty()) {
+                std::ofstream tf(outputDir + "/trees.ini");
+                if (tf.is_open()) tf << placer.generateTreesIni();
+
+                // Generate procedural tree billboard atlas (2x2, 256px per cell = 512x512 RGBA)
+                auto atlasPixels = VegetationPlacer::generateAtlasTexture(256);
+                VegetationPlacer::writeAtlasPNG(outputDir + "/tree_billboard.png", atlasPixels, 512, 512);
+
+                generateStatus = "Vegetation: " + std::to_string(placer.getTrees().size()) + " trees placed";
+            }
         }
 
         // Download satellite texture

@@ -592,7 +592,7 @@ void OwnShip::load(OwnShipData ownShipData, Vec3i numberOfContactPoints, float m
     // MMG Physics Model (optional, enabled by MMGMode=1 in boat.ini)
     useMMG = false;
     physicsAccumulator = 0;
-    if (IniFile::iniFileTou32(shipIniFilename, "MMGMode") == 1 && !azimuthDrive) {
+    if (IniFile::iniFileTou32(shipIniFilename, "MMGMode") == 1) {
         useMMG = true;
         device->getLogger()->log("MMG physics model enabled");
 
@@ -1482,6 +1482,11 @@ bool OwnShip::isSingleEngine() const
     return singleEngine;
 }
 
+float OwnShip::getMaxEngineRevs() const
+{
+    return maxEngineRevs;
+}
+
 bool OwnShip::isAzimuthDrive() const
 {
     return azimuthDrive;
@@ -2113,22 +2118,34 @@ void OwnShip::update(float deltaTime, float scenarioTime, float tideHeight, floa
 
         } // DEE_NOV22 end if conventional controls then calculate thrust thus
 
-        if (useMMG && !azimuthDrive) {
+        if (useMMG) {
             // ── MMG Physics Model (fixed-timestep sub-stepping) ──────────
-            // MMG handles: hull drag, propeller thrust, rudder forces, Coriolis coupling
-            // External forces (wind, collision, thrusters) are added as corrections after MMG steps
+            // MMG handles: hull drag, propeller/azimuth thrust, rudder forces, Coriolis coupling
+            // External forces (collision, thrusters) are added as corrections after MMG steps
 
             static constexpr float PHYSICS_DT = 0.02f; // 50Hz fixed timestep
 
             PhysicsInput mmgInput;
-            mmgInput.portEngine = portEngine;
-            mmgInput.stbdEngine = stbdEngine;
             mmgInput.rudderAngle = rudder; // degrees, +ve starboard
             mmgInput.waterDepth = std::max(0.1f, getDepth()); // Depth below keel (m)
             mmgInput.windSpeed = windSpeed;  // m/s (already converted above)
             mmgInput.windDirection = windDirection; // degrees, FROM direction
             mmgInput.currentSurge = axialStream;    // body-frame tidal stream (m/s)
             mmgInput.currentSway = lateralStream;   // body-frame tidal stream (m/s)
+
+            if (azimuthDrive) {
+                // Azimuth drive: pass angles and clutch-gated engine settings
+                mmgInput.isAzimuthDrive = true;
+                mmgInput.portAzimuthAngleDeg = portAzimuthAngle;
+                mmgInput.stbdAzimuthAngleDeg = stbdAzimuthAngle;
+                mmgInput.portEngine = portClutch ? portEngine : 0.0;
+                mmgInput.stbdEngine = stbdClutch ? stbdEngine : 0.0;
+                // Lever arm: distance from CG to azimuth drives along ship length
+                mmgInput.aziDriveLeverArm = aziDriveLateralLeverArm;
+            } else {
+                mmgInput.portEngine = portEngine;
+                mmgInput.stbdEngine = stbdEngine;
+            }
 
             physicsAccumulator += deltaTime;
             while (physicsAccumulator >= PHYSICS_DT) {

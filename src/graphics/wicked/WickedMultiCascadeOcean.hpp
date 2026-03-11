@@ -124,6 +124,8 @@ private:
     CascadeConfig configs[NUM_CASCADES];
     float waterHeight_ = 0.0f;
     float currentWeather_ = 0.0f;
+    float targetHs_ = 0.0f;              ///< Target significant wave height (meters)
+    float cachedSpectrumScale_ = 0.0f;    ///< Cached spectrum normalization factor
     float lastWindSpeed_ = -1.0f;
     float lastWindDir_ = 0.0f;
     bool visible_ = true;

@@ -15,6 +15,8 @@
 
 #include "WickedEngine.h"
 #include "../Types.hpp"
+#include <memory>
+#include <string>
 
 namespace bc { namespace graphics { namespace wicked {
 
@@ -23,6 +25,8 @@ struct VREyeView {
     wi::ecs::Entity cameraEntity = wi::ecs::INVALID_ENTITY;
     wi::graphics::Texture renderTarget;
     wi::graphics::Texture depthTarget;
+    std::unique_ptr<wi::RenderPath3D> renderPath;
+    std::unique_ptr<wi::scene::CameraComponent> camera;
     int width = 0;
     int height = 0;
     bool active = false;
@@ -38,10 +42,8 @@ struct VREyeView {
 //   3. Call renderEye() for each eye to render the scene
 //   4. Call getEyeTexture() to get the rendered result for OpenXR submission
 //
-// NOTE: This is scaffolding code. The actual OpenXR graphics binding must
-// change from OpenGL (XR_KHR_OPENGL_ENABLE) to either Vulkan
-// (XR_KHR_VULKAN_ENABLE) or D3D12 (XR_KHR_D3D12_ENABLE) depending on
-// the WE backend, and the OpenXR swapchain image types must match.
+// The OpenXR session (WickedVRSession) handles the D3D12 graphics binding,
+// swapchain management, and frame submission. This class handles WE rendering.
 class WickedVRView {
 public:
     WickedVRView() = default;
@@ -92,8 +94,8 @@ private:
 
     wi::scene::Scene* weScene = nullptr;
     VREyeView eyes[EYE_COUNT];
-    float nearPlane = 0.01f;
-    float farPlane = 100.0f;
+    float nearPlane = 0.1f;
+    float farPlane = 50000.0f;
     bool initialized = false;
 };
 

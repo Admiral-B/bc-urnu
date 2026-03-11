@@ -49,6 +49,8 @@ public:
 	float getVolumeHorn() const override;
 	float getVolumeAlarm() const override;
 	void setEnginePitch(float pitch) override;
+	void setEnvironment(float beaufort, float windSpeedKn) override;
+	void setEngineCharacter(float maxRPM, int cylinders, int stroke) override;
 
 #ifdef WITH_SOUND
 private:
@@ -80,6 +82,24 @@ private:
 	static double enginePhase;             // fractional playback position (frames)
 	static double dieselPhase;             // procedural diesel firing oscillator
 	static float lpState[2];              // one-pole low-pass state (per channel)
+
+	// Environmental audio state
+	static float beaufortLevel;           // current Beaufort number (0-12)
+	static float windSpeedKnots;          // wind speed in knots
+	static float windLpState[2];          // low-pass filter state for wind noise (per channel)
+	static float windBpState[2];          // band-pass state for wind tonal component
+	static float windGustPhase;           // slow oscillator for gust modulation
+
+	// Engine character parameters (set per vessel)
+	static float engMaxRPM;               // engine max RPM
+	static int engCylinders;              // number of cylinders
+	static int engStroke;                 // 2 or 4 stroke
+	static float engIdleRPM;             // derived idle RPM
+	static float engLpBase;              // base LP cutoff Hz
+	static float engLpRange;             // LP cutoff range Hz
+	static float engDieselMix;           // diesel synthesis mix (0-1)
+	static float engPlayRateBase;        // base playback rate
+	static float engPlayRateRange;       // playback rate variation
 
 	bool soundLoaded;
 	static bool waveSoundLoaded;
@@ -119,40 +139,65 @@ private:
 		std::vector<float> alarmBuffer(frameCount * channels);
 
 		// Engine: pre-decoded buffer with RPM-dependent filtering + diesel synthesis
+		// Parameters adapt to vessel type via engMaxRPM/engCylinders/engStroke
 		std::vector<float> engineBuffer(frameCount * channels, 0.0f);
 		if (engineBufFrames > 0 && engineBufChannels == channels) {
 			float pitch = enginePitchValue;
 			if (pitch < 0.25f) pitch = 0.25f;
 			if (pitch > 2.0f) pitch = 2.0f;
 
-			// Constrained playback rate: small variation avoids unnatural pitch shift
-			// pitch 0.5 (idle) -> rate 0.92, pitch 1.0 (full) -> rate 1.08
-			float playRate = 0.85f + pitch * 0.23f;
-			if (playRate < 0.75f) playRate = 0.75f;
-			if (playRate > 1.25f) playRate = 1.25f;
+			// Playback rate: configurable base + range
+			float playRate = engPlayRateBase + pitch * engPlayRateRange;
+			if (playRate < 0.5f) playRate = 0.5f;
+			if (playRate > 2.5f) playRate = 2.5f;
 
-			// RPM-dependent low-pass: darker at low RPM, brighter at high
-			float lpCutoff = 1200.0f + pitch * 3000.0f;
+			// RPM-dependent low-pass: configurable per vessel class
+			float lpCutoff = engLpBase + pitch * engLpRange;
 			float alpha = 1.0f - std::exp(-6.2832f * lpCutoff / (float)engineSampleRate);
 			if (alpha > 1.0f) alpha = 1.0f;
 
-			// Diesel firing pulse: 6-cyl 4-stroke, firing freq = RPM*6/120
-			// Map pitch to RPM: 0.5 -> ~400 RPM, 1.0 -> ~1000 RPM
-			float rpm = 200.0f + pitch * 800.0f;
-			float firingHz = rpm * 6.0f / 120.0f;
+			// Diesel firing: cylinders and stroke determine firing frequency
+			// 4-stroke: fires every other revolution -> freq = RPM * cyl / 120
+			// 2-stroke: fires every revolution -> freq = RPM * cyl / 60
+			float rpm = engIdleRPM + pitch * (engMaxRPM - engIdleRPM);
+			float strokeDiv = (engStroke == 2) ? 60.0f : 120.0f;
+			float firingHz = rpm * (float)engCylinders / strokeDiv;
 			double dieselInc = (double)firingHz / (double)engineSampleRate;
+
+			// Pulse width: slower engines have longer, heavier pulses
+			// Slow (60 RPM) -> 0.5 cycle, Fast (6000 RPM) -> 0.15 cycle
+			float pulseWidth = 0.5f - 0.35f * std::min(1.0f, engMaxRPM / 3000.0f);
+
+			// Diesel amplitude: louder for slow-speed (more mechanical),
+			// quieter for high-speed (smoother, more WAV-dependent)
+			float dieselAmp = 0.08f + 0.20f * (1.0f - std::min(1.0f, engMaxRPM / 3000.0f));
+			float dieselNoise = dieselAmp * 0.5f;
+
+			// Sub-harmonic rumble for slow-speed diesels (< 300 RPM)
+			float subRumble = (engMaxRPM < 300.0f) ? 0.12f : 0.0f;
+			float subFreqHz = rpm / ((engStroke == 2) ? 1.0f : 2.0f); // crankshaft rotation frequency
+
+			// Mix ratio: WAV vs diesel synthesis
+			float wavMix = 1.0f - engDieselMix;
+			float synMix = engDieselMix;
 
 			for (unsigned long i = 0; i < frameCount; i++) {
 				sf_count_t idx0 = ((sf_count_t)enginePhase) % engineBufFrames;
 				sf_count_t idx1 = (idx0 + 1) % engineBufFrames;
 				float frac = (float)(enginePhase - (double)(sf_count_t)enginePhase);
 
-				// Procedural diesel: short raised-cosine burst at firing rate
+				// Procedural diesel: raised-cosine burst at firing rate
 				float dp = (float)dieselPhase;
-				float pulse = (dp < 0.3f)
-					? 0.5f * (1.0f - std::cos(dp / 0.3f * 6.2832f)) : 0.0f;
+				float pulse = (dp < pulseWidth)
+					? 0.5f * (1.0f - std::cos(dp / pulseWidth * 6.2832f)) : 0.0f;
 				float noise = ((float)(rand() & 0x7FFF) / 16384.0f - 1.0f);
-				float diesel = pulse * 0.15f + noise * pulse * 0.08f;
+				float diesel = pulse * dieselAmp + noise * pulse * dieselNoise;
+
+				// Sub-harmonic rumble for slow-speed engines
+				if (subRumble > 0.0f) {
+					float subPhase = (float)std::fmod(enginePhase * subFreqHz / (double)engineSampleRate * 6.2832, 6.2832);
+					diesel += subRumble * std::sin(subPhase) * (0.8f + 0.2f * pulse);
+				}
 
 				dieselPhase += dieselInc;
 				if (dieselPhase >= 1.0) dieselPhase -= 1.0;
@@ -165,7 +210,7 @@ private:
 					// One-pole low-pass filter
 					lpState[c] += alpha * (raw - lpState[c]);
 
-					engineBuffer[i * channels + c] = lpState[c] * 0.75f + diesel * 0.25f;
+					engineBuffer[i * channels + c] = lpState[c] * wavMix + diesel * synMix;
 				}
 
 				enginePhase += (double)playRate;
@@ -243,17 +288,72 @@ private:
 			}
 		}
 
+		// Beaufort-scaled wave volume: silent at B0, full at B6+
+		float bWaveVol = waveVolume;
+		if (beaufortLevel <= 6.0f) {
+			bWaveVol *= beaufortLevel / 6.0f;
+		}
+
+		// Procedural wind: filtered white noise with gust modulation
+		// Wind audible from ~B3, strong by B7+
+		float windIntensity = 0.0f;
+		if (beaufortLevel > 2.0f) {
+			windIntensity = (beaufortLevel - 2.0f) / 5.0f; // 0 at B2, 1.0 at B7
+			if (windIntensity > 1.0f) windIntensity = 1.0f;
+		}
+
+		// Wind filter cutoff: higher wind = brighter noise (more high freq)
+		// ~200 Hz at light wind, ~2000 Hz at gale
+		float windCutoff = 200.0f + windIntensity * 1800.0f;
+		float windAlpha = 1.0f - std::exp(-6.2832f * windCutoff / (float)engineSampleRate);
+		if (windAlpha > 1.0f) windAlpha = 1.0f;
+
+		// Band-pass centre for tonal "howl" component (~400-800 Hz)
+		float howlFreq = 400.0f + windIntensity * 400.0f;
+		float howlBw = 0.05f; // narrow Q
+		float howlAlpha = 1.0f - std::exp(-6.2832f * howlFreq * howlBw / (float)engineSampleRate);
+
+		// Gust modulation: slow random oscillation (0.05-0.2 Hz)
+		float gustInc = (0.05f + windIntensity * 0.15f) / (float)engineSampleRate;
+
 		//Copy into output buffer, with mixing
-		for (int i = 0; i < frameCount * p_data->infoWave.channels; i++) {
-			out[i] = engineVolume*engineBuffer[i] * 0.33;
-			if (waveSoundLoaded) {
-				out[i] += waveVolume*waveBuffer[i] * 0.33;
+		for (unsigned long frame = 0; frame < frameCount; frame++) {
+			// Wind synthesis (mono, then copy to all channels)
+			float windSample = 0.0f;
+			if (windIntensity > 0.001f) {
+				float noise = ((float)(rand() & 0x7FFF) / 16384.0f - 1.0f);
+
+				// Low-pass filtered noise (broadband wind)
+				windLpState[0] += windAlpha * (noise - windLpState[0]);
+				float broadband = windLpState[0];
+
+				// Band-pass for tonal howl
+				windBpState[0] += howlAlpha * (noise - windBpState[0]);
+				windBpState[1] += howlAlpha * (windBpState[0] - windBpState[1]);
+				float howl = windBpState[0] - windBpState[1];
+
+				// Gust envelope: slow sine modulation
+				windGustPhase += gustInc;
+				if (windGustPhase >= 1.0f) windGustPhase -= 1.0f;
+				float gust = 0.7f + 0.3f * std::sin(windGustPhase * 6.2832f);
+
+				windSample = (broadband * 0.7f + howl * 0.3f) * windIntensity * gust * 0.5f;
 			}
-			if (hornSoundLoaded) {
-				out[i] += hornVolume*hornBuffer[i] * 0.33;
-			}
-			if (alarmSoundLoaded) {
-				out[i] += alarmVolume*alarmBuffer[i] * 0.33;
+
+			for (int c = 0; c < channels; c++) {
+				int idx = frame * channels + c;
+				float sample = engineVolume * engineBuffer[idx] * 0.30f;
+				if (waveSoundLoaded) {
+					sample += bWaveVol * waveBuffer[idx] * 0.30f;
+				}
+				sample += windSample * 0.25f;
+				if (hornSoundLoaded) {
+					sample += hornVolume * hornBuffer[idx] * 0.30f;
+				}
+				if (alarmSoundLoaded) {
+					sample += alarmVolume * alarmBuffer[idx] * 0.30f;
+				}
+				out[idx] = sample;
 			}
 		}
 

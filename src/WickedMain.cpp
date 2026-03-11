@@ -25,6 +25,8 @@
 #include "MapScreen.hpp"
 #include "WaveMotionModel.hpp"
 #include "graphics/wicked/WickedMultiView.hpp"
+#include "graphics/wicked/WickedVRView.hpp"
+#include "graphics/wicked/WickedVRSession.hpp"
 
 // ImGui header needed for IO access in game loop
 #include "graphics/wicked/imgui/imgui.h"
@@ -1240,6 +1242,7 @@ static wi::ecs::Entity createBuildingMeshEntity(wi::scene::Scene& scene,
 
     uint32_t wallIdxCount = static_cast<uint32_t>(std::min(bm.wallIndexCount, bm.indices.size()));
     uint32_t roofIdxCount = static_cast<uint32_t>(bm.indices.size()) - wallIdxCount;
+    bool useVertexColors = !bm.colors.empty() && (bm.colors.size() == bm.vertexCount());
 
     if (isStructure) {
         // Harbour structures: concrete material (grey, rough, no texture)
@@ -1265,11 +1268,12 @@ static wi::ecs::Entity createBuildingMeshEntity(wi::scene::Scene& scene,
         wi::ecs::Entity wallMatEntity = scene.Entity_CreateMaterial(name + "_wall");
         auto* wallMat = scene.materials.GetComponent(wallMatEntity);
         if (wallMat) {
-            wallMat->baseColor = DirectX::XMFLOAT4(0.9f, 0.9f, 0.9f, 1.0f);
+            wallMat->baseColor = DirectX::XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f); // neutral white, vertex colors provide tint
             wallMat->roughness = 0.75f;
             wallMat->metalness = 0.0f;
             wallMat->SetDoubleSided(true);
             wallMat->SetCastShadow(true);
+            if (useVertexColors) wallMat->SetUseVertexColors(true);
             if (!wallTexturePath.empty()) {
                 wallMat->textures[wi::scene::MaterialComponent::BASECOLORMAP].name = wallTexturePath;
                 // Load wall PBR maps if they exist alongside the base color texture
@@ -1295,11 +1299,12 @@ static wi::ecs::Entity createBuildingMeshEntity(wi::scene::Scene& scene,
         wi::ecs::Entity roofMatEntity = scene.Entity_CreateMaterial(name + "_roof");
         auto* roofMat = scene.materials.GetComponent(roofMatEntity);
         if (roofMat) {
-            roofMat->baseColor = DirectX::XMFLOAT4(0.6f, 0.6f, 0.6f, 1.0f);
+            roofMat->baseColor = DirectX::XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f); // neutral white, vertex colors provide tint
             roofMat->roughness = 0.85f;
             roofMat->metalness = 0.0f;
             roofMat->SetDoubleSided(true);
             roofMat->SetCastShadow(true);
+            if (useVertexColors) roofMat->SetUseVertexColors(true);
             if (!roofTexturePath.empty()) {
                 roofMat->textures[wi::scene::MaterialComponent::BASECOLORMAP].name = roofTexturePath;
                 // Load roof PBR maps if they exist alongside the base color texture
@@ -1341,6 +1346,7 @@ static wi::ecs::Entity createBuildingMeshEntity(wi::scene::Scene& scene,
     }
 
     size_t nv = bm.vertexCount();
+    bool hasColors = (bm.colors.size() == nv);
     for (size_t i = 0; i < nv; i++) {
         mesh->vertex_positions.push_back(DirectX::XMFLOAT3(
             bm.positions[i * 3], bm.positions[i * 3 + 1], bm.positions[i * 3 + 2]));
@@ -1348,6 +1354,9 @@ static wi::ecs::Entity createBuildingMeshEntity(wi::scene::Scene& scene,
             bm.normals[i * 3], bm.normals[i * 3 + 1], bm.normals[i * 3 + 2]));
         mesh->vertex_uvset_0.push_back(DirectX::XMFLOAT2(
             bm.uvs[i * 2], bm.uvs[i * 2 + 1]));
+        if (hasColors) {
+            mesh->vertex_colors.push_back(bm.colors[i]);
+        }
     }
     for (uint32_t idx : bm.indices) {
         mesh->indices.push_back(idx);
@@ -1636,6 +1645,31 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             } else {
                 weLog("  Multi-view: no extra monitors available");
             }
+        }
+    }
+
+    // --- VR (OpenXR) support ---
+    bc::graphics::wicked::WickedVRSession vrSession;
+    bc::graphics::wicked::WickedVRView vrView;
+    bool vrEnabled = false;
+    {
+        int vrMode = (int)IniFile::iniFileTof32(iniFile, "vr_mode");
+        if (vrMode > 0) {
+            weLog("  VR mode requested (vr_mode=" + std::to_string(vrMode) + ")");
+#if defined(_WIN64)
+            if (vrSession.init()) {
+                vrView.init(&wi::scene::GetScene(),
+                            vrSession.getEyeWidth(),
+                            vrSession.getEyeHeight());
+                vrEnabled = true;
+                weLog("  VR initialized: " + std::to_string(vrSession.getEyeWidth()) +
+                      "x" + std::to_string(vrSession.getEyeHeight()) + " per eye");
+            } else {
+                weLog("  VR init failed -- no HMD detected or OpenXR unavailable");
+            }
+#else
+            weLog("  VR requires x64 build -- skipping");
+#endif
         }
     }
 
@@ -2143,6 +2177,17 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
         if (iniPitchPeriod == 0) iniPitchPeriod = 12.0f;
         maxSpeedAhead = IniFile::iniFileTof32(boatIni, "maxSpeedAhead");
         if (maxSpeedAhead <= 0) maxSpeedAhead = 14.0f;
+
+        // Configure engine sound character from MaxRevs
+        {
+            float maxRevs = IniFile::iniFileTof32(boatIni, "MaxRevs");
+            if (maxRevs <= 0) maxRevs = 1000.0f;
+            int cylinders = 6;
+            int stroke = 4;
+            if (maxRevs <= 200.0f) { cylinders = 6; stroke = 2; }
+            else if (maxRevs > 1200.0f) { cylinders = 4; }
+            sound.setEngineCharacter(maxRevs, cylinders, stroke);
+        }
 
         // Get camera view position (first view = bridge view)
         uint32_t numViews = (uint32_t)IniFile::iniFileTof32(boatIni, "Views");
@@ -2771,6 +2816,12 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     }
 
     // ===== BILLBOARD TREES (from trees.ini) =====
+    // Supports multi-species rendering via 2x2 atlas UV regions:
+    //   Species 0 (Deciduous): top-left     UV [0.0-0.5, 0.0-0.5]
+    //   Species 1 (Conifer):   top-right    UV [0.5-1.0, 0.0-0.5]
+    //   Species 2 (Shrub):     bottom-left  UV [0.0-0.5, 0.5-1.0]
+    //   Species 3 (Palm):      bottom-right UV [0.5-1.0, 0.5-1.0]
+    // Falls back to full UV [0,1] if no Species field (legacy trees.ini).
     pumpMessages();
     {
         std::string treesIniFile = worldPath + "trees.ini";
@@ -2785,7 +2836,11 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             weLog("  Found " + std::to_string(numTrees) + " trees in trees.ini");
 
             if (numTrees > 0) {
-                // Create a single batched mesh with X-shaped cross-billboards
+                // Detect if trees.ini has species data (check first tree)
+                int firstSpecies = IniFile::iniFileTou32(treesIniFile, "Species(1)");
+                bool hasSpecies = (firstSpecies >= 0 && firstSpecies <= 3 &&
+                    IniFile::iniFileToString(treesIniFile, "Species(1)") != "");
+
                 wi::ecs::Entity treeRoot = scene.Entity_CreateObject("BC_Trees");
                 wi::ecs::Entity treeMeshE = scene.Entity_CreateMesh("BC_Trees_mesh");
                 scene.Component_Attach(treeMeshE, treeRoot);
@@ -2801,7 +2856,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                     treeMaterial->roughness = 0.9f;
                     treeMaterial->metalness = 0.0f;
                     treeMaterial->SetDoubleSided(true);
-                    treeMaterial->alphaRef = 0.5f; // alpha test cutoff
+                    treeMaterial->alphaRef = 0.5f;
                     std::string normTexPath = treeTexPath;
                     std::replace(normTexPath.begin(), normTexPath.end(), '\\', '/');
                     if (wi::helper::FileExists(normTexPath)) {
@@ -2816,25 +2871,59 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 treeMesh->subsets.back().materialID = treeMat;
                 treeMesh->subsets.back().indexOffset = 0;
 
-                const float treeW = 8.0f;  // base tree width in meters
-                const float treeH = 12.0f; // base tree height in meters
+                // Base dimensions per species (width, height in metres)
+                // Conifers are taller/narrower, shrubs are shorter/wider
+                struct SpeciesDims { float w; float h; };
+                const SpeciesDims specDims[4] = {
+                    {8.0f, 12.0f},  // Deciduous: broad canopy
+                    {5.0f, 16.0f},  // Conifer: tall and narrow
+                    {6.0f,  4.0f},  // Shrub: low and wide
+                    {4.0f, 14.0f},  // Palm: tall trunk, small crown
+                };
 
+                int placedCount = 0;
                 for (uint32_t t = 1; t <= numTrees; t++) {
                     float tLon = IniFile::iniFileTof32(treesIniFile, IniFile::enumerate1("Long", t));
                     float tLat = IniFile::iniFileTof32(treesIniFile, IniFile::enumerate1("Lat", t));
                     float tHeight = IniFile::iniFileTof32(treesIniFile, IniFile::enumerate1("Height", t));
                     float tScale = IniFile::iniFileTof32(treesIniFile, IniFile::enumerate1("Scale", t), 1.0f);
                     float tRot = IniFile::iniFileTof32(treesIniFile, IniFile::enumerate1("Rotation", t));
+                    int species = hasSpecies ?
+                        IniFile::iniFileTou32(treesIniFile, IniFile::enumerate1("Species", t)) : 0;
+                    if (species < 0 || species > 3) species = 0;
 
                     float tx = coords.longToX(tLon);
                     float tz = coords.latToZ(tLat);
-                    float ty = tHeight;
 
-                    float w = treeW * tScale * 0.5f;
-                    float h = treeH * tScale;
+                    // Use terrain height if available, otherwise use stored height
+                    float ty = tHeight;
+                    if (terrainNode) {
+                        float terrainH = terrainNode->getHeightAt(tx, tz);
+                        if (terrainH > 0.0f) ty = terrainH;
+                    }
+
+                    // Skip trees that ended up in water
+                    if (ty < 0.3f) continue;
+
+                    const auto& dims = specDims[species];
+                    float w = dims.w * tScale * 0.5f;
+                    float h = dims.h * tScale;
                     float rotRad = tRot * 3.14159265f / 180.0f;
                     float cosR = std::cos(rotRad);
                     float sinR = std::sin(rotRad);
+
+                    // Atlas UV region for this species (2x2 grid, each cell 0.5x0.5)
+                    float uMin, uMax, vMin, vMax;
+                    if (hasSpecies) {
+                        uMin = (species % 2) * 0.5f;
+                        uMax = uMin + 0.5f;
+                        vMin = (species / 2) * 0.5f;
+                        vMax = vMin + 0.5f;
+                    } else {
+                        // Legacy: full texture
+                        uMin = 0.0f; uMax = 1.0f;
+                        vMin = 0.0f; vMax = 1.0f;
+                    }
 
                     // Two perpendicular quads forming an X shape
                     for (int q = 0; q < 2; q++) {
@@ -2852,10 +2941,10 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                         for (int v = 0; v < 4; v++)
                             treeMesh->vertex_normals.push_back(up);
 
-                        treeMesh->vertex_uvset_0.push_back({0, 1});
-                        treeMesh->vertex_uvset_0.push_back({1, 1});
-                        treeMesh->vertex_uvset_0.push_back({1, 0});
-                        treeMesh->vertex_uvset_0.push_back({0, 0});
+                        treeMesh->vertex_uvset_0.push_back({uMin, vMax});
+                        treeMesh->vertex_uvset_0.push_back({uMax, vMax});
+                        treeMesh->vertex_uvset_0.push_back({uMax, vMin});
+                        treeMesh->vertex_uvset_0.push_back({uMin, vMin});
 
                         treeMesh->indices.push_back(baseIdx);
                         treeMesh->indices.push_back(baseIdx + 1);
@@ -2864,12 +2953,14 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                         treeMesh->indices.push_back(baseIdx + 2);
                         treeMesh->indices.push_back(baseIdx + 3);
                     }
+                    placedCount++;
                 }
 
                 treeMesh->subsets.back().indexCount = (uint32_t)treeMesh->indices.size();
                 treeMesh->CreateRenderData();
-                weLog("  Created tree mesh with " + std::to_string(numTrees) + " trees (" +
-                      std::to_string(treeMesh->indices.size() / 3) + " triangles)");
+                weLog("  Created tree mesh with " + std::to_string(placedCount) + " trees (" +
+                      std::to_string(treeMesh->indices.size() / 3) + " triangles)" +
+                      (hasSpecies ? " [multi-species atlas]" : " [legacy single texture]"));
             }
         }
     }
@@ -3226,9 +3317,9 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             if (!wallTexPath.empty()) weLog("  Wall texture: " + wallTexPath);
             if (!roofTexPath.empty()) weLog("  Roof texture: " + roofTexPath);
 
-            BuildingMesh buildingBatch, structureBatch;
-            int totalBuildings = 0, totalStructures = 0, skippedWater = 0;
-            int bldgTileIdx = 0, structTileIdx = 0;
+            BuildingMesh buildingBatch, structureBatch, glassBatch;
+            int totalBuildings = 0, totalStructures = 0, totalGlass = 0, skippedWater = 0;
+            int bldgTileIdx = 0, structTileIdx = 0, glassTileIdx = 0;
             size_t totalVerts = 0;
 
             for (size_t si = 0; si < scored.size() && (totalBuildings + totalStructures) < (int)MAX_BUILDINGS; si++) {
@@ -3252,7 +3343,11 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 if (groundY < -0.5f && !fp.isStructure) { skippedWater++; continue; }
                 if (groundY < 0.0f) groundY = 0.0f;
 
-                BuildingMesh single = BuildingGenerator::generate(fp, coordFunc, groundY);
+                auto matClass = classifyBuildingMaterial(fp.type, fp.height);
+                int wallType = (totalBuildings + totalStructures) % 4;
+                int roofType = ((totalBuildings + totalStructures) * 3 + 1) % 4;
+                BuildingMesh single = BuildingGenerator::generate(fp, coordFunc, groundY,
+                                                                   wallType, roofType, matClass);
                 if (single.empty()) continue;
 
                 totalVerts += single.vertexCount();
@@ -3269,6 +3364,19 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                         structureBatch = BuildingMesh();
                         structTileIdx++;
                     }
+                } else if (matClass == BuildingMaterialClass::Glass) {
+                    glassBatch.append(single);
+                    totalGlass++;
+                    if (glassBatch.vertexCount() >= VERTS_PER_TILE) {
+                        wi::ecs::Entity e = createBuildingMeshEntity(
+                            scene, glassBatch, "OSM_Glass_" + std::to_string(glassTileIdx),
+                            wallTexPath, roofTexPath, false);
+                        if (e != wi::ecs::INVALID_ENTITY)
+                            setEntityTransform(scene, e, 0, 0, 0);
+                        glassBatch = BuildingMesh();
+                        glassTileIdx++;
+                    }
+                    totalBuildings++;
                 } else {
                     buildingBatch.append(single);
                     totalBuildings++;
@@ -3294,6 +3402,28 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                     setEntityTransform(scene, e, 0, 0, 0);
                 bldgTileIdx++;
             }
+            // Flush remaining glass batch
+            if (!glassBatch.empty()) {
+                wi::ecs::Entity e = createBuildingMeshEntity(
+                    scene, glassBatch, "OSM_Glass_" + std::to_string(glassTileIdx),
+                    wallTexPath, roofTexPath, false);
+                if (e != wi::ecs::INVALID_ENTITY)
+                    setEntityTransform(scene, e, 0, 0, 0);
+                glassTileIdx++;
+            }
+            // Override glass material properties: reflective, smooth
+            for (size_t mi = 0; mi < scene.materials.GetCount(); mi++) {
+                auto& mat = scene.materials[mi];
+                auto* nameComp = scene.names.GetComponent(scene.materials.GetEntity(mi));
+                if (!nameComp) continue;
+                if (nameComp->name.find("OSM_Glass_") != std::string::npos &&
+                    nameComp->name.find("_wall") != std::string::npos) {
+                    mat.roughness = 0.15f;  // smooth glass
+                    mat.metalness = 0.3f;   // partially reflective
+                    mat.CreateRenderData();
+                }
+            }
+
             // Flush remaining structure batch
             if (!structureBatch.empty()) {
                 wi::ecs::Entity e = createBuildingMeshEntity(
@@ -3304,8 +3434,9 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 structTileIdx++;
             }
 
-            int totalTiles = bldgTileIdx + structTileIdx;
-            weLog("  Created " + std::to_string(totalBuildings) + " buildings + " +
+            int totalTiles = bldgTileIdx + structTileIdx + glassTileIdx;
+            weLog("  Created " + std::to_string(totalBuildings) + " buildings (" +
+                  std::to_string(totalGlass) + " glass) + " +
                   std::to_string(totalStructures) + " structures in " +
                   std::to_string(totalTiles) + " tiles (" +
                   std::to_string(totalVerts) + " verts)");
@@ -3865,6 +3996,14 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 scene.weather.volumetricCloudParameters.layerFirst.coverageWindAngle = windRad;
                 scene.weather.volumetricCloudParameters.layerFirst.coverageWindSpeed = 20.0f + windMps * 3.0f;
 
+                // --- Environmental audio: Beaufort-driven wave + wind + engine ---
+                sound.setEnvironment(beaufortScale, windSpd);
+                {
+                    float engAvg = (std::fabs(ownShipPortEngine) + std::fabs(ownShipStbdEngine)) * 0.5f;
+                    sound.setVolumeEngine(engAvg * 0.5f);
+                    sound.setEnginePitch(0.5f + 0.5f * engAvg);
+                }
+
                 // --- Dynamic fog with height fog ---
                 float fogDist = vis * 1852.0f;
                 scene.weather.fogStart = fogDist * 0.3f;
@@ -3960,8 +4099,19 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                         gridHeights[i] = 0.0f;
                 }
 
+                // On first valid frame, snap heave to actual water level so the
+                // ship doesn't clip through while the oscillator converges.
+                if (weMotionState.heave.pos == 0.0f && weMotionState.heave.vel == 0.0f
+                    && gridHeights[bc::WaveMotion::GRID_N / 2] != 0.0f) {
+                    weMotionState.heave.pos = gridHeights[bc::WaveMotion::GRID_N / 2];
+                }
+
+                // Wind speed and heading-relative-to-wave for wavelength reduction
+                float wvWindMps = SimBridge::getWindSpeed() * 0.514444f;
+                float wvWindRad = SimBridge::getWindDirection() * (float)M_PI / 180.0f;
+                float wvHeadingRelWave = headRad - wvWindRad; // 0=following, PI=head seas
                 bc::WaveMotion::updateMultiPoint(weMotionState, weSeakeeping,
-                    dt, weHullGrid, gridHeights);
+                    dt, weHullGrid, gridHeights, wvWindMps, wvHeadingRelWave);
 
                 ownShipY = ownShipHeightCorr + weMotionState.heave.pos;
                 ownShipPitch = weMotionState.pitch.pos * 180.0f / (float)M_PI;
@@ -3988,7 +4138,9 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
             float ownHdZ = std::cos(headRad);
             {
                 // Kelvin arms from current bow position
-                if (spdMps > 0.5f && wakeIdx < 8) {
+                // Froude number gates wake visibility: Fn < 0.1 = no visible wake
+                float ownFn = spdMps / std::sqrt(9.81f * std::max(shipL, 10.0f));
+                if (ownFn > 0.1f && wakeIdx < 8) {
                     auto& w = wi::Ocean::wakeShips[wakeIdx++];
                     w.posX = ownShipX + ownHdX * shipL * 0.5f;
                     w.posZ = ownShipZ + ownHdZ * shipL * 0.5f;
@@ -3996,13 +4148,16 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                     w.headingDirZ = ownHdZ;
                     w.speed = spdMps;
                     w.shipLength = shipL;
-                    w.wakeLength = shipL * 2.0f; // 3D displacement + foam V-arms
+                    // Live wake: bow wave + stern depression + near-field transverse/divergent.
+                    // Trail system takes over for the persistent historical wake.
+                    // Use ~4 ship lengths to allow 1/sqrt(r) far-field to develop.
+                    w.wakeLength = shipL * 4.0f;
                 }
-                // Trail recording from stern
+                // Trail recording from stern (prop wash visible above ~2 knots)
                 float sternX = ownShipX - ownHdX * shipL * 0.5f;
                 float sternZ = ownShipZ - ownHdZ * shipL * 0.5f;
                 auto& trail = g_shipTrails[0];
-                if (spdMps > 0.5f) {
+                if (spdMps > 1.0f) {
                     if (!trail.initialized) {
                         trail.lastX = sternX; trail.lastZ = sternZ;
                         trail.initialized = true;
@@ -4073,42 +4228,42 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                                        st.pitchCorr + otherPitch, st.rollCorr + otherRoll);
                     // Kelvin arms + trail for other ships
                     float otherSpeedMps = SimBridge::getOtherShipSpeed(s);
-                    if (otherSpeedMps > 0.5f) {
-                        float hRad = st.heading * (float)M_PI / 180.0f;
-                        float otherShipL = SimBridge::getOtherShipLength(s);
-                        if (otherShipL < 1.0f) otherShipL = 50.0f;
-                        float oHdX = std::sin(hRad);
-                        float oHdZ = std::cos(hRad);
-                        // Kelvin V-arms from bow
-                        if (wakeIdx < 8) {
-                            auto& w = wi::Ocean::wakeShips[wakeIdx++];
-                            w.posX = st.x + oHdX * otherShipL * 0.5f;
-                            w.posZ = st.z + oHdZ * otherShipL * 0.5f;
-                            w.headingDirX = oHdX;
-                            w.headingDirZ = oHdZ;
-                            w.speed = otherSpeedMps;
-                            w.shipLength = otherShipL;
-                            w.wakeLength = otherShipL * 2.0f;
+                    float otherShipL = SimBridge::getOtherShipLength(s);
+                    if (otherShipL < 1.0f) otherShipL = 50.0f;
+                    float hRad = st.heading * (float)M_PI / 180.0f;
+                    float oHdX = std::sin(hRad);
+                    float oHdZ = std::cos(hRad);
+
+                    // Kelvin V-arms: only above Froude 0.1 (visible wave pattern threshold)
+                    float otherFn = otherSpeedMps / std::sqrt(9.81f * otherShipL);
+                    if (otherFn > 0.1f && wakeIdx < 8) {
+                        auto& w = wi::Ocean::wakeShips[wakeIdx++];
+                        w.posX = st.x + oHdX * otherShipL * 0.5f;
+                        w.posZ = st.z + oHdZ * otherShipL * 0.5f;
+                        w.headingDirX = oHdX;
+                        w.headingDirZ = oHdZ;
+                        w.speed = otherSpeedMps;
+                        w.shipLength = otherShipL;
+                        w.wakeLength = otherShipL * 4.0f;
+                    }
+                    // Trail recording: any ship making way (prop wash visible at lower speeds)
+                    if (otherSpeedMps > 1.0f && s + 1 < WAKE_TRAIL_MAX_SHIPS) {
+                        float oSternX = st.x - oHdX * otherShipL * 0.5f;
+                        float oSternZ = st.z - oHdZ * otherShipL * 0.5f;
+                        auto& oTrail = g_shipTrails[s + 1];
+                        if (!oTrail.initialized) {
+                            oTrail.lastX = oSternX; oTrail.lastZ = oSternZ;
+                            oTrail.initialized = true;
                         }
-                        // Trail recording from stern
-                        if (s + 1 < WAKE_TRAIL_MAX_SHIPS) {
-                            float oSternX = st.x - oHdX * otherShipL * 0.5f;
-                            float oSternZ = st.z - oHdZ * otherShipL * 0.5f;
-                            auto& oTrail = g_shipTrails[s + 1];
-                            if (!oTrail.initialized) {
-                                oTrail.lastX = oSternX; oTrail.lastZ = oSternZ;
-                                oTrail.initialized = true;
-                            }
-                            float otdx = oSternX - oTrail.lastX;
-                            float otdz = oSternZ - oTrail.lastZ;
-                            if (otdx * otdx + otdz * otdz >= WAKE_TRAIL_SPACING * WAKE_TRAIL_SPACING) {
-                                float oBeam = otherShipL * 0.15f;
-                                float oHw = oBeam * 0.5f + otherSpeedMps * 0.15f;
-                                oTrail.points[oTrail.head] = {oSternX, oSternZ, oHdX, oHdZ, oHw, otherSpeedMps, otherShipL, g_wakeTimeAccum};
-                                oTrail.head = (oTrail.head + 1) % WAKE_TRAIL_POINTS_PER_SHIP;
-                                if (oTrail.count < WAKE_TRAIL_POINTS_PER_SHIP) oTrail.count++;
-                                oTrail.lastX = oSternX; oTrail.lastZ = oSternZ;
-                            }
+                        float otdx = oSternX - oTrail.lastX;
+                        float otdz = oSternZ - oTrail.lastZ;
+                        if (otdx * otdx + otdz * otdz >= WAKE_TRAIL_SPACING * WAKE_TRAIL_SPACING) {
+                            float oBeam = otherShipL * 0.15f;
+                            float oHw = oBeam * 0.5f + otherSpeedMps * 0.15f;
+                            oTrail.points[oTrail.head] = {oSternX, oSternZ, oHdX, oHdZ, oHw, otherSpeedMps, otherShipL, g_wakeTimeAccum};
+                            oTrail.head = (oTrail.head + 1) % WAKE_TRAIL_POINTS_PER_SHIP;
+                            if (oTrail.count < WAKE_TRAIL_POINTS_PER_SHIP) oTrail.count++;
+                            oTrail.lastX = oSternX; oTrail.lastZ = oSternZ;
                         }
                     }
                 }
@@ -4123,7 +4278,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 struct LiveStern { float x, z, hdX, hdZ, hw, spd, shipL; bool valid; };
                 LiveStern liveStems[WAKE_TRAIL_MAX_SHIPS] = {};
                 // Own ship
-                if (spdMps > 0.5f) {
+                if (spdMps > 1.0f) {
                     float beamEst = shipL * 0.15f;
                     liveStems[0] = {
                         ownShipX - ownHdX * shipL * 0.5f,
@@ -4137,7 +4292,7 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 int numOther = SimBridge::getNumberOfOtherShips();
                 for (int s = 0; s < numOther && s + 1 < WAKE_TRAIL_MAX_SHIPS; s++) {
                     float oSpd = SimBridge::getOtherShipSpeed(s);
-                    if (oSpd > 0.5f) {
+                    if (oSpd > 1.0f) {
                         auto& st = otherShipStates[s];
                         float hRad = st.heading * (float)M_PI / 180.0f;
                         float oShipL = SimBridge::getOtherShipLength(s);
@@ -4155,8 +4310,8 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                 }
 
                 // Wake lifetime depends on sea state: calm seas preserve wakes, rough seas destroy them
-                // Beaufort 0-2: ~120s, B3-5: ~60s, B6+: ~20s
-                float wakeLifetime = 120.0f / (1.0f + beaufortScale * 0.8f);
+                // Beaufort 0-2: ~45s, B3-5: ~25s, B6+: ~12s
+                float wakeLifetime = 45.0f / (1.0f + beaufortScale * 0.5f);
 
                 uint32_t gpuIdx = 0;
                 for (int ship = 0; ship < WAKE_TRAIL_MAX_SHIPS && gpuIdx < 128; ship++) {
@@ -4375,6 +4530,9 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                             float emScale = visible ? std::min(50.0f, illuminance * 20.0f) * lightAlpha : 0.0f;
                             mat->emissiveColor = DirectX::XMFLOAT4(
                                 nlt.r * emScale, nlt.g * emScale, nlt.b * emScale, 1.0f);
+                            // Make quad fully transparent when light is off to prevent
+                            // opaque black squares (base color is black).
+                            mat->baseColor.w = (emScale > 0.01f) ? 1.0f : 0.0f;
                         }
                     }
                 }
@@ -4789,6 +4947,90 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
                                          camYawOffset + camLookAngle, camPitch);
             }
 
+            // ===== VR RENDERING =====
+            // VR renders even when the flat window is inactive (HMD is primary display).
+            if (vrEnabled && vrSession.isRunning()) {
+                if (vrSession.beginFrame()) {
+                    // Ship orientation quaternion for transforming HMD poses to world space
+                    float vrShipPitchRad = (ownShipPitchCorr + ownShipPitch) * (float)M_PI / 180.0f;
+                    float vrShipRollRad = (ownShipRollCorr + ownShipRoll) * (float)M_PI / 180.0f;
+                    float vrShipHeadRad = ownShipHeading * (float)M_PI / 180.0f;
+                    DirectX::XMVECTOR vrShipQuat = DirectX::XMQuaternionRotationRollPitchYaw(
+                        vrShipPitchRad, vrShipHeadRad, vrShipRollRad);
+
+                    for (int eye = 0; eye < vrSession.getViewCount() && eye < 2; eye++) {
+                        // Get OpenXR eye pose (HMD-relative, in play space)
+                        bc::graphics::Vec3 eyePos = vrSession.getEyePosition(eye);
+                        bc::graphics::Quaternion eyeOri = vrSession.getEyeOrientation(eye);
+
+                        // Transform HMD position from play space to world space:
+                        // Bridge position (camX/Y/Z) + HMD offset rotated by ship orientation
+                        DirectX::XMVECTOR hmdOffset = DirectX::XMVectorSet(
+                            eyePos.x, eyePos.y, eyePos.z, 0);
+                        DirectX::XMVECTOR worldHmdOffset = DirectX::XMVector3Rotate(hmdOffset, vrShipQuat);
+
+                        bc::graphics::Vec3 worldEyePos;
+                        worldEyePos.x = camX + DirectX::XMVectorGetX(worldHmdOffset);
+                        worldEyePos.y = camY + DirectX::XMVectorGetY(worldHmdOffset);
+                        worldEyePos.z = camZ + DirectX::XMVectorGetZ(worldHmdOffset);
+
+                        // Compose ship rotation with HMD orientation
+                        // OpenXR is right-handed, WE is left-handed: flip Z
+                        DirectX::XMVECTOR hmdQuat = DirectX::XMVectorSet(
+                            eyeOri.x, eyeOri.y, -eyeOri.z, -eyeOri.w);
+                        DirectX::XMVECTOR worldQuat = DirectX::XMQuaternionMultiply(hmdQuat, vrShipQuat);
+                        DirectX::XMFLOAT4 wq;
+                        DirectX::XMStoreFloat4(&wq, worldQuat);
+                        bc::graphics::Quaternion worldEyeOri = {wq.x, wq.y, wq.z, wq.w};
+
+                        // Asymmetric FOV from OpenXR
+                        float fovL, fovR, fovU, fovD;
+                        vrSession.getEyeFov(eye, fovL, fovR, fovU, fovD);
+
+                        vrView.updateEyePose(eye, worldEyePos, worldEyeOri,
+                                             fovL, fovR, fovU, fovD);
+                        vrView.renderEye(eye);
+                        vrSession.submitEyeTexture(eye, vrView.getEyeTexture(eye));
+                    }
+
+                    vrSession.endFrame();
+
+                    // --- VR controller input ---
+                    // Left hand: engine control (thumbstick Y = throttle)
+                    const auto& leftHand = vrSession.getHandState(0);
+                    if (leftHand.poseValid) {
+                        float thumbY = leftHand.thumbstickY;
+                        if (std::abs(thumbY) > 0.1f) {
+                            ownShipPortEngine = std::max(-1.0f, std::min(1.0f,
+                                ownShipPortEngine + thumbY * 0.5f * dt));
+                            ownShipStbdEngine = ownShipPortEngine;
+                        }
+                    }
+                    // Right hand: rudder control (thumbstick Y = wheel)
+                    const auto& rightHand = vrSession.getHandState(1);
+                    if (rightHand.poseValid) {
+                        float thumbY = rightHand.thumbstickY;
+                        if (std::abs(thumbY) > 0.1f) {
+                            ownShipRudder = std::max(-30.0f, std::min(30.0f,
+                                ownShipRudder + thumbY * 30.0f * dt));
+                        }
+                    }
+                    // Right trigger = horn
+                    static bool vrHornActive = false;
+                    if (rightHand.triggerValue > 0.5f) {
+                        if (!vrHornActive) { sound.setVolumeHorn(1.0f); vrHornActive = true; }
+                    } else {
+                        if (vrHornActive) { sound.setVolumeHorn(0.0f); vrHornActive = false; }
+                    }
+                    // Menu button = toggle HUD (left or right hand)
+                    static bool vrMenuWasPressed = false;
+                    if ((leftHand.menuPressed || rightHand.menuPressed) && !vrMenuWasPressed) {
+                        showEscMenu = !showEscMenu;
+                    }
+                    vrMenuWasPressed = leftHand.menuPressed || rightHand.menuPressed;
+                }
+            }
+
             // Skip rendering when window is inactive (minimized or lost focus).
             // Must check BEFORE ImGuiNewFrame() to avoid NewFrame/EndFrame mismatch.
             // If focus is lost DURING application.Run(), Run() may skip Compose()
@@ -5016,6 +5258,11 @@ int runWickedEngine(const std::string& userFolder, const ScenarioData& scenarioD
     weLog("Shutting down SimulationBridge...");
     SimBridge::shutdown();
     weLog("Shutting down Wicked Engine...");
+    if (vrEnabled) {
+        vrView.shutdown();
+        vrSession.shutdown();
+        weLog("  VR shutdown complete.");
+    }
     multiView.shutdown();
     ImGui_ImplWin32_Shutdown();
     bc::graphics::wicked::ImGuiShutdown();
